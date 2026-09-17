@@ -1,0 +1,7 @@
+{
+  "app": "npm run build && node dist/infra/bin/app.js",
+  "lookups": false,
+  "versionReporting": false,
+  "cliTelemetry": false,
+  "context": { "environment": "dev" }
+}

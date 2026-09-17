@@ -5,3 +5,9 @@
 **/package-lock.json
 **/next-env.d.ts
 .tools/
+infra/dist/
+infra/cdk.out/
+# Approved governing documents are preserved verbatim.
+docs/PRD.md
+docs/TECHNICAL_SPEC.md
+docs/IMPLEMENTATION_PLAN.md

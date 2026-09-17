@@ -11,3 +11,5 @@ next-env.d.ts
 .tools/
 *.pem
 *.key
+infra/dist/
+infra/cdk.out/

@@ -37,3 +37,28 @@ jobs:
         run: npm test
       - name: Production build
         run: npm run build
+  validate-infra:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: infra
+    env:
+      AWS_EC2_METADATA_DISABLED: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: infra/package-lock.json
+      - name: Use pinned npm
+        run: npm install --global npm@11.11.0
+      - name: Install infrastructure dependencies
+        run: npm ci
+      - name: Type-check infrastructure and health handler
+        run: npm run typecheck
+      - name: Infrastructure and health tests
+        run: npm test
+      - name: Synthesize only (no AWS credentials or lookups)
+        run: npx cdk synth --lookups=false
