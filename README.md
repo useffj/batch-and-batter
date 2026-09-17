@@ -4,9 +4,9 @@ Batch & Batter is a local weekly cookie-drop ecommerce project. The customer-fac
 
 ## Current status
 
-This repository contains only Phases 0–2: the project workspace, a minimal Next.js application foundation, and continuous integration. The page intentionally displays only the name, descriptor, and “Coming Soon.” Final branding and visual design are deferred.
+Phases 0–2 are complete. Phase 3A now defines development AWS infrastructure with CDK and validates it locally; nothing has been deployed. The web page remains the minimal name, descriptor, and “Coming Soon.” Final branding and business functionality are deferred.
 
-Future architecture is expected to include AWS services, DynamoDB, Stripe, SQS, SES, and Cognito. These are future intentions only; no infrastructure, backend, database, payments, cart, authentication, or deployment is implemented here. Approved source documents will be inserted into `docs/` later.
+Approved PRD v1.1, Technical Specification v1.1, and Implementation Plan v1.0 are in `docs/` and remain unchanged. See [the Phase 3A guide](docs/PHASE_3_AWS_INFRASTRUCTURE.md) for services, safeguards, and deferred work.
 
 ## Local development
 
@@ -33,7 +33,7 @@ Open http://localhost:3000. No environment file or external services are require
 | Check repository formatting  | `npm run format:check` |
 | Format repository files      | `npm run format`       |
 
-The type-check command generates Next.js route types before running strict TypeScript checks, so it works on a fresh checkout. Unit tests are colocated with application code. Formatting covers the repository; dependency installation and application tooling live only in `web/`.
+The type-check command generates Next.js route types before running strict TypeScript checks, so it works on a fresh checkout. Unit tests are colocated with application code. Formatting covers the repository; web dependencies live in `web/`, and infrastructure dependencies live independently in `infra/`.
 
 ## Environment and security
 
@@ -44,11 +44,13 @@ Environment files, credentials (`*.pem`, `*.key`), dependencies, and generated a
 ## Structure and CI
 
 - `web/`: Next.js 15.5.24, App Router, TypeScript, plain CSS, ESLint, Prettier, and Vitest.
-- `backend/`, `shared/`, `infra/`, `tests/`: documentation-only placeholders for later phases.
-- `docs/`: placeholders for approved source documents; no invented requirements.
+- `backend/`: minimal TypeScript health Lambda, built and tested by the infrastructure package.
+- `infra/`: CDK TypeScript app, pinned dependencies, assertions, and local synthesis.
+- `shared/`, `tests/`: placeholders for later phases.
+- `docs/`: approved governing documents, dependency risk record, and Phase 3A guide.
 - `.github/workflows/ci.yml`: clean npm installation, formatting, type-checking, linting, unit tests, and a production build on pushes and pull requests.
 
-CI has read-only repository permissions and no deployment steps or secrets. It will run once this repository is connected to GitHub; no remote is configured by this implementation.
+CI has read-only repository permissions and no deployment steps, AWS credentials, or secrets. The repository is connected to GitHub and the initial web CI run passed. A separate infrastructure job now installs dependencies, type-checks, runs tests, and synthesizes without AWS lookups; its remote run awaits human review and a later push.
 
 Next.js is deliberately pinned to the requested 15.5.24 baseline. Review dependency advisories and hosting compatibility before any future production release; upgrades require an explicit baseline decision.
 
@@ -57,3 +59,18 @@ Initial dependency audit reports two findings (one moderate, one high) involving
 ## Known Dependency Risks
 
 See [the dependency risk record](docs/DEPENDENCY_RISKS.md) for the temporarily accepted Next.js/PostCSS risk, relevant advisories, and required review before production deployment.
+
+## Infrastructure validation
+
+Use the same Node/npm baseline. From the repository root:
+
+```sh
+cd infra
+npm ci
+npm run typecheck
+npm test
+npx cdk synth
+npm audit
+```
+
+The local CDK CLI compiles the app and health handler before synthesis. No AWS credentials, account ID, fixed Region, Docker, or global CDK installation is required. Generated `infra/dist/` and `infra/cdk.out/` are ignored. Do not bootstrap or deploy during Phase 3A. See [infra instructions](infra/README.md).
