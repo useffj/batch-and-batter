@@ -8,7 +8,7 @@
   },
   "packageManager": "npm@11.11.0",
   "scripts": {
-    "build": "tsc",
+    "build": "npm --prefix ../backend run build && tsc",
     "typecheck": "tsc --noEmit",
     "test": "npm run build && node --test dist/infra/test/*.test.js",
     "synth": "cdk synth --lookups=false"

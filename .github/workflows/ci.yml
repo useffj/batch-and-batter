@@ -37,6 +37,31 @@ jobs:
         run: npm test
       - name: Production build
         run: npm run build
+  validate-backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      AWS_EC2_METADATA_DISABLED: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - name: Use pinned npm
+        run: npm install --global npm@11.11.0
+      - name: Install backend dependencies
+        run: npm ci
+      - name: Type-check backend
+        run: npm run typecheck
+      - name: Backend and deployment artifact tests
+        run: npm test
+      - name: Audit backend dependencies
+        run: npm audit
   validate-infra:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -51,14 +76,18 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
-          cache-dependency-path: infra/package-lock.json
+          cache-dependency-path: |
+            infra/package-lock.json
+            backend/package-lock.json
       - name: Use pinned npm
         run: npm install --global npm@11.11.0
+      - name: Install backend build dependencies
+        run: npm --prefix ../backend ci
       - name: Install infrastructure dependencies
         run: npm ci
-      - name: Type-check infrastructure and health handler
+      - name: Type-check infrastructure
         run: npm run typecheck
-      - name: Infrastructure and health tests
+      - name: Infrastructure tests
         run: npm test
       - name: Synthesize only (no AWS credentials or lookups)
         run: npx cdk synth --lookups=false

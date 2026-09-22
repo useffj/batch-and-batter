@@ -3,7 +3,6 @@ import { test } from 'node:test';
 import { App } from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
 import { DevelopmentStack } from '../lib/development-stack';
-import { handler } from '../../backend/src/health';
 
 const stack = new DevelopmentStack(new App(), 'TestDev', {
   environment: 'dev',
@@ -31,20 +30,30 @@ test('three on-demand tables have only the approved string PK/SK foundation', ()
   }
 });
 
-test('one Node 24 Lambda is wired to the sole unauthenticated HTTP health route', () => {
+test('one Node 24 Lambda preserves its identity and serves exactly three read-only routes', () => {
   template.resourceCountIs('AWS::Lambda::Function', 1);
   template.hasResourceProperties('AWS::Lambda::Function', {
     Runtime: 'nodejs24.x',
-    Handler: 'health.handler',
+    Handler: 'handler.handler',
   });
   template.resourceCountIs('AWS::ApiGatewayV2::Api', 1);
   template.hasResourceProperties('AWS::ApiGatewayV2::Api', {
     ProtocolType: 'HTTP',
   });
-  template.resourceCountIs('AWS::ApiGatewayV2::Route', 1);
+  template.resourceCountIs('AWS::ApiGatewayV2::Route', 3);
   const functionId = Object.keys(
     template.findResources('AWS::Lambda::Function'),
   )[0];
+  assert.equal(functionId, 'ApplicationApi5D63FF39');
+  const routes = Object.values(
+    template.findResources('AWS::ApiGatewayV2::Route'),
+  );
+  assert.deepEqual(
+    routes.map((route) => route.Properties.RouteKey).sort(),
+    ['GET /drops/current', 'GET /drops/{dropId}', 'GET /health'].sort(),
+  );
+  for (const route of routes)
+    assert.equal(route.Properties.AuthorizationType, 'NONE');
   const integrationId = Object.keys(
     template.findResources('AWS::ApiGatewayV2::Integration'),
   )[0];
@@ -135,7 +144,7 @@ test('media is private, encrypted, owner controlled and denies insecure transpor
   });
 });
 
-test('Lambda can only write streams in its pre-created 14-day log group', () => {
+test('Lambda has only scoped logging and Catalog GetItem/Query permissions', () => {
   template.resourceCountIs('AWS::Logs::LogGroup', 1);
   template.hasResourceProperties('AWS::Logs::LogGroup', {
     RetentionInDays: 14,
@@ -148,7 +157,7 @@ test('Lambda can only write streams in its pre-created 14-day log group', () => 
   const policies = template.findResources('AWS::IAM::Policy');
   const statements =
     Object.values(policies)[0].Properties.PolicyDocument.Statement;
-  assert.equal(statements.length, 1);
+  assert.equal(statements.length, 2);
   assert.deepEqual(statements[0].Action, [
     'logs:CreateLogStream',
     'logs:PutLogEvents',
@@ -156,6 +165,21 @@ test('Lambda can only write streams in its pre-created 14-day log group', () => 
   assert.equal(statements[0].Effect, 'Allow');
   const logId = Object.keys(template.findResources('AWS::Logs::LogGroup'))[0];
   assert.deepEqual(statements[0].Resource, { 'Fn::GetAtt': [logId, 'Arn'] });
+  const catalogId = Object.keys(
+    template.findResources('AWS::DynamoDB::Table', {
+      Properties: { TableName: 'batch-and-batter-dev-catalog' },
+    }),
+  )[0];
+  assert.deepEqual(statements[1], {
+    Effect: 'Allow',
+    Action: ['dynamodb:GetItem', 'dynamodb:Query'],
+    Resource: { 'Fn::GetAtt': [catalogId, 'Arn'] },
+  });
+  template.hasResourceProperties('AWS::Lambda::Function', {
+    Environment: { Variables: { CATALOG_TABLE_NAME: { Ref: catalogId } } },
+  });
+  // Exact statements exclude Commerce, Operations, SQS and any write grants.
+  template.resourceCountIs('AWS::IAM::ManagedPolicy', 0);
 });
 
 test('stateful development resources carry project/environment tags and removal policy', () => {
@@ -191,14 +215,4 @@ test('development removal settings cannot be reused for production accidentally'
     () => new DevelopmentStack(new App(), 'Prod', { environment: 'prod' }),
     /Only dev/,
   );
-});
-
-test('health handler returns only service health JSON', async () => {
-  const response = await handler();
-  assert.equal(response.statusCode, 200);
-  assert.equal(response.headers['content-type'], 'application/json');
-  assert.deepEqual(JSON.parse(response.body), {
-    status: 'ok',
-    service: 'batch-and-batter-api',
-  });
 });

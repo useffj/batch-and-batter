@@ -34,6 +34,7 @@ export class DevelopmentStack extends Stack {
     Tags.of(this).add('Project', 'batch-and-batter');
     Tags.of(this).add('Environment', props.environment);
 
+    let catalogTable: dynamodb.Table | undefined;
     for (const name of ['Catalog', 'Commerce', 'Operations']) {
       const table = new dynamodb.Table(this, `${name}Table`, {
         tableName: `${prefix}-${name.toLowerCase()}`,
@@ -44,6 +45,7 @@ export class DevelopmentStack extends Stack {
         deletionProtection: false,
         removalPolicy: RemovalPolicy.DESTROY,
       });
+      if (name === 'Catalog') catalogTable = table;
       new CfnOutput(this, `${name}TableName`, { value: table.tableName });
     }
 
@@ -106,11 +108,21 @@ export class DevelopmentStack extends Stack {
         resources: [logGroup.logGroupArn],
       }),
     );
+    if (!catalogTable) throw new Error('Catalog table is required');
+    role.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ['dynamodb:GetItem', 'dynamodb:Query'],
+        resources: [catalogTable.tableArn],
+      }),
+    );
     const application = new lambda.Function(this, 'ApplicationApi', {
       functionName: `${prefix}-api`,
       runtime: lambda.Runtime.NODEJS_24_X,
-      handler: 'health.handler',
-      code: lambda.Code.fromAsset(path.join(__dirname, '../../backend/src')),
+      handler: 'handler.handler',
+      code: lambda.Code.fromAsset(
+        path.join(__dirname, '../../../../backend/dist/lambda'),
+      ),
+      environment: { CATALOG_TABLE_NAME: catalogTable.tableName },
       role,
       logGroup,
       timeout: Duration.seconds(5),
@@ -127,6 +139,19 @@ export class DevelopmentStack extends Stack {
         application,
       ),
     });
+    for (const [route, integrationId] of [
+      ['/drops/current', 'CurrentDropIntegration'],
+      ['/drops/{dropId}', 'DropIntegration'],
+    ]) {
+      api.addRoutes({
+        path: route,
+        methods: [apigateway.HttpMethod.GET],
+        integration: new integrations.HttpLambdaIntegration(
+          integrationId,
+          application,
+        ),
+      });
+    }
     new CfnOutput(this, 'HttpApiEndpoint', { value: api.apiEndpoint });
   }
 }

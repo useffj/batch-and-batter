@@ -10,10 +10,5 @@
     "outDir": "dist",
     "types": ["node"]
   },
-  "include": [
-    "bin/**/*.ts",
-    "lib/**/*.ts",
-    "test/**/*.ts",
-    "../backend/src/**/*.ts"
-  ]
+  "include": ["bin/**/*.ts", "lib/**/*.ts", "test/**/*.ts"]
 }
