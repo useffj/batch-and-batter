@@ -11,3 +11,4 @@ infra/cdk.out/
 docs/PRD.md
 docs/TECHNICAL_SPEC.md
 docs/IMPLEMENTATION_PLAN.md
+backend/dist/
