@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { App } from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
 import { DevelopmentStack } from '../lib/development-stack';
@@ -30,7 +32,7 @@ test('three on-demand tables have only the approved string PK/SK foundation', ()
   }
 });
 
-test('one Node 24 Lambda preserves its identity and serves exactly four read-only routes', () => {
+test('one Node 24 Lambda preserves its identity and serves exactly the eight approved routes', () => {
   template.resourceCountIs('AWS::Lambda::Function', 1);
   template.hasResourceProperties('AWS::Lambda::Function', {
     Runtime: 'nodejs24.x',
@@ -40,7 +42,7 @@ test('one Node 24 Lambda preserves its identity and serves exactly four read-onl
   template.hasResourceProperties('AWS::ApiGatewayV2::Api', {
     ProtocolType: 'HTTP',
   });
-  template.resourceCountIs('AWS::ApiGatewayV2::Route', 4);
+  template.resourceCountIs('AWS::ApiGatewayV2::Route', 8);
   const functionId = Object.keys(
     template.findResources('AWS::Lambda::Function'),
   )[0];
@@ -55,10 +57,14 @@ test('one Node 24 Lambda preserves its identity and serves exactly four read-onl
       'GET /drops/current',
       'GET /drops/{dropId}',
       'GET /health',
+      'POST /admin/products',
+      'PUT /admin/products/{productId}',
+      'POST /admin/drops',
+      'PUT /admin/drops/{dropId}',
     ].sort(),
   );
   for (const route of routes.filter(
-    (route) => route.Properties.RouteKey !== 'GET /admin/me',
+    (route) => !route.Properties.RouteKey.includes('/admin/'),
   )) {
     assert.equal(route.Properties.AuthorizationType, 'NONE');
     assert.equal(route.Properties.AuthorizerId, undefined);
@@ -153,7 +159,7 @@ test('media is private, encrypted, owner controlled and denies insecure transpor
   });
 });
 
-test('Lambda has only scoped logging and Catalog GetItem/Query permissions', () => {
+test('Lambda has only scoped logging and Catalog GetItem/Query/PutItem permissions', () => {
   template.resourceCountIs('AWS::Logs::LogGroup', 1);
   template.hasResourceProperties('AWS::Logs::LogGroup', {
     RetentionInDays: 14,
@@ -181,13 +187,13 @@ test('Lambda has only scoped logging and Catalog GetItem/Query permissions', () 
   )[0];
   assert.deepEqual(statements[1], {
     Effect: 'Allow',
-    Action: ['dynamodb:GetItem', 'dynamodb:Query'],
+    Action: ['dynamodb:GetItem', 'dynamodb:Query', 'dynamodb:PutItem'],
     Resource: { 'Fn::GetAtt': [catalogId, 'Arn'] },
   });
   template.hasResourceProperties('AWS::Lambda::Function', {
     Environment: { Variables: { CATALOG_TABLE_NAME: { Ref: catalogId } } },
   });
-  // Exact statements exclude Commerce, Operations, SQS and any write grants.
+  // Exact statements exclude Commerce, Operations, SQS and all other service permissions.
   template.resourceCountIs('AWS::IAM::ManagedPolicy', 0);
 });
 
@@ -267,7 +273,7 @@ test('one secretless client enables only password, SRP and refresh with explicit
   template.hasOutput('AdminAppClientId', { Value: { Ref: clientId } });
 });
 
-test('only admin/me binds the JWT authorizer to the existing pool, client and HTTP API', () => {
+test('all five admin routes bind the JWT authorizer to the existing pool, client and HTTP API', () => {
   template.resourceCountIs('AWS::ApiGatewayV2::Authorizer', 1);
   const poolId = Object.keys(
     template.findResources('AWS::Cognito::UserPool'),
@@ -290,12 +296,21 @@ test('only admin/me binds the JWT authorizer to the existing pool, client and HT
       Issuer: { 'Fn::GetAtt': [poolId, 'ProviderURL'] },
     },
   });
-  template.hasResourceProperties('AWS::ApiGatewayV2::Route', {
-    ApiId: { Ref: apiId },
-    RouteKey: 'GET /admin/me',
-    AuthorizationType: 'JWT',
-    AuthorizerId: { Ref: authorizerId },
-  });
+  for (const route of [
+    'GET /admin/me',
+    'POST /admin/products',
+    'PUT /admin/products/{productId}',
+    'POST /admin/drops',
+    'PUT /admin/drops/{dropId}',
+  ]) {
+    template.hasResourceProperties('AWS::ApiGatewayV2::Route', {
+      ApiId: { Ref: apiId },
+      RouteKey: route,
+      AuthorizationType: 'JWT',
+      AuthorizerId: { Ref: authorizerId },
+      AuthorizationScopes: Match.absent(),
+    });
+  }
   // Keep Lambda invocation behind API Gateway, with no public function URL.
   template.resourceCountIs('AWS::Lambda::Url', 0);
 });
@@ -306,6 +321,8 @@ test('existing pool, API, Lambda and table logical identities remain unchanged',
     CommerceTable6CC80189: 'AWS::DynamoDB::Table',
     OperationsTable90528792: 'AWS::DynamoDB::Table',
     AdminUserPoolD0AF18CF: 'AWS::Cognito::UserPool',
+    AdminUserPoolAdminAppClient43C1FAD5: 'AWS::Cognito::UserPoolClient',
+    HttpApiAdminJwtAuthorizerA698361D: 'AWS::ApiGatewayV2::Authorizer',
     ApplicationApi5D63FF39: 'AWS::Lambda::Function',
     HttpApiF5A9A8A7: 'AWS::ApiGatewayV2::Api',
   };
@@ -314,4 +331,69 @@ test('existing pool, API, Lambda and table logical identities remain unchanged',
       template.findResources(type)[id],
       `Missing original resource ${id}`,
     );
+});
+
+test('admin group uses the existing pool, has no IAM role and provisions no membership', () => {
+  template.resourceCountIs('AWS::Cognito::UserPoolGroup', 1);
+  template.hasResourceProperties('AWS::Cognito::UserPoolGroup', {
+    GroupName: 'batch-and-batter-admins',
+    UserPoolId: { Ref: 'AdminUserPoolD0AF18CF' },
+    RoleArn: Match.absent(),
+  });
+  template.resourceCountIs('AWS::Cognito::UserPoolUserToGroupAttachment', 0);
+  template.resourceCountIs('AWS::Cognito::UserPoolUser', 0);
+  template.hasOutput('AdminGroupName', { Value: { Ref: 'AdminGroup' } });
+});
+
+test('tables, pool including MFA, client and JWT authorizer exactly preserve the Phase 4B1 template', () => {
+  // Captured from the pre-change local synthesis; excludes stack-path metadata only.
+  const baseline = JSON.parse(
+    readFileSync(
+      join(
+        __dirname,
+        '../../../test/fixtures/phase-4b1-protected-resources.json',
+      ),
+      'utf8',
+    ),
+  );
+  for (const [id, expected] of Object.entries(baseline)) {
+    const { Metadata: _metadata, ...actual } = template.toJSON().Resources[id];
+    assert.deepEqual(actual, expected, `Protected resource changed: ${id}`);
+  }
+});
+
+test('every route integration invokes only the existing Lambda through route-scoped API Gateway permissions', () => {
+  template.resourceCountIs('AWS::ApiGatewayV2::Integration', 8);
+  template.resourceCountIs('AWS::Lambda::Permission', 8);
+  for (const resource of Object.values(
+    template.findResources('AWS::ApiGatewayV2::Integration'),
+  )) {
+    assert.deepEqual(resource.Properties.IntegrationUri, {
+      'Fn::GetAtt': ['ApplicationApi5D63FF39', 'Arn'],
+    });
+    assert.equal(resource.Properties.IntegrationType, 'AWS_PROXY');
+  }
+  const permissions = Object.values(
+    template.findResources('AWS::Lambda::Permission'),
+  );
+  for (const route of [
+    '/*/*/admin/products',
+    '/*/*/admin/products/{productId}',
+    '/*/*/admin/drops',
+    '/*/*/admin/drops/{dropId}',
+  ]) {
+    assert.ok(
+      permissions.some(
+        (resource) =>
+          resource.Properties.SourceArn['Fn::Join'][1].at(-1) === route,
+      ),
+    );
+  }
+  for (const resource of permissions) {
+    assert.equal(resource.Properties.Principal, 'apigateway.amazonaws.com');
+    assert.equal(resource.Properties.Action, 'lambda:InvokeFunction');
+    assert.deepEqual(resource.Properties.FunctionName, {
+      'Fn::GetAtt': ['ApplicationApi5D63FF39', 'Arn'],
+    });
+  }
 });

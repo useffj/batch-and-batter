@@ -4,6 +4,7 @@ import { createHandler, type ApiEvent } from '../src/api';
 
 const claims = {
   token_use: 'access',
+  'cognito:groups': ['batch-and-batter-admins'],
   sub: 'test-subject',
   username: 'test-admin',
 };
@@ -106,3 +107,52 @@ test('admin route remains read-only and unknown admin routes are not exposed', a
     404,
   );
 });
+
+for (const group of [
+  ['batch-and-batter-admins'],
+  ['other', 'batch-and-batter-admins'],
+  '["other","batch-and-batter-admins"]',
+  '[batch-and-batter-admins]',
+  '[other batch-and-batter-admins]',
+  'batch-and-batter-admins',
+]) {
+  test(`verified group representation ${JSON.stringify(group)} is allowed`, async () => {
+    assert.equal(
+      (
+        await handler(
+          event({ jwt: { claims: { ...claims, 'cognito:groups': group } } }),
+        )
+      ).statusCode,
+      200,
+    );
+  });
+}
+for (const group of [
+  undefined,
+  null,
+  [],
+  '',
+  'other',
+  ['other'],
+  ['batch-and-batter-admins-extra'],
+  ['prefix-batch-and-batter-admins'],
+  'batch-and-batter-admins,other',
+  'other batch-and-batter-admins',
+  '[batch-and-batter-admins,other]',
+  '["batch-and-batter-admins",]',
+  '["batch-and-batter-admins",1]',
+  ['batch-and-batter-admins', null],
+  { group: 'batch-and-batter-admins' },
+  '[batch-and-batter-admins',
+  '[batch-and-batter-admins-extra]',
+  '[["batch-and-batter-admins"]]',
+  '[" batch-and-batter-admins "]',
+]) {
+  test(`missing, malformed or inexact groups ${JSON.stringify(group)} are forbidden`, async () => {
+    const response = await handler(
+      event({ jwt: { claims: { ...claims, 'cognito:groups': group } } }),
+    );
+    assert.equal(response.statusCode, 403);
+    assert.equal(JSON.parse(response.body).code, 'FORBIDDEN');
+  });
+}

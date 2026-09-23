@@ -1,6 +1,8 @@
 import { handler as health } from './health';
 import { idSchema } from './domain';
-import type { CatalogRepository } from './repository';
+import { CatalogWriteError, type CatalogRepository } from './repository';
+import { AdminError, requireAdmin } from './admin-auth';
+import { adminWrite, adminWriteRoutes } from './admin-writes';
 import { composeDrop, type CurrentDropResponse } from './storefront';
 
 export interface ApiEvent {
@@ -10,6 +12,8 @@ export interface ApiEvent {
     http: { method: string };
     authorizer?: { jwt?: { claims?: Record<string, unknown> } };
   };
+  body?: string;
+  isBase64Encoded?: boolean;
   pathParameters?: Record<string, string | undefined>;
 }
 export interface ApiResponse {
@@ -35,25 +39,43 @@ export function createHandler(getRepository: () => CatalogRepository) {
         message,
         requestId: event.requestContext.requestId,
       });
-    if (event.requestContext.http.method !== 'GET')
+    if (event.routeKey.split(' ')[0] !== event.requestContext.http.method)
       return error(404, 'NOT_FOUND', 'Route not found.');
     if (event.routeKey === 'GET /health') return health();
-    if (event.routeKey === 'GET /admin/me') {
-      // Trust only API Gateway's verified authorizer context, never caller headers/body.
-      const claims = event.requestContext.authorizer?.jwt?.claims;
-      if (!claims)
-        return error(401, 'UNAUTHORIZED', 'Authentication required.');
-      if (claims.token_use !== 'access')
-        return error(403, 'FORBIDDEN', 'An access token is required.');
-      const { sub, username } = claims;
-      if (
-        typeof sub !== 'string' ||
-        !sub.trim() ||
-        typeof username !== 'string' ||
-        !username.trim()
-      )
-        return error(401, 'UNAUTHORIZED', 'Authentication required.');
-      return json(200, { authenticated: true, subject: sub, username });
+    if (
+      event.routeKey === 'GET /admin/me' ||
+      adminWriteRoutes.includes(event.routeKey)
+    ) {
+      try {
+        const identity = requireAdmin(event);
+        if (event.routeKey === 'GET /admin/me') return json(200, identity);
+        const result = await adminWrite(event, getRepository);
+        return json(result.status, result.body);
+      } catch (failure) {
+        if (failure instanceof AdminError)
+          return error(failure.status, failure.code, failure.message);
+        if (failure instanceof CatalogWriteError) {
+          const messages = {
+            PRODUCT_NOT_FOUND: 'Product not found.',
+            DROP_NOT_FOUND: 'Drop not found.',
+            PRODUCT_CONFLICT: 'Product changed or already exists.',
+            DROP_CONFLICT: 'Drop changed or already exists.',
+            DROP_NOT_EDITABLE: 'Only DRAFT Drops can be edited.',
+          };
+          return error(
+            failure.code.endsWith('NOT_FOUND') ? 404 : 409,
+            failure.code,
+            messages[failure.code],
+          );
+        }
+        console.error(
+          JSON.stringify({
+            event: 'admin_request_failed',
+            requestId: event.requestContext.requestId,
+          }),
+        );
+        return error(500, 'INTERNAL_ERROR', 'Unable to complete the request.');
+      }
     }
     if (!['GET /drops/current', 'GET /drops/{dropId}'].includes(event.routeKey))
       return error(404, 'NOT_FOUND', 'Route not found.');

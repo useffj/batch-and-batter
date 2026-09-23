@@ -82,6 +82,11 @@ export class DevelopmentStack extends Stack {
       removalPolicy: RemovalPolicy.DESTROY,
     });
     new CfnOutput(this, 'AdminUserPoolId', { value: adminPool.userPoolId });
+    const adminGroup = new cognito.CfnUserPoolGroup(this, 'AdminGroup', {
+      userPoolId: adminPool.userPoolId,
+      groupName: 'batch-and-batter-admins',
+    });
+    new CfnOutput(this, 'AdminGroupName', { value: adminGroup.ref });
     const adminClient = adminPool.addClient('AdminAppClient', {
       userPoolClientName: `${prefix}-admin-client`,
       generateSecret: false,
@@ -130,7 +135,7 @@ export class DevelopmentStack extends Stack {
     if (!catalogTable) throw new Error('Catalog table is required');
     role.addToPolicy(
       new iam.PolicyStatement({
-        actions: ['dynamodb:GetItem', 'dynamodb:Query'],
+        actions: ['dynamodb:GetItem', 'dynamodb:Query', 'dynamodb:PutItem'],
         resources: [catalogTable.tableArn],
       }),
     );
@@ -188,6 +193,38 @@ export class DevelopmentStack extends Stack {
         application,
       ),
     });
+    for (const [route, method, integrationId] of [
+      [
+        '/admin/products',
+        apigateway.HttpMethod.POST,
+        'AdminCreateProductIntegration',
+      ],
+      [
+        '/admin/products/{productId}',
+        apigateway.HttpMethod.PUT,
+        'AdminReplaceProductIntegration',
+      ],
+      [
+        '/admin/drops',
+        apigateway.HttpMethod.POST,
+        'AdminCreateDropIntegration',
+      ],
+      [
+        '/admin/drops/{dropId}',
+        apigateway.HttpMethod.PUT,
+        'AdminReplaceDropIntegration',
+      ],
+    ] as const) {
+      api.addRoutes({
+        path: route,
+        methods: [method],
+        authorizer: adminAuthorizer,
+        integration: new integrations.HttpLambdaIntegration(
+          integrationId,
+          application,
+        ),
+      });
+    }
     new CfnOutput(this, 'HttpApiEndpoint', { value: api.apiEndpoint });
   }
 }
