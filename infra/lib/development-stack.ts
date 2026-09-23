@@ -250,6 +250,11 @@ export class DevelopmentStack extends Stack {
         apigateway.HttpMethod.DELETE,
         'AdminRemovePickupIntegration',
       ],
+      [
+        '/admin/drops/{dropId}/publish',
+        apigateway.HttpMethod.POST,
+        'AdminPublishDropIntegration',
+      ],
     ] as const) {
       api.addRoutes({
         path: route,

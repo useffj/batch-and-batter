@@ -42,7 +42,7 @@ export function compositionStore() {
         };
       }
       assert.ok(command instanceof TransactWriteCommand);
-      hooks.beforeTransaction();
+      await hooks.beforeTransaction();
       if (hooks.failure) throw hooks.failure;
       const actions = command.input.TransactItems!;
       const targeted = new Set<string>();
@@ -64,14 +64,41 @@ export function compositionStore() {
           case 'attribute_not_exists(PK)':
             passes = !current;
             break;
-          case 'attribute_exists(PK) AND #status = :draft':
+          case 'attribute_exists(PK) AND #status = :draft AND #updated = :expected':
             assert.deepEqual(operation.ExpressionAttributeNames, {
               '#status': 'status',
+              '#updated': 'updatedAt',
             });
-            assert.deepEqual(operation.ExpressionAttributeValues, {
-              ':draft': 'DRAFT',
+            assert.equal(
+              operation.ExpressionAttributeValues![':draft'],
+              'DRAFT',
+            );
+            passes =
+              !!current &&
+              current.status === 'DRAFT' &&
+              current.updatedAt ===
+                operation.ExpressionAttributeValues![':expected'];
+            break;
+          case 'attribute_exists(PK) AND #active = :active AND #updated = :expected':
+            assert.deepEqual(operation.ExpressionAttributeNames, {
+              '#active': 'active',
+              '#updated': 'updatedAt',
             });
-            passes = !!current && current.status === 'DRAFT';
+            passes =
+              !!current &&
+              current.active ===
+                operation.ExpressionAttributeValues![':active'] &&
+              current.updatedAt ===
+                operation.ExpressionAttributeValues![':expected'];
+            break;
+          case 'attribute_not_exists(PK) OR #storefrontDropId = :dropId':
+            assert.deepEqual(operation.ExpressionAttributeNames, {
+              '#storefrontDropId': 'storefrontDropId',
+            });
+            passes =
+              !current ||
+              current.storefrontDropId ===
+                operation.ExpressionAttributeValues![':dropId'];
             break;
           case 'attribute_exists(PK) AND #reserved = :zero AND #sold = :zero':
             assert.deepEqual(operation.ExpressionAttributeNames, {

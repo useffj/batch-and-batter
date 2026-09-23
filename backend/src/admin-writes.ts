@@ -10,6 +10,7 @@ import {
 } from './domain';
 import type { CatalogRepository } from './repository';
 import { generateUlid } from './ulid';
+import { updatedAt } from './timestamps';
 
 const productInput = productSchema.omit({
   productId: true,
@@ -49,12 +50,6 @@ export function body(event: ApiEvent): unknown {
       'A JSON request body is required.',
     );
   }
-}
-function updatedAt(previous?: string): string {
-  // Ensure every successful replacement advances the concurrency marker, even within one millisecond.
-  return new Date(
-    Math.max(Date.now(), previous ? Date.parse(previous) + 1 : 0),
-  ).toISOString();
 }
 export function productDto(item: Product) {
   return {
