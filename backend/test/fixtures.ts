@@ -59,6 +59,9 @@ export function fakeRepository(
   overrides: Partial<CatalogRepository> = {},
 ): CatalogRepository {
   return {
+    publishDraft: async () => {
+      throw new Error('Unexpected publish');
+    },
     attachDropProduct: async () => {
       throw new Error('Unexpected write');
     },

@@ -37,6 +37,7 @@ test('all five mutations use one bounded Catalog transaction with unique keys an
       s.remove(associationKey);
       s.remove(inventoryKey);
     }
+    const previous = structuredClone(s.get(dropKey))!;
     await operation(s);
     const transactions = s.commands.filter(
       (command) => command instanceof TransactWriteCommand,
@@ -44,13 +45,26 @@ test('all five mutations use one bounded Catalog transaction with unique keys an
     assert.equal(transactions.length, 1);
     const actions = transactions[0].input.TransactItems!;
     assert.equal(actions.length, [4, 4, 3, 2, 2][index]);
+    const next = s.get(dropKey)!;
+    assert.ok(
+      Date.parse(String(next.updatedAt)) >
+        Date.parse(String(previous.updatedAt)),
+    );
+    assert.deepEqual(next, { ...previous, updatedAt: next.updatedAt });
     assert.deepEqual(actions[0], {
-      ConditionCheck: {
+      Put: {
         TableName: 'test-catalog',
-        Key: dropKey,
-        ConditionExpression: 'attribute_exists(PK) AND #status = :draft',
-        ExpressionAttributeNames: { '#status': 'status' },
-        ExpressionAttributeValues: { ':draft': 'DRAFT' },
+        Item: next,
+        ConditionExpression:
+          'attribute_exists(PK) AND #status = :draft AND #updated = :expected',
+        ExpressionAttributeNames: {
+          '#status': 'status',
+          '#updated': 'updatedAt',
+        },
+        ExpressionAttributeValues: {
+          ':draft': 'DRAFT',
+          ':expected': previous.updatedAt,
+        },
       },
     });
     if (index < 2)
@@ -149,16 +163,13 @@ test('all mutations reject each non-DRAFT state, both initially and during the r
         );
       }
 });
-test('initially missing Drop is 404; Drop deleted at write time maps to DROP_NOT_EDITABLE', async () => {
+test('initially missing Drop is 404; Drop deleted at write time maps to DROP_NOT_FOUND', async () => {
   for (const operation of operations)
     for (const race of [false, true]) {
       const s = await seeded();
       if (race) s.hooks.beforeTransaction = () => s.remove(dropKey);
       else s.remove(dropKey);
-      await assert.rejects(
-        operation(s),
-        fails(race ? 'DROP_NOT_EDITABLE' : 'DROP_NOT_FOUND'),
-      );
+      await assert.rejects(operation(s), fails('DROP_NOT_FOUND'));
     }
 });
 test('replace changes all configuration and allocation while preserving zero reserved/sold', async () => {
@@ -220,7 +231,7 @@ test('removal deletes exactly the association/inventory pair and preserves reusa
   assert.ok(s.get(dropKey));
   assert.ok(s.get(pickupKey));
 });
-test('pickup Put creates and replaces idempotently without changing META; deletion requires existence', async () => {
+test('pickup Put creates and replaces idempotently while advancing META revision; deletion requires existence', async () => {
   const s = compositionStore();
   const meta = structuredClone(s.get(dropKey));
   await s.repository.putPickup(pickup);
@@ -228,7 +239,14 @@ test('pickup Put creates and replaces idempotently without changing META; deleti
   await s.repository.putPickup(replacement);
   await s.repository.putPickup(replacement);
   assert.deepEqual(s.get(pickupKey), { ...replacement, ...pickupKey });
-  assert.deepEqual(s.get(dropKey), meta);
+  assert.ok(
+    Date.parse(String(s.get(dropKey)!.updatedAt)) >
+      Date.parse(String(meta!.updatedAt)),
+  );
+  assert.deepEqual(s.get(dropKey), {
+    ...meta,
+    updatedAt: s.get(dropKey)!.updatedAt,
+  });
   await s.repository.removePickup(dropId, pickup.date);
   assert.equal(s.get(pickupKey), undefined);
   await assert.rejects(
@@ -257,7 +275,7 @@ test('cancellation precedence is deterministic; transaction conflicts map safely
         'ConditionalCheckFailed',
         'ConditionalCheckFailed',
       ],
-      'DROP_NOT_EDITABLE',
+      'COMPOSITION_CONFLICT',
     ],
     [
       ['None', 'ConditionalCheckFailed', 'ConditionalCheckFailed', 'None'],

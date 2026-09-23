@@ -229,7 +229,7 @@ test('API attach/update/remove returns matching inventory and preserves reusable
   assert.equal(s.get(catalogKeys.inventory(dropId, productId)), undefined);
   assert.ok(s.get(catalogKeys.product(productId)));
 });
-test('pickup API creates/replaces/removes its resource, supports base64 and preserves META', async () => {
+test('pickup API creates/replaces/removes its resource, supports base64 and advances META revision', async () => {
   const s = compositionStore();
   const handler = createHandler(() => s.repository);
   const meta = structuredClone(s.get(catalogKeys.drop(dropId)));
@@ -247,7 +247,11 @@ test('pickup API creates/replaces/removes its resource, supports base64 and pres
     }),
   );
   assert.equal(JSON.parse(response.body).pickup.startTime, '17:00');
-  assert.deepEqual(s.get(catalogKeys.drop(dropId)), meta);
+  const next = s.get(catalogKeys.drop(dropId))!;
+  assert.ok(
+    Date.parse(String(next.updatedAt)) > Date.parse(String(meta!.updatedAt)),
+  );
+  assert.deepEqual(next, { ...meta, updatedAt: next.updatedAt });
   assert.equal((await handler(event(removePickupRoute))).statusCode, 200);
   response = await handler(event(removePickupRoute));
   assert.equal(response.statusCode, 404);

@@ -337,7 +337,6 @@ test('no public writes, deletes, or out-of-scope admin operations exist', async 
     'PUT /drops/{dropId}',
     'DELETE /admin/products/{productId}',
     'DELETE /admin/drops/{dropId}',
-    'POST /admin/drops/{dropId}/publish',
     'PUT /admin/inventory',
     'PUT /admin/pickups',
     'PUT /admin/storefront',

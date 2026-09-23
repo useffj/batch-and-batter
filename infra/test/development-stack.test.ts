@@ -7,6 +7,7 @@ import { Match, Template } from 'aws-cdk-lib/assertions';
 import { DevelopmentStack } from '../lib/development-stack';
 
 const compositionRoutes = [
+  'POST /admin/drops/{dropId}/publish',
   'GET /admin/drops/{dropId}/composition',
   'POST /admin/drops/{dropId}/products',
   'PUT /admin/drops/{dropId}/products/{productId}',
@@ -41,7 +42,7 @@ test('three on-demand tables have only the approved string PK/SK foundation', ()
   }
 });
 
-test('one Node 24 Lambda preserves its identity and serves exactly the fourteen approved routes', () => {
+test('one Node 24 Lambda preserves its identity and serves exactly the fifteen approved routes', () => {
   template.resourceCountIs('AWS::Lambda::Function', 1);
   template.hasResourceProperties('AWS::Lambda::Function', {
     Runtime: 'nodejs24.x',
@@ -51,7 +52,7 @@ test('one Node 24 Lambda preserves its identity and serves exactly the fourteen 
   template.hasResourceProperties('AWS::ApiGatewayV2::Api', {
     ProtocolType: 'HTTP',
   });
-  template.resourceCountIs('AWS::ApiGatewayV2::Route', 14);
+  template.resourceCountIs('AWS::ApiGatewayV2::Route', 15);
   const functionId = Object.keys(
     template.findResources('AWS::Lambda::Function'),
   )[0];
@@ -289,7 +290,7 @@ test('one secretless client enables only password, SRP and refresh with explicit
   template.hasOutput('AdminAppClientId', { Value: { Ref: clientId } });
 });
 
-test('all eleven admin routes bind the JWT authorizer to the existing pool, client and HTTP API', () => {
+test('all twelve admin routes bind the JWT authorizer to the existing pool, client and HTTP API', () => {
   template.resourceCountIs('AWS::ApiGatewayV2::Authorizer', 1);
   const poolId = Object.keys(
     template.findResources('AWS::Cognito::UserPool'),
@@ -380,8 +381,8 @@ test('tables, pool including MFA, client and JWT authorizer exactly preserve the
 });
 
 test('every route integration invokes only the existing Lambda through route-scoped API Gateway permissions', () => {
-  template.resourceCountIs('AWS::ApiGatewayV2::Integration', 14);
-  template.resourceCountIs('AWS::Lambda::Permission', 14);
+  template.resourceCountIs('AWS::ApiGatewayV2::Integration', 15);
+  template.resourceCountIs('AWS::Lambda::Permission', 15);
   for (const resource of Object.values(
     template.findResources('AWS::ApiGatewayV2::Integration'),
   )) {
@@ -394,6 +395,7 @@ test('every route integration invokes only the existing Lambda through route-sco
     template.findResources('AWS::Lambda::Permission'),
   );
   for (const route of [
+    '/*/*/admin/drops/{dropId}/publish',
     '/*/*/admin/products',
     '/*/*/admin/products/{productId}',
     '/*/*/admin/drops',
@@ -415,15 +417,14 @@ test('every route integration invokes only the existing Lambda through route-sco
   }
 });
 
-test('composition adds only six routes/integrations/permissions and changes only Lambda code and Catalog IAM', () => {
+test('publication adds only one route/integration/permission and changes only Lambda code', () => {
   const baseline = JSON.parse(
     readFileSync(
-      join(__dirname, '../../../test/fixtures/phase-4b2a-resources.json'),
+      join(__dirname, '../../../test/fixtures/phase-4b2b1-resources.json'),
       'utf8',
     ),
   );
   const current = template.toJSON().Resources;
-  const changed: string[] = [];
   for (const [id, expected] of Object.entries(baseline)) {
     assert.ok(current[id], `Existing resource removed: ${id}`);
     const { Metadata: _metadata, ...actual } = current[id];
@@ -432,21 +433,18 @@ test('composition adds only six routes/integrations/permissions and changes only
       assert.ok(actual.Properties.Code.S3Key);
       prior.Properties.Code = actual.Properties.Code;
       assert.deepEqual(actual, prior, 'Lambda changed beyond code');
-    } else if (actual.Type === 'AWS::IAM::Policy') {
-      changed.push(id); // exact statement actions/resources asserted above
     } else
       assert.deepEqual(actual, expected, `Unrelated resource changed: ${id}`);
   }
-  assert.equal(changed.length, 1);
   const added = Object.entries(current)
     .filter(([id]) => !(id in baseline))
     .map(([, resource]) => (resource as { Type: string }).Type);
   assert.deepEqual(
     added.sort(),
     [
-      ...Array(6).fill('AWS::ApiGatewayV2::Route'),
-      ...Array(6).fill('AWS::ApiGatewayV2::Integration'),
-      ...Array(6).fill('AWS::Lambda::Permission'),
+      ...Array(1).fill('AWS::ApiGatewayV2::Route'),
+      ...Array(1).fill('AWS::ApiGatewayV2::Integration'),
+      ...Array(1).fill('AWS::Lambda::Permission'),
     ].sort(),
   );
 });

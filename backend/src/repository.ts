@@ -8,6 +8,8 @@ import {
 } from '@aws-sdk/lib-dynamodb';
 import { z } from 'zod';
 import { catalogKeys } from './keys';
+import { updatedAt } from './timestamps';
+import { isPublishReady, type PublishSnapshot } from './publish-readiness';
 import {
   productSchema,
   dropSchema,
@@ -23,6 +25,10 @@ import {
 } from './domain';
 
 export interface CatalogRepository {
+  publishDraft(dropId: string): Promise<{
+    drop: Drop;
+    storefront: { storefrontDropId: string; updatedAt: string };
+  }>;
   attachDropProduct(
     item: DropProduct,
     inventoryTotal: number,
@@ -58,7 +64,9 @@ export class CatalogWriteError extends Error {
       | 'PICKUP_NOT_FOUND'
       | 'DROP_PRODUCT_CONFLICT'
       | 'INVENTORY_NOT_EDITABLE'
-      | 'COMPOSITION_CONFLICT',
+      | 'COMPOSITION_CONFLICT'
+      | 'DROP_NOT_READY'
+      | 'STOREFRONT_OCCUPIED',
   ) {
     super(code);
   }
@@ -81,16 +89,32 @@ export class DynamoCatalogRepository implements CatalogRepository {
   ) {
     if (!tableName) throw new Error('CATALOG_TABLE_NAME is required');
   }
-  private draftCheck(dropId: string) {
+  private draftRevisionPut(previous: Drop, next: Drop) {
     return {
-      ConditionCheck: {
+      Put: {
         TableName: this.tableName,
-        Key: catalogKeys.drop(dropId),
-        ConditionExpression: 'attribute_exists(PK) AND #status = :draft',
-        ExpressionAttributeNames: { '#status': 'status' },
-        ExpressionAttributeValues: { ':draft': 'DRAFT' },
+        Item: { ...next, ...catalogKeys.drop(previous.dropId) },
+        ConditionExpression:
+          'attribute_exists(PK) AND #status = :draft AND #updated = :expected',
+        ExpressionAttributeNames: {
+          '#status': 'status',
+          '#updated': 'updatedAt',
+        },
+        ExpressionAttributeValues: {
+          ':draft': 'DRAFT',
+          ':expected': previous.updatedAt,
+        },
       },
     };
+  }
+  private async dropRevisionFailure(
+    dropId: string,
+  ): Promise<CatalogWriteError['code']> {
+    const current = await this.getDrop(dropId);
+    if (!current) return 'DROP_NOT_FOUND';
+    return current.status !== 'DRAFT'
+      ? 'DROP_NOT_EDITABLE'
+      : 'COMPOSITION_CONFLICT';
   }
   private productCheck(productId: string) {
     return {
@@ -113,11 +137,24 @@ export class DynamoCatalogRepository implements CatalogRepository {
     if (!drop) throw new CatalogWriteError('DROP_NOT_FOUND');
     if (drop.status !== 'DRAFT')
       throw new CatalogWriteError('DROP_NOT_EDITABLE');
+    const next = dropSchema.parse({
+      ...drop,
+      updatedAt: updatedAt(drop.updatedAt),
+    });
+    await this.sendTransaction(
+      [this.draftRevisionPut(drop, next), ...actions],
+      [() => this.dropRevisionFailure(dropId), ...failures],
+    );
+  }
+  private async sendTransaction(
+    actions: NonNullable<TransactWriteCommandInput['TransactItems']>,
+    mappings: Array<
+      CatalogWriteError['code'] | (() => Promise<CatalogWriteError['code']>)
+    >,
+  ) {
     try {
       await this.client.send(
-        new TransactWriteCommand({
-          TransactItems: [this.draftCheck(dropId), ...actions],
-        }),
+        new TransactWriteCommand({ TransactItems: actions }),
       );
     } catch (error) {
       if (
@@ -128,8 +165,7 @@ export class DynamoCatalogRepository implements CatalogRepository {
       const reasons = (
         error as Error & { CancellationReasons?: Array<{ Code?: string }> }
       ).CancellationReasons;
-      const mappings = ['DROP_NOT_EDITABLE' as const, ...failures];
-      // Ordered precedence: Drop, Product, association, inventory. Unknown service failures stay 500.
+      // Conditional failures follow action order. Unknown service failures stay 500.
       if (reasons?.length === mappings.length) {
         if (
           reasons.some(
@@ -156,6 +192,81 @@ export class DynamoCatalogRepository implements CatalogRepository {
       }
       throw error;
     }
+  }
+  async publishDraft(dropId: string) {
+    // META must be read first: all following composition reads are covered by its revision.
+    let snapshot: PublishSnapshot;
+    try {
+      const drop = await this.getDrop(dropId);
+      if (!drop) throw new CatalogWriteError('DROP_NOT_FOUND');
+      if (drop.status !== 'DRAFT')
+        throw new CatalogWriteError('DROP_NOT_EDITABLE');
+      const [relations, inventories, pickups] = await Promise.all([
+        this.getDropProducts(dropId),
+        this.getDropInventory(dropId),
+        this.getPickupDates(dropId),
+      ]);
+      const products = [];
+      for (const relation of relations)
+        products.push(await this.getProduct(relation.productId));
+      snapshot = { drop, relations, inventories, pickups, products };
+    } catch (error) {
+      // Invalid stored domain data is not publishable; SDK/service failures remain generic 500s.
+      if (error instanceof z.ZodError)
+        throw new CatalogWriteError('DROP_NOT_READY');
+      throw error;
+    }
+    if (!isPublishReady(snapshot, Date.now()))
+      throw new CatalogWriteError('DROP_NOT_READY');
+    const { drop, products } = snapshot;
+    // Two Puts plus one check for every referenced reusable Product, including inactive associations.
+    const actionCount = 2 + products.length;
+    if (actionCount > 100) throw new CatalogWriteError('DROP_NOT_READY');
+    const now = updatedAt(drop.updatedAt);
+    const scheduled = dropSchema.parse({
+      ...drop,
+      status: 'SCHEDULED',
+      updatedAt: now,
+    });
+    const storefront = { storefrontDropId: dropId, updatedAt: now };
+    const actions: NonNullable<TransactWriteCommandInput['TransactItems']> = [
+      this.draftRevisionPut(drop, scheduled),
+      {
+        Put: {
+          TableName: this.tableName,
+          Item: { ...storefront, ...catalogKeys.storefront },
+          ConditionExpression:
+            'attribute_not_exists(PK) OR #storefrontDropId = :dropId',
+          ExpressionAttributeNames: { '#storefrontDropId': 'storefrontDropId' },
+          ExpressionAttributeValues: { ':dropId': dropId },
+        },
+      },
+      ...products.map((product) => {
+        if (!product) throw new CatalogWriteError('DROP_NOT_READY');
+        return {
+          ConditionCheck: {
+            TableName: this.tableName,
+            Key: catalogKeys.product(product.productId),
+            ConditionExpression:
+              'attribute_exists(PK) AND #active = :active AND #updated = :expected',
+            ExpressionAttributeNames: {
+              '#active': 'active',
+              '#updated': 'updatedAt',
+            },
+            ExpressionAttributeValues: {
+              ':active': product.active,
+              ':expected': product.updatedAt,
+            },
+          },
+        };
+      }),
+    ];
+    await this.sendTransaction(actions, [
+      () => this.dropRevisionFailure(dropId),
+      'STOREFRONT_OCCUPIED',
+      ...products.map(() => 'COMPOSITION_CONFLICT' as const),
+    ]);
+    return { drop: scheduled, storefront };
   }
   private inventoryZeroCondition() {
     return {

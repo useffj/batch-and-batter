@@ -46,8 +46,8 @@ test('installed SDK serializes transactions and preserves ordered cancellation r
         const serialized = JSON.parse(String(request.body));
         assert.equal(serialized.TransactItems.length, 4);
         assert.deepEqual(
-          serialized.TransactItems[0].ConditionCheck.ExpressionAttributeValues,
-          { ':draft': { S: 'DRAFT' } },
+          serialized.TransactItems[0].Put.ExpressionAttributeValues,
+          { ':draft': { S: 'DRAFT' }, ':expected': { S: draft.updatedAt } },
         );
         return {
           response: {
@@ -80,11 +80,12 @@ test('installed SDK serializes transactions and preserves ordered cancellation r
       repository.attachDropProduct(relation, 100),
       (error) =>
         error instanceof CatalogWriteError &&
-        error.code === 'DROP_NOT_EDITABLE',
+        error.code === 'COMPOSITION_CONFLICT',
     );
     assert.deepEqual(targets, [
       'DynamoDB_20120810.GetItem',
       'DynamoDB_20120810.TransactWriteItems',
+      'DynamoDB_20120810.GetItem',
     ]);
   } finally {
     client.destroy();

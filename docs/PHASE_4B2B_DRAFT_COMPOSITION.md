@@ -1,6 +1,6 @@
 # Phase 4B2B1: DRAFT Drop composition
 
-This phase lets an authorized administrator assemble the products, prices, initial inventory and pickup dates for a DRAFT Drop. It extends Phase 4B2A's Product/Drop metadata writes. Earlier documents describing composition and DELETE routes as unavailable are historical. Publishing remains Phase 4B2B2, and no admin UI is added here.
+This phase lets an authorized administrator assemble the products, prices, initial inventory and pickup dates for a DRAFT Drop. It extends Phase 4B2A's Product/Drop metadata writes. Earlier documents describing composition and DELETE routes as unavailable are historical. Phase 4B2B2A now adds safe publication separately; see [Safe publication](PHASE_4B2B_SAFE_PUBLISH.md). The behavior below incorporates its composition-revision hardening. No admin UI is added here.
 
 A reusable **Product** describes a cookie: name, ingredients, allergens and other catalog details. A **DropProduct** associates that cookie with a particular Drop and supplies its price in integer cents, cookie-unit value, display order and active flag. The same cookie can therefore cost different amounts in different Drops without duplicating its description.
 
@@ -22,7 +22,7 @@ DROP#<dropId>
 
 All six routes use the existing API Gateway JWT authorizer and the same `requireAdmin` helper as the existing admin routes. Gateway validates signatures and JWT claims. Lambda requires an access token, nonblank subject and username, and exact membership in `batch-and-batter-admins`. It does not perform custom signature verification or call Cognito. Authorization occurs before input parsing or repository creation. Responses use `Cache-Control: no-store`.
 
-`GET /health`, `GET /drops/current` and `GET /drops/{dropId}` remain public. The unchanged storefront read layer hides DRAFT Drops even if a storefront pointer references one. This phase cannot publish a Drop, change its status, write `STORE#CONFIG`, schedule opening, or start commerce activity. Publishing requires a separately reviewed lifecycle and complete-composition validation, so it is intentionally deferred.
+`GET /health`, `GET /drops/current` and `GET /drops/{dropId}` remain public. The unchanged storefront read layer hides DRAFT Drops even if a storefront pointer references one. This phase cannot publish a Drop, change its status, write `STORE#CONFIG`, schedule opening, or start commerce activity. The separate Phase 4B2B2A publication route validates composition and schedules the Drop; these composition routes still cannot publish.
 
 ## Routes and explicit response models
 
@@ -76,30 +76,30 @@ PUT `/pickups/{date}` accepts:
 }
 ```
 
-Strict validation rejects body date/dropId and unknown fields. Existing domain rules require valid `HH:MM` times and endTime later than startTime on the same date. Overnight windows are unsupported. The timezone must be recognized by the existing Intl rule; omission retains the existing America/Denver default. Success returns `{ pickup }` with the explicit pickup DTO. Repeating the same PUT intentionally produces the same resource state. Neither pickup operation changes Drop metadata or its timestamps. Pickup DELETE returns `{ deleted: true }`; repeating a successful DELETE returns 404.
+Strict validation rejects body date/dropId and unknown fields. Existing domain rules require valid `HH:MM` times and endTime later than startTime on the same date. Overnight windows are unsupported. The timezone must be recognized by the existing Intl rule; omission retains the existing America/Denver default. Success returns `{ pickup }` with the explicit pickup DTO. Repeating the same PUT intentionally produces the same resource state. Both pickup operations preserve editable Drop metadata but advance Drop.updatedAt in the same transaction. Repeated PUT therefore preserves the pickup resource state while advancing the Drop revision. Pickup DELETE returns `{ deleted: true }`; repeating a successful DELETE returns 404.
 
 ## Transactions and exact conditions
 
 A DynamoDB transaction is a group of changes committed together: all succeed or none do. Here every mutation sends exactly one SDK v3 `TransactWriteCommand` through the existing DynamoDBDocumentClient. It targets only CatalogTable and only two to four distinct items. No item is targeted twice. There is no BatchWrite, Scan, PartiQL, Update or table-wide operation.
 
-An initial consistent Drop read returns a useful 404 for an already absent Drop, or 409 for a non-DRAFT Drop. It is **not** the write authorization. Every transaction checks `DROP#<dropId>/META` again atomically. A future publication or deletion between the read and the write causes the entire transaction to fail, including any inventory changes.
+An initial consistent Drop read returns a useful 404 for an already absent Drop, or 409 for a non-DRAFT Drop. It is **not** the write authorization. Every transaction now conditionally replaces `DROP#<dropId>/META`, preserving all metadata/status while advancing updatedAt to max(server time, previous updatedAt + 1 millisecond). The Put requires DRAFT and the exact revision read earlier. Any intervening metadata/composition change or publication invalidates the transaction, including its inventory changes. This replaces the Phase 4B2B1 condition-only check; META is never targeted twice.
 
-| Label          | Exact ConditionExpression                                      | Names and values                              |
-| -------------- | -------------------------------------------------------------- | --------------------------------------------- |
-| DRAFT          | `attribute_exists(PK) AND #status = :draft`                    | `#status=status`, `:draft=DRAFT`              |
-| Exists         | `attribute_exists(PK)`                                         | None                                          |
-| Absent         | `attribute_not_exists(PK)`                                     | None                                          |
-| Inventory zero | `attribute_exists(PK) AND #reserved = :zero AND #sold = :zero` | `#reserved=reserved`, `#sold=sold`, `:zero=0` |
+| Label          | Exact ConditionExpression                                            | Names and values                                                                       |
+| -------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| DRAFT          | `attribute_exists(PK) AND #status = :draft AND #updated = :expected` | `#status=status`, `#updated=updatedAt`, `:draft=DRAFT`, `:expected=previous.updatedAt` |
+| Exists         | `attribute_exists(PK)`                                               | None                                                                                   |
+| Absent         | `attribute_not_exists(PK)`                                           | None                                                                                   |
+| Inventory zero | `attribute_exists(PK) AND #reserved = :zero AND #sold = :zero`       | `#reserved=reserved`, `#sold=sold`, `:zero=0`                                          |
 
 Conditions apply to each full PK/SK item key, not to every item sharing the PK.
 
-| Mutation              | Ordered transaction actions                                                                                                                            |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Attach Product        | 1. ConditionCheck Drop META (DRAFT). 2. ConditionCheck reusable Product META (Exists). 3. Put DropProduct (Absent). 4. Put Inventory (Absent).         |
-| Replace configuration | 1. ConditionCheck Drop META (DRAFT). 2. ConditionCheck reusable Product META (Exists). 3. Put DropProduct (Exists). 4. Put Inventory (Inventory zero). |
-| Remove Product        | 1. ConditionCheck Drop META (DRAFT). 2. Delete DropProduct (Exists). 3. Delete Inventory (Inventory zero).                                             |
-| Put pickup            | 1. ConditionCheck Drop META (DRAFT). 2. Put pickup at path date (unconditional create/replace within the transaction).                                 |
-| Remove pickup         | 1. ConditionCheck Drop META (DRAFT). 2. Delete pickup at path date (Exists).                                                                           |
+| Mutation              | Ordered transaction actions                                                                                                                                              |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Attach Product        | 1. Put advanced Drop META (DRAFT + expected revision). 2. ConditionCheck reusable Product META (Exists). 3. Put DropProduct (Absent). 4. Put Inventory (Absent).         |
+| Replace configuration | 1. Put advanced Drop META (DRAFT + expected revision). 2. ConditionCheck reusable Product META (Exists). 3. Put DropProduct (Exists). 4. Put Inventory (Inventory zero). |
+| Remove Product        | 1. Put advanced Drop META (DRAFT + expected revision). 2. Delete DropProduct (Exists). 3. Delete Inventory (Inventory zero).                                             |
+| Put pickup            | 1. Put advanced Drop META (DRAFT + expected revision). 2. Put pickup at path date (unconditional create/replace within the transaction).                                 |
+| Remove pickup         | 1. Put advanced Drop META (DRAFT + expected revision). 2. Delete pickup at path date (Exists).                                                                           |
 
 These use [DynamoDB's all-or-nothing transaction semantics](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/transaction-apis.html). Product removal does not require the reusable Product to exist, allowing an otherwise valid orphaned association to be removed.
 
@@ -107,21 +107,21 @@ These use [DynamoDB's all-or-nothing transaction semantics](https://docs.aws.ama
 
 The API retains `{ code, message, requestId }`. No raw AWS cancellation reason, item, token, body or credentials is returned or logged. Unexpected failures log only the admin-failure event label and request ID, then return generic 500 `INTERNAL_ERROR`.
 
-| Status/code                  | Meaning                                                                                  |
-| ---------------------------- | ---------------------------------------------------------------------------------------- |
-| 400 `VALIDATION_ERROR`       | Invalid path, JSON, fields, date/time/timezone, numeric value or unknown field           |
-| 401 `UNAUTHORIZED`           | Missing authentication or malformed subject/username                                     |
-| 403 `FORBIDDEN`              | Wrong token purpose or missing exact admin membership                                    |
-| 404 `DROP_NOT_FOUND`         | Drop absent on initial read, including composition GET                                   |
-| 404 `PRODUCT_NOT_FOUND`      | Attach/replace reusable Product existence condition fails                                |
-| 404 `DROP_PRODUCT_NOT_FOUND` | Replace/remove association existence condition fails                                     |
-| 404 `PICKUP_NOT_FOUND`       | Pickup delete existence condition fails                                                  |
-| 409 `DROP_NOT_EDITABLE`      | Initial non-DRAFT status, or atomic Drop condition fails (including concurrent deletion) |
-| 409 `DROP_PRODUCT_CONFLICT`  | Either association or inventory already exists during attach                             |
-| 409 `INVENTORY_NOT_EDITABLE` | Inventory condition fails and consistent reread confirms reserved or sold activity       |
-| 409 `COMPOSITION_CONFLICT`   | Transaction conflict, or failed inventory condition with missing/changed inventory       |
+| Status/code                  | Meaning                                                                                    |
+| ---------------------------- | ------------------------------------------------------------------------------------------ |
+| 400 `VALIDATION_ERROR`       | Invalid path, JSON, fields, date/time/timezone, numeric value or unknown field             |
+| 401 `UNAUTHORIZED`           | Missing authentication or malformed subject/username                                       |
+| 403 `FORBIDDEN`              | Wrong token purpose or missing exact admin membership                                      |
+| 404 `DROP_NOT_FOUND`         | Drop absent on initial read or consistent failure reread                                   |
+| 404 `PRODUCT_NOT_FOUND`      | Attach/replace reusable Product existence condition fails                                  |
+| 404 `DROP_PRODUCT_NOT_FOUND` | Replace/remove association existence condition fails                                       |
+| 404 `PICKUP_NOT_FOUND`       | Pickup delete existence condition fails                                                    |
+| 409 `DROP_NOT_EDITABLE`      | Initial non-DRAFT status, or consistent reread after failed Drop condition shows non-DRAFT |
+| 409 `DROP_PRODUCT_CONFLICT`  | Either association or inventory already exists during attach                               |
+| 409 `INVENTORY_NOT_EDITABLE` | Inventory condition fails and consistent reread confirms reserved or sold activity         |
+| 409 `COMPOSITION_CONFLICT`   | Transaction conflict, failed Drop revision while still DRAFT, or missing/changed inventory |
 
-Cancellation reasons are evaluated in transaction order: Drop first, then reusable Product where applicable, association, inventory. Multiple conditional failures therefore have deterministic precedence. Inventory failures use a consistent reread to distinguish activity from missing/changed data; classification describes that reread and can change under another concurrent edit. Invalid stored records or failures of that reread remain generic 500s. No fallback writes or unconditional retry are performed.
+The Drop-action failure consistently rereads META: missing maps to DROP_NOT_FOUND, non-DRAFT to DROP_NOT_EDITABLE, and still DRAFT to COMPOSITION_CONFLICT. Cancellation reasons are evaluated in transaction order: Drop first, then reusable Product where applicable, association, inventory. Multiple conditional failures therefore have deterministic precedence. Inventory failures use a consistent reread to distinguish activity from missing/changed data; classification describes that reread and can change under another concurrent edit. Invalid stored records or failures of that reread remain generic 500s. No fallback writes or unconditional retry are performed.
 
 Unknown service cancellation codes, absent/malformed reason lists and non-cancellation failures propagate to the generic 500 handler. Throttling/validation/service failures are not misreported as business conflicts. API Gateway rejections occur before Lambda and may use Gateway's own response shape.
 
@@ -141,13 +141,15 @@ ConditionCheckItem authorizes the transaction's condition-only checks without mo
 
 ## Concurrency, idempotency and follow-ups
 
-DropProduct and pickup records have no version fields. Complete replacements therefore retain last-writer-wins behavior among authorized edits while the Drop remains DRAFT. A stale admin form may replace a newer configuration; a delete may remove a concurrently edited resource. Inventory existence and zero-activity conditions always remain enforced. No model redesign or client ETag protocol is introduced in this phase. Inventory.updatedAt is a server timestamp, not an optimistic-lock version and need not increase across concurrent requests.
+All composition edits now share Drop.updatedAt as a conditional revision marker. Two overlapping server operations that read the same revision cannot both commit, even when they edit different composition items. Existing metadata replacement also advances and checks this timestamp, so metadata and composition writes cannot silently overwrite each other. The timestamp advances even within a single millisecond or when the clock moves backward.
 
-Duplicate POST attachment cannot partially create or overwrite a pair; it returns conflict. A new request after an ambiguous network failure has no application idempotency key. Pickup PUT is idempotent in resulting resource state; Product PUT refreshes its server timestamp. DELETE is not response-idempotent (a repeat returns 404). A timeout or generic 500 does not prove a transaction failed to commit: inspect composition before retrying. Do not blindly replay stale requests after another administrator has changed the draft.
+There is still no client ETag/version precondition. A stale form submitted after another request completes can overwrite newer values because it begins with a fresh server read. Inventory existence and zero-activity conditions remain enforced. Inventory.updatedAt is not the Drop revision marker. No domain field or new version record was added.
+
+Duplicate POST attachment cannot partially create or overwrite a pair; it returns conflict. A new request after an ambiguous network failure has no application idempotency key. Pickup PUT is idempotent only in its pickup resource state; all successful composition mutations advance the Drop revision. Product PUT also refreshes inventory.updatedAt. DELETE is not response-idempotent (a repeat returns 404). A timeout or generic 500 does not prove a transaction failed to commit: inspect composition before retrying. Do not blindly replay stale requests after another administrator has changed the draft.
 
 Production follow-ups remain MFA, deliberate admin provisioning/removal, browser token handling, rate limiting, operational audit history and reviewed publication/commerce workflows. No new dependency is introduced; pinned dependencies and lockfiles remain unchanged. Tests establish offline correctness of generated SDK requests and a fake atomic store, not live service acceptance. Deployment and separately authorized live verification remain human review steps.
 
-## Local validation and review
+## Historical Phase 4B2B1 validation and review
 
 Completed on 2026-09-23:
 
