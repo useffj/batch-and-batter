@@ -8,6 +8,7 @@ import {
   Tags,
   aws_apigatewayv2 as apigateway,
   aws_apigatewayv2_integrations as integrations,
+  aws_apigatewayv2_authorizers as authorizers,
   aws_cognito as cognito,
   aws_dynamodb as dynamodb,
   aws_iam as iam,
@@ -81,6 +82,24 @@ export class DevelopmentStack extends Stack {
       removalPolicy: RemovalPolicy.DESTROY,
     });
     new CfnOutput(this, 'AdminUserPoolId', { value: adminPool.userPoolId });
+    const adminClient = adminPool.addClient('AdminAppClient', {
+      userPoolClientName: `${prefix}-admin-client`,
+      generateSecret: false,
+      authFlows: { userPassword: true, userSrp: true },
+      // CDK includes ALLOW_REFRESH_TOKEN_AUTH when rotation is disabled.
+      disableOAuth: true,
+      accessTokenValidity: Duration.minutes(15),
+      idTokenValidity: Duration.minutes(15),
+      refreshTokenValidity: Duration.days(1),
+      enableTokenRevocation: true,
+      preventUserExistenceErrors: true,
+      supportedIdentityProviders: [
+        cognito.UserPoolClientIdentityProvider.COGNITO,
+      ],
+    });
+    new CfnOutput(this, 'AdminAppClientId', {
+      value: adminClient.userPoolClientId,
+    });
 
     const media = new s3.Bucket(this, 'ProductMediaBucket', {
       // Account/Region tokens keep this globally unique without fixed account data.
@@ -152,6 +171,23 @@ export class DevelopmentStack extends Stack {
         ),
       });
     }
+    const adminAuthorizer = new authorizers.HttpJwtAuthorizer(
+      'AdminJwtAuthorizer',
+      adminPool.userPoolProviderUrl,
+      {
+        jwtAudience: [adminClient.userPoolClientId],
+        identitySource: ['$request.header.Authorization'],
+      },
+    );
+    api.addRoutes({
+      path: '/admin/me',
+      methods: [apigateway.HttpMethod.GET],
+      authorizer: adminAuthorizer,
+      integration: new integrations.HttpLambdaIntegration(
+        'AdminMeIntegration',
+        application,
+      ),
+    });
     new CfnOutput(this, 'HttpApiEndpoint', { value: api.apiEndpoint });
   }
 }

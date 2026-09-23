@@ -5,7 +5,11 @@ import { composeDrop, type CurrentDropResponse } from './storefront';
 
 export interface ApiEvent {
   routeKey: string;
-  requestContext: { requestId: string; http: { method: string } };
+  requestContext: {
+    requestId: string;
+    http: { method: string };
+    authorizer?: { jwt?: { claims?: Record<string, unknown> } };
+  };
   pathParameters?: Record<string, string | undefined>;
 }
 export interface ApiResponse {
@@ -34,6 +38,23 @@ export function createHandler(getRepository: () => CatalogRepository) {
     if (event.requestContext.http.method !== 'GET')
       return error(404, 'NOT_FOUND', 'Route not found.');
     if (event.routeKey === 'GET /health') return health();
+    if (event.routeKey === 'GET /admin/me') {
+      // Trust only API Gateway's verified authorizer context, never caller headers/body.
+      const claims = event.requestContext.authorizer?.jwt?.claims;
+      if (!claims)
+        return error(401, 'UNAUTHORIZED', 'Authentication required.');
+      if (claims.token_use !== 'access')
+        return error(403, 'FORBIDDEN', 'An access token is required.');
+      const { sub, username } = claims;
+      if (
+        typeof sub !== 'string' ||
+        !sub.trim() ||
+        typeof username !== 'string' ||
+        !username.trim()
+      )
+        return error(401, 'UNAUTHORIZED', 'Authentication required.');
+      return json(200, { authenticated: true, subject: sub, username });
+    }
     if (!['GET /drops/current', 'GET /drops/{dropId}'].includes(event.routeKey))
       return error(404, 'NOT_FOUND', 'Route not found.');
     const isCurrent = event.routeKey === 'GET /drops/current';
