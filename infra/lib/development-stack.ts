@@ -135,7 +135,13 @@ export class DevelopmentStack extends Stack {
     if (!catalogTable) throw new Error('Catalog table is required');
     role.addToPolicy(
       new iam.PolicyStatement({
-        actions: ['dynamodb:GetItem', 'dynamodb:Query', 'dynamodb:PutItem'],
+        actions: [
+          'dynamodb:GetItem',
+          'dynamodb:Query',
+          'dynamodb:PutItem',
+          'dynamodb:DeleteItem',
+          'dynamodb:ConditionCheckItem',
+        ],
         resources: [catalogTable.tableArn],
       }),
     );
@@ -213,6 +219,36 @@ export class DevelopmentStack extends Stack {
         '/admin/drops/{dropId}',
         apigateway.HttpMethod.PUT,
         'AdminReplaceDropIntegration',
+      ],
+      [
+        '/admin/drops/{dropId}/composition',
+        apigateway.HttpMethod.GET,
+        'AdminCompositionIntegration',
+      ],
+      [
+        '/admin/drops/{dropId}/products',
+        apigateway.HttpMethod.POST,
+        'AdminAttachDropProductIntegration',
+      ],
+      [
+        '/admin/drops/{dropId}/products/{productId}',
+        apigateway.HttpMethod.PUT,
+        'AdminReplaceDropProductIntegration',
+      ],
+      [
+        '/admin/drops/{dropId}/products/{productId}',
+        apigateway.HttpMethod.DELETE,
+        'AdminRemoveDropProductIntegration',
+      ],
+      [
+        '/admin/drops/{dropId}/pickups/{date}',
+        apigateway.HttpMethod.PUT,
+        'AdminPutPickupIntegration',
+      ],
+      [
+        '/admin/drops/{dropId}/pickups/{date}',
+        apigateway.HttpMethod.DELETE,
+        'AdminRemovePickupIntegration',
       ],
     ] as const) {
       api.addRoutes({

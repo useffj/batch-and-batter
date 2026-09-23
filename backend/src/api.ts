@@ -3,6 +3,7 @@ import { idSchema } from './domain';
 import { CatalogWriteError, type CatalogRepository } from './repository';
 import { AdminError, requireAdmin } from './admin-auth';
 import { adminWrite, adminWriteRoutes } from './admin-writes';
+import { adminComposition, compositionRoutes } from './admin-composition';
 import { composeDrop, type CurrentDropResponse } from './storefront';
 
 export interface ApiEvent {
@@ -44,18 +45,28 @@ export function createHandler(getRepository: () => CatalogRepository) {
     if (event.routeKey === 'GET /health') return health();
     if (
       event.routeKey === 'GET /admin/me' ||
-      adminWriteRoutes.includes(event.routeKey)
+      adminWriteRoutes.includes(event.routeKey) ||
+      compositionRoutes.includes(event.routeKey)
     ) {
       try {
         const identity = requireAdmin(event);
         if (event.routeKey === 'GET /admin/me') return json(200, identity);
-        const result = await adminWrite(event, getRepository);
+        const result = compositionRoutes.includes(event.routeKey)
+          ? await adminComposition(event, getRepository)
+          : await adminWrite(event, getRepository);
         return json(result.status, result.body);
       } catch (failure) {
         if (failure instanceof AdminError)
           return error(failure.status, failure.code, failure.message);
         if (failure instanceof CatalogWriteError) {
           const messages = {
+            DROP_PRODUCT_NOT_FOUND: 'Drop product not found.',
+            PICKUP_NOT_FOUND: 'Pickup date not found.',
+            DROP_PRODUCT_CONFLICT: 'Drop product already exists.',
+            INVENTORY_NOT_EDITABLE:
+              'Inventory with reservations or sales cannot be edited.',
+            COMPOSITION_CONFLICT:
+              'Composition changed or is inconsistent. Reload before retrying.',
             PRODUCT_NOT_FOUND: 'Product not found.',
             DROP_NOT_FOUND: 'Drop not found.',
             PRODUCT_CONFLICT: 'Product changed or already exists.',

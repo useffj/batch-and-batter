@@ -6,6 +6,15 @@ import { App } from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
 import { DevelopmentStack } from '../lib/development-stack';
 
+const compositionRoutes = [
+  'GET /admin/drops/{dropId}/composition',
+  'POST /admin/drops/{dropId}/products',
+  'PUT /admin/drops/{dropId}/products/{productId}',
+  'DELETE /admin/drops/{dropId}/products/{productId}',
+  'PUT /admin/drops/{dropId}/pickups/{date}',
+  'DELETE /admin/drops/{dropId}/pickups/{date}',
+];
+
 const stack = new DevelopmentStack(new App(), 'TestDev', {
   environment: 'dev',
 });
@@ -32,7 +41,7 @@ test('three on-demand tables have only the approved string PK/SK foundation', ()
   }
 });
 
-test('one Node 24 Lambda preserves its identity and serves exactly the eight approved routes', () => {
+test('one Node 24 Lambda preserves its identity and serves exactly the fourteen approved routes', () => {
   template.resourceCountIs('AWS::Lambda::Function', 1);
   template.hasResourceProperties('AWS::Lambda::Function', {
     Runtime: 'nodejs24.x',
@@ -42,7 +51,7 @@ test('one Node 24 Lambda preserves its identity and serves exactly the eight app
   template.hasResourceProperties('AWS::ApiGatewayV2::Api', {
     ProtocolType: 'HTTP',
   });
-  template.resourceCountIs('AWS::ApiGatewayV2::Route', 8);
+  template.resourceCountIs('AWS::ApiGatewayV2::Route', 14);
   const functionId = Object.keys(
     template.findResources('AWS::Lambda::Function'),
   )[0];
@@ -53,6 +62,7 @@ test('one Node 24 Lambda preserves its identity and serves exactly the eight app
   assert.deepEqual(
     routes.map((route) => route.Properties.RouteKey).sort(),
     [
+      ...compositionRoutes,
       'GET /admin/me',
       'GET /drops/current',
       'GET /drops/{dropId}',
@@ -159,7 +169,7 @@ test('media is private, encrypted, owner controlled and denies insecure transpor
   });
 });
 
-test('Lambda has only scoped logging and Catalog GetItem/Query/PutItem permissions', () => {
+test('Lambda has only scoped logging and the exact Catalog composition permissions', () => {
   template.resourceCountIs('AWS::Logs::LogGroup', 1);
   template.hasResourceProperties('AWS::Logs::LogGroup', {
     RetentionInDays: 14,
@@ -187,7 +197,13 @@ test('Lambda has only scoped logging and Catalog GetItem/Query/PutItem permissio
   )[0];
   assert.deepEqual(statements[1], {
     Effect: 'Allow',
-    Action: ['dynamodb:GetItem', 'dynamodb:Query', 'dynamodb:PutItem'],
+    Action: [
+      'dynamodb:GetItem',
+      'dynamodb:Query',
+      'dynamodb:PutItem',
+      'dynamodb:DeleteItem',
+      'dynamodb:ConditionCheckItem',
+    ],
     Resource: { 'Fn::GetAtt': [catalogId, 'Arn'] },
   });
   template.hasResourceProperties('AWS::Lambda::Function', {
@@ -273,7 +289,7 @@ test('one secretless client enables only password, SRP and refresh with explicit
   template.hasOutput('AdminAppClientId', { Value: { Ref: clientId } });
 });
 
-test('all five admin routes bind the JWT authorizer to the existing pool, client and HTTP API', () => {
+test('all eleven admin routes bind the JWT authorizer to the existing pool, client and HTTP API', () => {
   template.resourceCountIs('AWS::ApiGatewayV2::Authorizer', 1);
   const poolId = Object.keys(
     template.findResources('AWS::Cognito::UserPool'),
@@ -297,6 +313,7 @@ test('all five admin routes bind the JWT authorizer to the existing pool, client
     },
   });
   for (const route of [
+    ...compositionRoutes,
     'GET /admin/me',
     'POST /admin/products',
     'PUT /admin/products/{productId}',
@@ -363,8 +380,8 @@ test('tables, pool including MFA, client and JWT authorizer exactly preserve the
 });
 
 test('every route integration invokes only the existing Lambda through route-scoped API Gateway permissions', () => {
-  template.resourceCountIs('AWS::ApiGatewayV2::Integration', 8);
-  template.resourceCountIs('AWS::Lambda::Permission', 8);
+  template.resourceCountIs('AWS::ApiGatewayV2::Integration', 14);
+  template.resourceCountIs('AWS::Lambda::Permission', 14);
   for (const resource of Object.values(
     template.findResources('AWS::ApiGatewayV2::Integration'),
   )) {
@@ -396,4 +413,40 @@ test('every route integration invokes only the existing Lambda through route-sco
       'Fn::GetAtt': ['ApplicationApi5D63FF39', 'Arn'],
     });
   }
+});
+
+test('composition adds only six routes/integrations/permissions and changes only Lambda code and Catalog IAM', () => {
+  const baseline = JSON.parse(
+    readFileSync(
+      join(__dirname, '../../../test/fixtures/phase-4b2a-resources.json'),
+      'utf8',
+    ),
+  );
+  const current = template.toJSON().Resources;
+  const changed: string[] = [];
+  for (const [id, expected] of Object.entries(baseline)) {
+    assert.ok(current[id], `Existing resource removed: ${id}`);
+    const { Metadata: _metadata, ...actual } = current[id];
+    if (id === 'ApplicationApi5D63FF39') {
+      const prior = structuredClone(expected) as typeof actual;
+      assert.ok(actual.Properties.Code.S3Key);
+      prior.Properties.Code = actual.Properties.Code;
+      assert.deepEqual(actual, prior, 'Lambda changed beyond code');
+    } else if (actual.Type === 'AWS::IAM::Policy') {
+      changed.push(id); // exact statement actions/resources asserted above
+    } else
+      assert.deepEqual(actual, expected, `Unrelated resource changed: ${id}`);
+  }
+  assert.equal(changed.length, 1);
+  const added = Object.entries(current)
+    .filter(([id]) => !(id in baseline))
+    .map(([, resource]) => (resource as { Type: string }).Type);
+  assert.deepEqual(
+    added.sort(),
+    [
+      ...Array(6).fill('AWS::ApiGatewayV2::Route'),
+      ...Array(6).fill('AWS::ApiGatewayV2::Integration'),
+      ...Array(6).fill('AWS::Lambda::Permission'),
+    ].sort(),
+  );
 });

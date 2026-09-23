@@ -28,13 +28,13 @@ const dropInput = z.strictObject({
   pickupInstructions: dropSchema.shape.pickupInstructions,
 });
 
-function validate<T>(schema: z.ZodType<T>, value: unknown): T {
+export function validate<T>(schema: z.ZodType<T>, value: unknown): T {
   const parsed = schema.safeParse(value);
   if (!parsed.success)
     throw new AdminError(400, 'VALIDATION_ERROR', 'Invalid request data.');
   return parsed.data;
 }
-function body(event: ApiEvent): unknown {
+export function body(event: ApiEvent): unknown {
   try {
     if (typeof event.body !== 'string') throw new Error();
     return JSON.parse(
@@ -56,7 +56,7 @@ function updatedAt(previous?: string): string {
     Math.max(Date.now(), previous ? Date.parse(previous) + 1 : 0),
   ).toISOString();
 }
-function productDto(item: Product) {
+export function productDto(item: Product) {
   return {
     productId: item.productId,
     name: item.name,
@@ -69,7 +69,7 @@ function productDto(item: Product) {
     updatedAt: item.updatedAt,
   };
 }
-function dropDto(item: Drop) {
+export function dropDto(item: Drop) {
   return {
     dropId: item.dropId,
     name: item.name,
