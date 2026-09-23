@@ -118,3 +118,29 @@ test('CLI preview works with no AWS credentials or network and does not confirm 
   assert.match(output, /Snickerdoodle/);
   assert.doesNotMatch(output, /Created 11 items/);
 });
+
+test('development pickup dates retain Thursday/Friday evenings and Saturday afternoon', () => {
+  const plan = buildSeedPlan(
+    {
+      ...options,
+      opensAt: '2026-09-27T18:00:00.000Z',
+      pickupDates: ['2026-10-01', '2026-10-02', '2026-10-03'],
+    },
+    new Date('2026-09-22T12:00:00.000Z'),
+  );
+  const pickups = plan.items.filter((item) =>
+    String(item.SK).startsWith('PICKUP#'),
+  );
+  assert.deepEqual(
+    pickups.map(({ date, startTime, endTime }) => ({
+      date,
+      startTime,
+      endTime,
+    })),
+    [
+      { date: '2026-10-01', startTime: '16:00', endTime: '19:00' },
+      { date: '2026-10-02', startTime: '16:00', endTime: '19:00' },
+      { date: '2026-10-03', startTime: '12:00', endTime: '15:00' },
+    ],
+  );
+});

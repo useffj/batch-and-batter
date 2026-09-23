@@ -170,14 +170,14 @@ export function buildSeedPlan(options: SeedOptions, now = new Date()) {
       }),
     });
   });
-  for (const date of dates.sort())
+  for (const [index, date] of dates.sort().entries())
     items.push({
       ...catalogKeys.pickup(drop.dropId, date),
       ...pickupSchema.parse({
         dropId: drop.dropId,
         date,
-        startTime: '16:00',
-        endTime: '19:00',
+        startTime: index === 2 ? '12:00' : '16:00',
+        endTime: index === 2 ? '15:00' : '19:00',
         active: true,
       }),
     });
