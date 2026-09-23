@@ -30,7 +30,7 @@ test('three on-demand tables have only the approved string PK/SK foundation', ()
   }
 });
 
-test('one Node 24 Lambda preserves its identity and serves exactly three read-only routes', () => {
+test('one Node 24 Lambda preserves its identity and serves exactly four read-only routes', () => {
   template.resourceCountIs('AWS::Lambda::Function', 1);
   template.hasResourceProperties('AWS::Lambda::Function', {
     Runtime: 'nodejs24.x',
@@ -40,7 +40,7 @@ test('one Node 24 Lambda preserves its identity and serves exactly three read-on
   template.hasResourceProperties('AWS::ApiGatewayV2::Api', {
     ProtocolType: 'HTTP',
   });
-  template.resourceCountIs('AWS::ApiGatewayV2::Route', 3);
+  template.resourceCountIs('AWS::ApiGatewayV2::Route', 4);
   const functionId = Object.keys(
     template.findResources('AWS::Lambda::Function'),
   )[0];
@@ -50,10 +50,19 @@ test('one Node 24 Lambda preserves its identity and serves exactly three read-on
   );
   assert.deepEqual(
     routes.map((route) => route.Properties.RouteKey).sort(),
-    ['GET /drops/current', 'GET /drops/{dropId}', 'GET /health'].sort(),
+    [
+      'GET /admin/me',
+      'GET /drops/current',
+      'GET /drops/{dropId}',
+      'GET /health',
+    ].sort(),
   );
-  for (const route of routes)
+  for (const route of routes.filter(
+    (route) => route.Properties.RouteKey !== 'GET /admin/me',
+  )) {
     assert.equal(route.Properties.AuthorizationType, 'NONE');
+    assert.equal(route.Properties.AuthorizerId, undefined);
+  }
   const integrationId = Object.keys(
     template.findResources('AWS::ApiGatewayV2::Integration'),
   )[0];
@@ -103,12 +112,12 @@ for (const name of ['reservation', 'notification']) {
   });
 }
 
-test('admin pool disables signup and has no users, client or hosted domain', () => {
+test('existing admin pool disables signup and has no users or hosted domain', () => {
   template.resourceCountIs('AWS::Cognito::UserPool', 1);
   template.hasResourceProperties('AWS::Cognito::UserPool', {
     AdminCreateUserConfig: { AllowAdminCreateUserOnly: true },
   });
-  for (const type of ['UserPoolUser', 'UserPoolClient', 'UserPoolDomain']) {
+  for (const type of ['UserPoolUser', 'UserPoolDomain']) {
     template.resourceCountIs(`AWS::Cognito::${type}`, 0);
   }
 });
@@ -215,4 +224,94 @@ test('development removal settings cannot be reused for production accidentally'
     () => new DevelopmentStack(new App(), 'Prod', { environment: 'prod' }),
     /Only dev/,
   );
+});
+
+test('one secretless client enables only password, SRP and refresh with explicit lifetimes', () => {
+  template.resourceCountIs('AWS::Cognito::UserPoolClient', 1);
+  const poolId = Object.keys(
+    template.findResources('AWS::Cognito::UserPool'),
+  )[0];
+  const clientId = Object.keys(
+    template.findResources('AWS::Cognito::UserPoolClient'),
+  )[0];
+  template.hasResourceProperties('AWS::Cognito::UserPoolClient', {
+    UserPoolId: { Ref: poolId },
+    GenerateSecret: false,
+    AllowedOAuthFlowsUserPoolClient: false,
+    AllowedOAuthFlows: Match.absent(),
+    CallbackURLs: Match.absent(),
+    AccessTokenValidity: 15,
+    IdTokenValidity: 15,
+    RefreshTokenValidity: 1440,
+    TokenValidityUnits: {
+      AccessToken: 'minutes',
+      IdToken: 'minutes',
+      RefreshToken: 'minutes',
+    },
+    EnableTokenRevocation: true,
+    PreventUserExistenceErrors: 'ENABLED',
+    SupportedIdentityProviders: ['COGNITO'],
+  });
+  const client = template.findResources('AWS::Cognito::UserPoolClient')[
+    clientId
+  ];
+  assert.deepEqual(
+    [...client.Properties.ExplicitAuthFlows].sort(),
+    [
+      'ALLOW_REFRESH_TOKEN_AUTH',
+      'ALLOW_USER_PASSWORD_AUTH',
+      'ALLOW_USER_SRP_AUTH',
+    ].sort(),
+  );
+  template.hasOutput('AdminUserPoolId', { Value: { Ref: poolId } });
+  template.hasOutput('AdminAppClientId', { Value: { Ref: clientId } });
+});
+
+test('only admin/me binds the JWT authorizer to the existing pool, client and HTTP API', () => {
+  template.resourceCountIs('AWS::ApiGatewayV2::Authorizer', 1);
+  const poolId = Object.keys(
+    template.findResources('AWS::Cognito::UserPool'),
+  )[0];
+  const clientId = Object.keys(
+    template.findResources('AWS::Cognito::UserPoolClient'),
+  )[0];
+  const apiId = Object.keys(
+    template.findResources('AWS::ApiGatewayV2::Api'),
+  )[0];
+  const authorizerId = Object.keys(
+    template.findResources('AWS::ApiGatewayV2::Authorizer'),
+  )[0];
+  template.hasResourceProperties('AWS::ApiGatewayV2::Authorizer', {
+    ApiId: { Ref: apiId },
+    AuthorizerType: 'JWT',
+    IdentitySource: ['$request.header.Authorization'],
+    JwtConfiguration: {
+      Audience: [{ Ref: clientId }],
+      Issuer: { 'Fn::GetAtt': [poolId, 'ProviderURL'] },
+    },
+  });
+  template.hasResourceProperties('AWS::ApiGatewayV2::Route', {
+    ApiId: { Ref: apiId },
+    RouteKey: 'GET /admin/me',
+    AuthorizationType: 'JWT',
+    AuthorizerId: { Ref: authorizerId },
+  });
+  // Keep Lambda invocation behind API Gateway, with no public function URL.
+  template.resourceCountIs('AWS::Lambda::Url', 0);
+});
+
+test('existing pool, API, Lambda and table logical identities remain unchanged', () => {
+  const expected = {
+    CatalogTableF8EA09BD: 'AWS::DynamoDB::Table',
+    CommerceTable6CC80189: 'AWS::DynamoDB::Table',
+    OperationsTable90528792: 'AWS::DynamoDB::Table',
+    AdminUserPoolD0AF18CF: 'AWS::Cognito::UserPool',
+    ApplicationApi5D63FF39: 'AWS::Lambda::Function',
+    HttpApiF5A9A8A7: 'AWS::ApiGatewayV2::Api',
+  };
+  for (const [id, type] of Object.entries(expected))
+    assert.ok(
+      template.findResources(type)[id],
+      `Missing original resource ${id}`,
+    );
 });
