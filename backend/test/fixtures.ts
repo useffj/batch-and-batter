@@ -59,6 +59,18 @@ export function fakeRepository(
   overrides: Partial<CatalogRepository> = {},
 ): CatalogRepository {
   return {
+    createProduct: async () => {
+      throw new Error('Unexpected write');
+    },
+    replaceProduct: async () => {
+      throw new Error('Unexpected write');
+    },
+    createDraftDrop: async () => {
+      throw new Error('Unexpected write');
+    },
+    replaceDraftDrop: async () => {
+      throw new Error('Unexpected write');
+    },
     getProduct: async () => product,
     getDrop: async () => drop,
     getDropProducts: async () => [relation],

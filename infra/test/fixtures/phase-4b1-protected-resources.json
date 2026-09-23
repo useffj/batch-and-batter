@@ -1,0 +1,211 @@
+{
+  "CatalogTableF8EA09BD": {
+    "Type": "AWS::DynamoDB::Table",
+    "Properties": {
+      "AttributeDefinitions": [
+        {
+          "AttributeName": "PK",
+          "AttributeType": "S"
+        },
+        {
+          "AttributeName": "SK",
+          "AttributeType": "S"
+        }
+      ],
+      "BillingMode": "PAY_PER_REQUEST",
+      "DeletionProtectionEnabled": false,
+      "KeySchema": [
+        {
+          "AttributeName": "PK",
+          "KeyType": "HASH"
+        },
+        {
+          "AttributeName": "SK",
+          "KeyType": "RANGE"
+        }
+      ],
+      "SSESpecification": {
+        "SSEEnabled": false
+      },
+      "TableName": "batch-and-batter-dev-catalog",
+      "Tags": [
+        {
+          "Key": "Environment",
+          "Value": "dev"
+        },
+        {
+          "Key": "Project",
+          "Value": "batch-and-batter"
+        }
+      ]
+    },
+    "UpdateReplacePolicy": "Delete",
+    "DeletionPolicy": "Delete"
+  },
+  "CommerceTable6CC80189": {
+    "Type": "AWS::DynamoDB::Table",
+    "Properties": {
+      "AttributeDefinitions": [
+        {
+          "AttributeName": "PK",
+          "AttributeType": "S"
+        },
+        {
+          "AttributeName": "SK",
+          "AttributeType": "S"
+        }
+      ],
+      "BillingMode": "PAY_PER_REQUEST",
+      "DeletionProtectionEnabled": false,
+      "KeySchema": [
+        {
+          "AttributeName": "PK",
+          "KeyType": "HASH"
+        },
+        {
+          "AttributeName": "SK",
+          "KeyType": "RANGE"
+        }
+      ],
+      "SSESpecification": {
+        "SSEEnabled": false
+      },
+      "TableName": "batch-and-batter-dev-commerce",
+      "Tags": [
+        {
+          "Key": "Environment",
+          "Value": "dev"
+        },
+        {
+          "Key": "Project",
+          "Value": "batch-and-batter"
+        }
+      ]
+    },
+    "UpdateReplacePolicy": "Delete",
+    "DeletionPolicy": "Delete"
+  },
+  "OperationsTable90528792": {
+    "Type": "AWS::DynamoDB::Table",
+    "Properties": {
+      "AttributeDefinitions": [
+        {
+          "AttributeName": "PK",
+          "AttributeType": "S"
+        },
+        {
+          "AttributeName": "SK",
+          "AttributeType": "S"
+        }
+      ],
+      "BillingMode": "PAY_PER_REQUEST",
+      "DeletionProtectionEnabled": false,
+      "KeySchema": [
+        {
+          "AttributeName": "PK",
+          "KeyType": "HASH"
+        },
+        {
+          "AttributeName": "SK",
+          "KeyType": "RANGE"
+        }
+      ],
+      "SSESpecification": {
+        "SSEEnabled": false
+      },
+      "TableName": "batch-and-batter-dev-operations",
+      "Tags": [
+        {
+          "Key": "Environment",
+          "Value": "dev"
+        },
+        {
+          "Key": "Project",
+          "Value": "batch-and-batter"
+        }
+      ]
+    },
+    "UpdateReplacePolicy": "Delete",
+    "DeletionPolicy": "Delete"
+  },
+  "AdminUserPoolD0AF18CF": {
+    "Type": "AWS::Cognito::UserPool",
+    "Properties": {
+      "AccountRecoverySetting": {
+        "RecoveryMechanisms": [
+          {
+            "Name": "admin_only",
+            "Priority": 1
+          }
+        ]
+      },
+      "AdminCreateUserConfig": {
+        "AllowAdminCreateUserOnly": true
+      },
+      "EmailVerificationMessage": "The verification code to your new account is {####}",
+      "EmailVerificationSubject": "Verify your new account",
+      "SmsVerificationMessage": "The verification code to your new account is {####}",
+      "UserPoolName": "batch-and-batter-dev-admins",
+      "UserPoolTags": {
+        "Environment": "dev",
+        "Project": "batch-and-batter"
+      },
+      "VerificationMessageTemplate": {
+        "DefaultEmailOption": "CONFIRM_WITH_CODE",
+        "EmailMessage": "The verification code to your new account is {####}",
+        "EmailSubject": "Verify your new account",
+        "SmsMessage": "The verification code to your new account is {####}"
+      }
+    },
+    "UpdateReplacePolicy": "Delete",
+    "DeletionPolicy": "Delete"
+  },
+  "AdminUserPoolAdminAppClient43C1FAD5": {
+    "Type": "AWS::Cognito::UserPoolClient",
+    "Properties": {
+      "AccessTokenValidity": 15,
+      "AllowedOAuthFlowsUserPoolClient": false,
+      "ClientName": "batch-and-batter-dev-admin-client",
+      "EnableTokenRevocation": true,
+      "ExplicitAuthFlows": [
+        "ALLOW_USER_PASSWORD_AUTH",
+        "ALLOW_USER_SRP_AUTH",
+        "ALLOW_REFRESH_TOKEN_AUTH"
+      ],
+      "GenerateSecret": false,
+      "IdTokenValidity": 15,
+      "PreventUserExistenceErrors": "ENABLED",
+      "RefreshTokenValidity": 1440,
+      "SupportedIdentityProviders": ["COGNITO"],
+      "TokenValidityUnits": {
+        "AccessToken": "minutes",
+        "IdToken": "minutes",
+        "RefreshToken": "minutes"
+      },
+      "UserPoolId": {
+        "Ref": "AdminUserPoolD0AF18CF"
+      }
+    }
+  },
+  "HttpApiAdminJwtAuthorizerA698361D": {
+    "Type": "AWS::ApiGatewayV2::Authorizer",
+    "Properties": {
+      "ApiId": {
+        "Ref": "HttpApiF5A9A8A7"
+      },
+      "AuthorizerType": "JWT",
+      "IdentitySource": ["$request.header.Authorization"],
+      "JwtConfiguration": {
+        "Audience": [
+          {
+            "Ref": "AdminUserPoolAdminAppClient43C1FAD5"
+          }
+        ],
+        "Issuer": {
+          "Fn::GetAtt": ["AdminUserPoolD0AF18CF", "ProviderURL"]
+        }
+      },
+      "Name": "AdminJwtAuthorizer"
+    }
+  }
+}

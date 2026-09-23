@@ -1,5 +1,6 @@
 import {
   GetCommand,
+  PutCommand,
   QueryCommand,
   type DynamoDBDocumentClient,
 } from '@aws-sdk/lib-dynamodb';
@@ -20,6 +21,10 @@ import {
 } from './domain';
 
 export interface CatalogRepository {
+  createProduct(product: Product): Promise<void>;
+  replaceProduct(product: Product, previous: Product): Promise<void>;
+  createDraftDrop(drop: Drop): Promise<void>;
+  replaceDraftDrop(drop: Drop, previous: Drop): Promise<void>;
   getProduct(productId: string): Promise<Product | undefined>;
   getDrop(dropId: string): Promise<Drop | undefined>;
   getDropProducts(dropId: string): Promise<DropProduct[]>;
@@ -27,6 +32,18 @@ export interface CatalogRepository {
   getPickupDates(dropId: string): Promise<PickupDate[]>;
   getStorefrontDropId(): Promise<string | undefined>;
   getStorefrontDrop(): Promise<Drop | undefined>;
+}
+export class CatalogWriteError extends Error {
+  constructor(
+    public readonly code:
+      | 'PRODUCT_NOT_FOUND'
+      | 'DROP_NOT_FOUND'
+      | 'PRODUCT_CONFLICT'
+      | 'DROP_CONFLICT'
+      | 'DROP_NOT_EDITABLE',
+  ) {
+    super(code);
+  }
 }
 type Key = { PK: string; SK: string };
 function decode<T>(
@@ -45,6 +62,93 @@ export class DynamoCatalogRepository implements CatalogRepository {
     private readonly tableName: string,
   ) {
     if (!tableName) throw new Error('CATALOG_TABLE_NAME is required');
+  }
+  private async put(item: Product | Drop, key: Key, previous?: Product | Drop) {
+    const draft = 'dropId' in item;
+    try {
+      await this.client.send(
+        new PutCommand({
+          TableName: this.tableName,
+          Item: { ...item, ...key },
+          ConditionExpression: previous
+            ? 'attribute_exists(PK) AND #created = :created AND #updated = :updated' +
+              (draft ? ' AND #status = :draft' : '')
+            : 'attribute_not_exists(PK)',
+          ...(previous
+            ? {
+                ExpressionAttributeNames: {
+                  '#created': 'createdAt',
+                  '#updated': 'updatedAt',
+                  ...(draft ? { '#status': 'status' } : {}),
+                },
+                ExpressionAttributeValues: {
+                  ':created': previous.createdAt,
+                  ':updated': previous.updatedAt,
+                  ...(draft ? { ':draft': 'DRAFT' } : {}),
+                },
+              }
+            : {}),
+        }),
+      );
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        error.name !== 'ConditionalCheckFailedException'
+      )
+        throw error;
+      if (previous) {
+        const current = draft
+          ? await this.getDrop(item.dropId)
+          : await this.getProduct(item.productId);
+        if (!current)
+          throw new CatalogWriteError(
+            draft ? 'DROP_NOT_FOUND' : 'PRODUCT_NOT_FOUND',
+          );
+        if ('status' in current && current.status !== 'DRAFT')
+          throw new CatalogWriteError('DROP_NOT_EDITABLE');
+      }
+      throw new CatalogWriteError(draft ? 'DROP_CONFLICT' : 'PRODUCT_CONFLICT');
+    }
+  }
+  async createProduct(product: Product) {
+    const item = productSchema.parse(product);
+    await this.put(item, catalogKeys.product(item.productId));
+  }
+  async replaceProduct(product: Product, previous: Product) {
+    const item = productSchema.parse(product);
+    productSchema.parse(previous);
+    this.assertReplacement(
+      item,
+      previous,
+      item.productId === previous.productId,
+    );
+    await this.put(item, catalogKeys.product(item.productId), previous);
+  }
+  async createDraftDrop(drop: Drop) {
+    const item = dropSchema.parse(drop);
+    if (item.status !== 'DRAFT')
+      throw new CatalogWriteError('DROP_NOT_EDITABLE');
+    await this.put(item, catalogKeys.drop(item.dropId));
+  }
+  async replaceDraftDrop(drop: Drop, previous: Drop) {
+    const item = dropSchema.parse(drop);
+    dropSchema.parse(previous);
+    if (item.status !== 'DRAFT' || previous.status !== 'DRAFT')
+      throw new CatalogWriteError('DROP_NOT_EDITABLE');
+    this.assertReplacement(item, previous, item.dropId === previous.dropId);
+    await this.put(item, catalogKeys.drop(item.dropId), previous);
+  }
+  private assertReplacement(
+    item: Product | Drop,
+    previous: Product | Drop,
+    sameId: boolean,
+  ) {
+    if (
+      !sameId ||
+      item.createdAt !== previous.createdAt ||
+      Date.parse(item.updatedAt) <= Date.parse(previous.updatedAt)
+    )
+      throw new Error('Invalid catalog replacement');
   }
   private async get<T>(key: Key, schema: z.ZodType<T>): Promise<T | undefined> {
     const result = await this.client.send(
