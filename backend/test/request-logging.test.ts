@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createHandler, type ApiEvent } from '../src/api';
+import { createHandler as createHttpHandler, type ApiEvent } from '../src/api';
 import { ADMIN_GROUP, AdminError } from '../src/admin-auth';
 import { CatalogWriteError } from '../src/repository';
 import { dropId, fakeRepository } from './fixtures';
+
+const createHandler = (repository: Parameters<typeof createHttpHandler>[0]) =>
+  createHttpHandler(repository, () => ({ ensure: async () => {} }));
 
 const secrets = [
   'private-token',
@@ -154,6 +157,7 @@ test('all registered routes have stable operation names, including authenticatio
     ['DELETE /admin/drops/{dropId}/pickups/{date}', 'removePickup'],
     ['POST /admin/drops/{dropId}/publish', 'publishDrop'],
     ['POST /admin/drops/{dropId}/open', 'openDrop'],
+    ['POST /admin/drops/{dropId}/reconcile-opening', 'reconcileOpening'],
   ];
   for (const [route, operation] of routes) {
     const request: ApiEvent = event(route);

@@ -36,6 +36,7 @@ export async function verifyArtifact(root) {
   }
   for (const packageName of [
     '@aws-sdk/client-dynamodb',
+    '@aws-sdk/client-scheduler',
     '@aws-sdk/lib-dynamodb',
     'zod',
   ]) {

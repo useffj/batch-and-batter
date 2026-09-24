@@ -7,6 +7,7 @@ import { Match, Template } from 'aws-cdk-lib/assertions';
 import { DevelopmentStack } from '../lib/development-stack';
 
 const compositionRoutes = [
+  'POST /admin/drops/{dropId}/reconcile-opening',
   'POST /admin/drops/{dropId}/open',
   'POST /admin/drops/{dropId}/publish',
   'GET /admin/drops/{dropId}/composition',
@@ -85,7 +86,7 @@ test('three on-demand tables have only the approved string PK/SK foundation', ()
   }
 });
 
-test('one Node 24 Lambda preserves its identity and serves exactly the sixteen approved routes', () => {
+test('one Node 24 Lambda preserves its identity and serves exactly the seventeen approved routes', () => {
   template.resourceCountIs('AWS::Lambda::Function', 1);
   template.hasResourceProperties('AWS::Lambda::Function', {
     Runtime: 'nodejs24.x',
@@ -95,7 +96,7 @@ test('one Node 24 Lambda preserves its identity and serves exactly the sixteen a
   template.hasResourceProperties('AWS::ApiGatewayV2::Api', {
     ProtocolType: 'HTTP',
   });
-  template.resourceCountIs('AWS::ApiGatewayV2::Route', 16);
+  template.resourceCountIs('AWS::ApiGatewayV2::Route', 17);
   const functionId = Object.keys(
     template.findResources('AWS::Lambda::Function'),
   )[0];
@@ -218,14 +219,23 @@ test('Lambda has only scoped logging and the exact Catalog composition permissio
   template.hasResourceProperties('AWS::Logs::LogGroup', {
     RetentionInDays: 14,
   });
-  template.resourceCountIs('AWS::IAM::Role', 1);
+  template.resourceCountIs('AWS::IAM::Role', 2);
   template.hasResourceProperties('AWS::IAM::Role', {
     ManagedPolicyArns: Match.absent(),
   });
-  template.resourceCountIs('AWS::IAM::Policy', 1);
+  template.resourceCountIs('AWS::IAM::Policy', 2);
   const policies = template.findResources('AWS::IAM::Policy');
-  const statements =
-    Object.values(policies)[0].Properties.PolicyDocument.Statement;
+  const statements = Object.values(policies)
+    .find((p) =>
+      p.Properties.PolicyDocument.Statement.some((s: { Action: string[] }) =>
+        s.Action.includes('dynamodb:GetItem'),
+      ),
+    )!
+    .Properties.PolicyDocument.Statement.filter(
+      (s: { Action: string | string[] }) =>
+        typeof s.Action !== 'string' &&
+        !s.Action.includes('scheduler:CreateSchedule'),
+    );
   assert.equal(statements.length, 2);
   assert.deepEqual(statements[0].Action, [
     'logs:CreateLogStream',
@@ -337,7 +347,7 @@ test('one secretless client enables only password, SRP and refresh with explicit
   template.hasOutput('AdminAppClientId', { Value: { Ref: clientId } });
 });
 
-test('all thirteen admin routes bind the JWT authorizer to the existing pool, client and HTTP API', () => {
+test('all fourteen admin routes bind the JWT authorizer to the existing pool, client and HTTP API', () => {
   template.resourceCountIs('AWS::ApiGatewayV2::Authorizer', 1);
   const poolId = Object.keys(
     template.findResources('AWS::Cognito::UserPool'),
@@ -428,8 +438,8 @@ test('tables, pool including MFA, client and JWT authorizer exactly preserve the
 });
 
 test('every route integration invokes only the existing Lambda through route-scoped API Gateway permissions', () => {
-  template.resourceCountIs('AWS::ApiGatewayV2::Integration', 16);
-  template.resourceCountIs('AWS::Lambda::Permission', 16);
+  template.resourceCountIs('AWS::ApiGatewayV2::Integration', 17);
+  template.resourceCountIs('AWS::Lambda::Permission', 17);
   for (const resource of Object.values(
     template.findResources('AWS::ApiGatewayV2::Integration'),
   )) {
@@ -444,6 +454,7 @@ test('every route integration invokes only the existing Lambda through route-sco
   for (const route of [
     '/*/*/admin/drops/{dropId}/publish',
     '/*/*/admin/drops/{dropId}/open',
+    '/*/*/admin/drops/{dropId}/reconcile-opening',
     '/*/*/admin/products',
     '/*/*/admin/products/{productId}',
     '/*/*/admin/drops',
@@ -465,10 +476,10 @@ test('every route integration invokes only the existing Lambda through route-sco
   }
 });
 
-test('manual opening adds only a route, integration, invocation permission and changes only Lambda code', () => {
+test('automatic opening changes only the approved Lambda configuration, schedule IAM and reconciliation route', () => {
   const baseline = JSON.parse(
     readFileSync(
-      join(__dirname, '../../../test/fixtures/phase-4b2b2a1-resources.json'),
+      join(__dirname, '../../../test/fixtures/phase-4b2b2b1-resources.json'),
       'utf8',
     ),
   );
@@ -480,7 +491,13 @@ test('manual opening adds only a route, integration, invocation permission and c
       const prior = structuredClone(expected) as typeof actual;
       assert.ok(actual.Properties.Code.S3Key);
       prior.Properties.Code = actual.Properties.Code;
-      assert.deepEqual(actual, prior, 'Lambda changed beyond code');
+      prior.Properties.Environment = actual.Properties.Environment;
+      assert.deepEqual(actual, prior, 'Lambda changed beyond code/environment');
+    } else if (actual.Type === 'AWS::IAM::Policy') {
+      const prior = structuredClone(expected) as typeof actual;
+      prior.Properties.PolicyDocument.Statement =
+        actual.Properties.PolicyDocument.Statement;
+      assert.deepEqual(actual, prior, 'Existing policy attachment changed');
     } else
       assert.deepEqual(actual, expected, `Unrelated resource changed: ${id}`);
   }
@@ -490,6 +507,117 @@ test('manual opening adds only a route, integration, invocation permission and c
   assert.deepEqual(added.sort(), [
     'AWS::ApiGatewayV2::Integration',
     'AWS::ApiGatewayV2::Route',
+    'AWS::IAM::Policy',
+    'AWS::IAM::Role',
+    'AWS::Lambda::EventInvokeConfig',
     'AWS::Lambda::Permission',
+    'AWS::Scheduler::ScheduleGroup',
   ]);
+});
+
+test('automatic opening has exact group trust, minimal policies and bounded async execution', () => {
+  const resources = template.toJSON().Resources;
+  const groupId = Object.keys(
+    template.findResources('AWS::Scheduler::ScheduleGroup'),
+  )[0];
+  assert.equal(
+    resources[groupId].Properties.Name,
+    'batch-and-batter-dev-openings',
+  );
+  const schedulerRoleId = Object.keys(
+    template.findResources('AWS::IAM::Role'),
+  ).find(
+    (id) =>
+      resources[id].Properties.AssumeRolePolicyDocument.Statement[0].Principal
+        .Service === 'scheduler.amazonaws.com',
+  )!;
+  assert.deepEqual(
+    resources[schedulerRoleId].Properties.AssumeRolePolicyDocument,
+    {
+      Version: '2012-10-17',
+      Statement: [
+        {
+          Action: 'sts:AssumeRole',
+          Effect: 'Allow',
+          Principal: { Service: 'scheduler.amazonaws.com' },
+          Condition: {
+            StringEquals: {
+              'aws:SourceAccount': { Ref: 'AWS::AccountId' },
+              'aws:SourceArn': { 'Fn::GetAtt': [groupId, 'Arn'] },
+            },
+          },
+        },
+      ],
+    },
+  );
+  const arn = (service: string, suffix: string) => ({
+    'Fn::Join': [
+      '',
+      [
+        'arn:',
+        { Ref: 'AWS::Partition' },
+        `:${service}:`,
+        { Ref: 'AWS::Region' },
+        ':',
+        { Ref: 'AWS::AccountId' },
+        suffix,
+      ],
+    ],
+  });
+  const target = arn('lambda', ':function:batch-and-batter-dev-api');
+  const policies = Object.values(template.findResources('AWS::IAM::Policy'));
+  const schedulerPolicy = policies.find((p) =>
+    p.Properties.Roles.some((r: { Ref: string }) => r.Ref === schedulerRoleId),
+  )!;
+  assert.deepEqual(schedulerPolicy.Properties.PolicyDocument, {
+    Version: '2012-10-17',
+    Statement: [
+      { Action: 'lambda:InvokeFunction', Effect: 'Allow', Resource: target },
+    ],
+  });
+  const applicationPolicy = policies.find((p) => p !== schedulerPolicy)!;
+  const statements = applicationPolicy.Properties.PolicyDocument.Statement;
+  assert.equal(statements.length, 4);
+  assert.deepEqual(statements.slice(0, 2), [
+    {
+      Action: ['scheduler:CreateSchedule', 'scheduler:GetSchedule'],
+      Effect: 'Allow',
+      Resource: arn(
+        'scheduler',
+        ':schedule/batch-and-batter-dev-openings/open-*',
+      ),
+    },
+    {
+      Action: 'iam:PassRole',
+      Effect: 'Allow',
+      Resource: { 'Fn::GetAtt': [schedulerRoleId, 'Arn'] },
+      Condition: {
+        StringEquals: { 'iam:PassedToService': 'scheduler.amazonaws.com' },
+      },
+    },
+  ]);
+  const catalogId = Object.keys(
+    template.findResources('AWS::DynamoDB::Table'),
+  ).find(
+    (id) =>
+      resources[id].Properties.TableName === 'batch-and-batter-dev-catalog',
+  )!;
+  template.hasResourceProperties('AWS::Lambda::Function', {
+    Environment: {
+      Variables: {
+        CATALOG_TABLE_NAME: { Ref: catalogId },
+        OPEN_SCHEDULE_GROUP: { Ref: groupId },
+        OPEN_TARGET_ARN: target,
+        OPEN_SCHEDULE_ROLE_ARN: { 'Fn::GetAtt': [schedulerRoleId, 'Arn'] },
+      },
+    },
+  });
+  template.resourceCountIs('AWS::Lambda::EventInvokeConfig', 1);
+  template.hasResourceProperties('AWS::Lambda::EventInvokeConfig', {
+    FunctionName: { Ref: 'ApplicationApi5D63FF39' },
+    Qualifier: '$LATEST',
+    MaximumEventAgeInSeconds: 900,
+    MaximumRetryAttempts: 2,
+    DestinationConfig: Match.absent(),
+  });
 });

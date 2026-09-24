@@ -22,6 +22,7 @@ const operations = new Map([
   ['DELETE /admin/drops/{dropId}/pickups/{date}', 'removePickup'],
   ['POST /admin/drops/{dropId}/publish', 'publishDrop'],
   ['POST /admin/drops/{dropId}/open', 'openDrop'],
+  ['POST /admin/drops/{dropId}/reconcile-opening', 'reconcileOpening'],
 ]);
 
 const errorCodes = new Set([
@@ -34,6 +35,10 @@ const errorCodes = new Set([
   'DROP_NOT_READY',
   'STOREFRONT_OCCUPIED',
   'STOREFRONT_CONFLICT',
+  'PUBLICATION_SCHEDULING_FAILED',
+  'OPENING_SCHEDULE_UNCONFIRMED',
+  'OPENING_SCHEDULE_CONFLICT',
+  'OPENING_TIME_PASSED',
   'DROP_PRODUCT_NOT_FOUND',
   'PICKUP_NOT_FOUND',
   'DROP_PRODUCT_CONFLICT',

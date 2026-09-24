@@ -1,6 +1,7 @@
 import * as path from 'node:path';
 import {
   CfnOutput,
+  ArnFormat,
   Duration,
   RemovalPolicy,
   Stack,
@@ -16,6 +17,7 @@ import {
   aws_logs as logs,
   aws_s3 as s3,
   aws_sqs as sqs,
+  aws_scheduler as scheduler,
 } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 
@@ -32,6 +34,33 @@ export class DevelopmentStack extends Stack {
       );
     }
     const prefix = `batch-and-batter-${props.environment}`;
+    const applicationArn = this.formatArn({
+      service: 'lambda',
+      resource: 'function',
+      resourceName: `${prefix}-api`,
+      arnFormat: ArnFormat.COLON_RESOURCE_NAME,
+    });
+    const scheduleGroup = new scheduler.CfnScheduleGroup(
+      this,
+      'OpeningScheduleGroup',
+      { name: `${prefix}-openings` },
+    );
+    const schedulerRole = new iam.Role(this, 'OpeningSchedulerRole', {
+      assumedBy: new iam.ServicePrincipal('scheduler.amazonaws.com', {
+        conditions: {
+          StringEquals: {
+            'aws:SourceAccount': this.account,
+            'aws:SourceArn': scheduleGroup.attrArn,
+          },
+        },
+      }),
+    });
+    schedulerRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ['lambda:InvokeFunction'],
+        resources: [applicationArn],
+      }),
+    );
     Tags.of(this).add('Project', 'batch-and-batter');
     Tags.of(this).add('Environment', props.environment);
 
@@ -128,6 +157,28 @@ export class DevelopmentStack extends Stack {
     });
     role.addToPolicy(
       new iam.PolicyStatement({
+        actions: ['scheduler:CreateSchedule', 'scheduler:GetSchedule'],
+        resources: [
+          this.formatArn({
+            service: 'scheduler',
+            resource: 'schedule',
+            resourceName: `${prefix}-openings/open-*`,
+            arnFormat: ArnFormat.SLASH_RESOURCE_NAME,
+          }),
+        ],
+      }),
+    );
+    role.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ['iam:PassRole'],
+        resources: [schedulerRole.roleArn],
+        conditions: {
+          StringEquals: { 'iam:PassedToService': 'scheduler.amazonaws.com' },
+        },
+      }),
+    );
+    role.addToPolicy(
+      new iam.PolicyStatement({
         actions: ['logs:CreateLogStream', 'logs:PutLogEvents'],
         resources: [logGroup.logGroupArn],
       }),
@@ -152,11 +203,20 @@ export class DevelopmentStack extends Stack {
       code: lambda.Code.fromAsset(
         path.join(__dirname, '../../../../backend/dist/lambda'),
       ),
-      environment: { CATALOG_TABLE_NAME: catalogTable.tableName },
+      environment: {
+        CATALOG_TABLE_NAME: catalogTable.tableName,
+        OPEN_SCHEDULE_GROUP: scheduleGroup.ref,
+        OPEN_TARGET_ARN: applicationArn,
+        OPEN_SCHEDULE_ROLE_ARN: schedulerRole.roleArn,
+      },
       role,
       logGroup,
       timeout: Duration.seconds(5),
       memorySize: 128,
+    });
+    application.configureAsyncInvoke({
+      retryAttempts: 2,
+      maxEventAge: Duration.minutes(15),
     });
     const api = new apigateway.HttpApi(this, 'HttpApi', {
       apiName: `${prefix}-http-api`,
@@ -282,6 +342,11 @@ export class DevelopmentStack extends Stack {
         '/admin/drops/{dropId}/open',
         apigateway.HttpMethod.POST,
         'AdminOpenDropIntegration',
+      ],
+      [
+        '/admin/drops/{dropId}/reconcile-opening',
+        apigateway.HttpMethod.POST,
+        'AdminReconcileOpeningIntegration',
       ],
     ] as const) {
       api.addRoutes({

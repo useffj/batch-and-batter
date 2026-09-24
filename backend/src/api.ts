@@ -6,6 +6,11 @@ import { adminWrite, adminWriteRoutes } from './admin-writes';
 import { adminComposition, compositionRoutes } from './admin-composition';
 import { adminPublish, publishRoute } from './admin-publish';
 import { adminOpen, openRoute } from './admin-open';
+import {
+  adminReconcileOpening,
+  reconcileOpeningRoute,
+} from './admin-reconcile-opening';
+import type { OpeningSchedules } from './opening-schedules';
 import { composeDrop, type CurrentDropResponse } from './storefront';
 import { logCompletion, type InvocationContext } from './request-logging';
 
@@ -35,7 +40,12 @@ function jsonResponse(statusCode: number, body: unknown): ApiResponse {
     body: JSON.stringify(body),
   };
 }
-export function createHandler(getRepository: () => CatalogRepository) {
+export function createHandler(
+  getRepository: () => CatalogRepository,
+  getSchedules: () => OpeningSchedules = () => {
+    throw new Error('Opening schedules are not configured');
+  },
+) {
   return async (
     event: ApiEvent,
     context?: InvocationContext,
@@ -63,19 +73,22 @@ export function createHandler(getRepository: () => CatalogRepository) {
       adminWriteRoutes.includes(event.routeKey) ||
       compositionRoutes.includes(event.routeKey) ||
       event.routeKey === publishRoute ||
-      event.routeKey === openRoute
+      event.routeKey === openRoute ||
+      event.routeKey === reconcileOpeningRoute
     ) {
       try {
         const identity = requireAdmin(event);
         if (event.routeKey === 'GET /admin/me') return json(200, identity);
         const result =
-          event.routeKey === openRoute
-            ? await adminOpen(event, getRepository)
-            : event.routeKey === publishRoute
-              ? await adminPublish(event, getRepository)
-              : compositionRoutes.includes(event.routeKey)
-                ? await adminComposition(event, getRepository)
-                : await adminWrite(event, getRepository);
+          event.routeKey === reconcileOpeningRoute
+            ? await adminReconcileOpening(event, getRepository, getSchedules)
+            : event.routeKey === openRoute
+              ? await adminOpen(event, getRepository)
+              : event.routeKey === publishRoute
+                ? await adminPublish(event, getRepository, getSchedules)
+                : compositionRoutes.includes(event.routeKey)
+                  ? await adminComposition(event, getRepository)
+                  : await adminWrite(event, getRepository);
         return json(result.status, result.body);
       } catch (failure) {
         if (failure instanceof AdminError)
