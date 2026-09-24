@@ -21,6 +21,7 @@ const operations = new Map([
   ['PUT /admin/drops/{dropId}/pickups/{date}', 'putPickup'],
   ['DELETE /admin/drops/{dropId}/pickups/{date}', 'removePickup'],
   ['POST /admin/drops/{dropId}/publish', 'publishDrop'],
+  ['POST /admin/drops/{dropId}/open', 'openDrop'],
 ]);
 
 const errorCodes = new Set([
@@ -32,6 +33,7 @@ const errorCodes = new Set([
   'INTERNAL_ERROR',
   'DROP_NOT_READY',
   'STOREFRONT_OCCUPIED',
+  'STOREFRONT_CONFLICT',
   'DROP_PRODUCT_NOT_FOUND',
   'PICKUP_NOT_FOUND',
   'DROP_PRODUCT_CONFLICT',

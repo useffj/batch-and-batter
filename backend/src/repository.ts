@@ -10,6 +10,7 @@ import { z } from 'zod';
 import { catalogKeys } from './keys';
 import { updatedAt } from './timestamps';
 import { isPublishReady, type PublishSnapshot } from './publish-readiness';
+import { isOpenReady, type OpenSnapshot } from './open-readiness';
 import {
   productSchema,
   dropSchema,
@@ -25,6 +26,7 @@ import {
 } from './domain';
 
 export interface CatalogRepository {
+  openScheduled(dropId: string): Promise<Drop>;
   publishDraft(dropId: string): Promise<{
     drop: Drop;
     storefront: { storefrontDropId: string; updatedAt: string };
@@ -66,7 +68,8 @@ export class CatalogWriteError extends Error {
       | 'INVENTORY_NOT_EDITABLE'
       | 'COMPOSITION_CONFLICT'
       | 'DROP_NOT_READY'
-      | 'STOREFRONT_OCCUPIED',
+      | 'STOREFRONT_OCCUPIED'
+      | 'STOREFRONT_CONFLICT',
   ) {
     super(code);
   }
@@ -267,6 +270,101 @@ export class DynamoCatalogRepository implements CatalogRepository {
       ...products.map(() => 'COMPOSITION_CONFLICT' as const),
     ]);
     return { drop: scheduled, storefront };
+  }
+  async openScheduled(dropId: string): Promise<Drop> {
+    let snapshot: OpenSnapshot;
+    try {
+      // Read META first so its revision protects the subsequent composition reads.
+      const drop = await this.getDrop(dropId);
+      if (!drop) throw new CatalogWriteError('DROP_NOT_FOUND');
+      if (drop.status !== 'SCHEDULED')
+        throw new CatalogWriteError('DROP_NOT_EDITABLE');
+      if ((await this.getStorefrontDropId()) !== dropId)
+        throw new CatalogWriteError('STOREFRONT_CONFLICT');
+      const [relations, inventories, pickups] = await Promise.all([
+        this.getDropProducts(dropId),
+        this.getDropInventory(dropId),
+        this.getPickupDates(dropId),
+      ]);
+      const products = [];
+      for (const relation of relations.filter((item) => item.active)) {
+        products.push(await this.getProduct(relation.productId));
+      }
+      snapshot = { drop, relations, inventories, pickups, products };
+    } catch (error) {
+      if (error instanceof z.ZodError)
+        throw new CatalogWriteError('DROP_NOT_READY');
+      throw error;
+    }
+    // Evaluate server time after loading: opensAt may pass during those reads.
+    if (!isOpenReady(snapshot, Date.now()))
+      throw new CatalogWriteError('DROP_NOT_READY');
+    const { drop, products } = snapshot;
+    const actionCount = 2 + products.length;
+    if (actionCount > 100) throw new CatalogWriteError('DROP_NOT_READY');
+    const opened = dropSchema.parse({
+      ...drop,
+      status: 'OPEN',
+      updatedAt: updatedAt(drop.updatedAt),
+    });
+    const actions: NonNullable<TransactWriteCommandInput['TransactItems']> = [
+      {
+        Put: {
+          TableName: this.tableName,
+          Item: { ...opened, ...catalogKeys.drop(dropId) },
+          ConditionExpression:
+            'attribute_exists(PK) AND #status = :scheduled AND #updated = :expected',
+          ExpressionAttributeNames: {
+            '#status': 'status',
+            '#updated': 'updatedAt',
+          },
+          ExpressionAttributeValues: {
+            ':scheduled': 'SCHEDULED',
+            ':expected': drop.updatedAt,
+          },
+        },
+      },
+      {
+        ConditionCheck: {
+          TableName: this.tableName,
+          Key: catalogKeys.storefront,
+          ConditionExpression: '#storefrontDropId = :dropId',
+          ExpressionAttributeNames: { '#storefrontDropId': 'storefrontDropId' },
+          ExpressionAttributeValues: { ':dropId': dropId },
+        },
+      },
+      ...products.map((product) => {
+        if (!product) throw new CatalogWriteError('DROP_NOT_READY');
+        return {
+          ConditionCheck: {
+            TableName: this.tableName,
+            Key: catalogKeys.product(product.productId),
+            ConditionExpression:
+              'attribute_exists(PK) AND #active = :active AND #updated = :expected',
+            ExpressionAttributeNames: {
+              '#active': 'active',
+              '#updated': 'updatedAt',
+            },
+            ExpressionAttributeValues: {
+              ':active': true,
+              ':expected': product.updatedAt,
+            },
+          },
+        };
+      }),
+    ];
+    await this.sendTransaction(actions, [
+      async () => {
+        const current = await this.getDrop(dropId);
+        if (!current) return 'DROP_NOT_FOUND';
+        return current.status !== 'SCHEDULED'
+          ? 'DROP_NOT_EDITABLE'
+          : 'COMPOSITION_CONFLICT';
+      },
+      'STOREFRONT_CONFLICT',
+      ...products.map(() => 'COMPOSITION_CONFLICT' as const),
+    ]);
+    return opened;
   }
   private inventoryZeroCondition() {
     return {

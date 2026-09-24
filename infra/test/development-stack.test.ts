@@ -7,6 +7,7 @@ import { Match, Template } from 'aws-cdk-lib/assertions';
 import { DevelopmentStack } from '../lib/development-stack';
 
 const compositionRoutes = [
+  'POST /admin/drops/{dropId}/open',
   'POST /admin/drops/{dropId}/publish',
   'GET /admin/drops/{dropId}/composition',
   'POST /admin/drops/{dropId}/products',
@@ -84,7 +85,7 @@ test('three on-demand tables have only the approved string PK/SK foundation', ()
   }
 });
 
-test('one Node 24 Lambda preserves its identity and serves exactly the fifteen approved routes', () => {
+test('one Node 24 Lambda preserves its identity and serves exactly the sixteen approved routes', () => {
   template.resourceCountIs('AWS::Lambda::Function', 1);
   template.hasResourceProperties('AWS::Lambda::Function', {
     Runtime: 'nodejs24.x',
@@ -94,7 +95,7 @@ test('one Node 24 Lambda preserves its identity and serves exactly the fifteen a
   template.hasResourceProperties('AWS::ApiGatewayV2::Api', {
     ProtocolType: 'HTTP',
   });
-  template.resourceCountIs('AWS::ApiGatewayV2::Route', 15);
+  template.resourceCountIs('AWS::ApiGatewayV2::Route', 16);
   const functionId = Object.keys(
     template.findResources('AWS::Lambda::Function'),
   )[0];
@@ -336,7 +337,7 @@ test('one secretless client enables only password, SRP and refresh with explicit
   template.hasOutput('AdminAppClientId', { Value: { Ref: clientId } });
 });
 
-test('all twelve admin routes bind the JWT authorizer to the existing pool, client and HTTP API', () => {
+test('all thirteen admin routes bind the JWT authorizer to the existing pool, client and HTTP API', () => {
   template.resourceCountIs('AWS::ApiGatewayV2::Authorizer', 1);
   const poolId = Object.keys(
     template.findResources('AWS::Cognito::UserPool'),
@@ -427,8 +428,8 @@ test('tables, pool including MFA, client and JWT authorizer exactly preserve the
 });
 
 test('every route integration invokes only the existing Lambda through route-scoped API Gateway permissions', () => {
-  template.resourceCountIs('AWS::ApiGatewayV2::Integration', 15);
-  template.resourceCountIs('AWS::Lambda::Permission', 15);
+  template.resourceCountIs('AWS::ApiGatewayV2::Integration', 16);
+  template.resourceCountIs('AWS::Lambda::Permission', 16);
   for (const resource of Object.values(
     template.findResources('AWS::ApiGatewayV2::Integration'),
   )) {
@@ -442,6 +443,7 @@ test('every route integration invokes only the existing Lambda through route-sco
   );
   for (const route of [
     '/*/*/admin/drops/{dropId}/publish',
+    '/*/*/admin/drops/{dropId}/open',
     '/*/*/admin/products',
     '/*/*/admin/products/{productId}',
     '/*/*/admin/drops',
@@ -463,10 +465,10 @@ test('every route integration invokes only the existing Lambda through route-sco
   }
 });
 
-test('observability adds only an access log group and changes only stage logging and Lambda code', () => {
+test('manual opening adds only a route, integration, invocation permission and changes only Lambda code', () => {
   const baseline = JSON.parse(
     readFileSync(
-      join(__dirname, '../../../test/fixtures/phase-4b2b2a-resources.json'),
+      join(__dirname, '../../../test/fixtures/phase-4b2b2a1-resources.json'),
       'utf8',
     ),
   );
@@ -479,16 +481,15 @@ test('observability adds only an access log group and changes only stage logging
       assert.ok(actual.Properties.Code.S3Key);
       prior.Properties.Code = actual.Properties.Code;
       assert.deepEqual(actual, prior, 'Lambda changed beyond code');
-    } else if (id === 'HttpApiDefaultStage3EEB07D6') {
-      const prior = structuredClone(expected) as typeof actual;
-      assert.ok(actual.Properties.AccessLogSettings);
-      prior.Properties.AccessLogSettings = actual.Properties.AccessLogSettings;
-      assert.deepEqual(actual, prior, 'Stage changed beyond access logging');
     } else
       assert.deepEqual(actual, expected, `Unrelated resource changed: ${id}`);
   }
   const added = Object.entries(current)
     .filter(([id]) => !(id in baseline))
     .map(([, resource]) => (resource as { Type: string }).Type);
-  assert.deepEqual(added.sort(), ['AWS::Logs::LogGroup']);
+  assert.deepEqual(added.sort(), [
+    'AWS::ApiGatewayV2::Integration',
+    'AWS::ApiGatewayV2::Route',
+    'AWS::Lambda::Permission',
+  ]);
 });

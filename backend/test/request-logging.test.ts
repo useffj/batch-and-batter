@@ -153,6 +153,7 @@ test('all registered routes have stable operation names, including authenticatio
     ['PUT /admin/drops/{dropId}/pickups/{date}', 'putPickup'],
     ['DELETE /admin/drops/{dropId}/pickups/{date}', 'removePickup'],
     ['POST /admin/drops/{dropId}/publish', 'publishDrop'],
+    ['POST /admin/drops/{dropId}/open', 'openDrop'],
   ];
   for (const [route, operation] of routes) {
     const request: ApiEvent = event(route);
