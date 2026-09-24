@@ -21,6 +21,48 @@ const stack = new DevelopmentStack(new App(), 'TestDev', {
 });
 const template = Template.fromStack(stack);
 
+test('existing default stage emits only approved JSON access fields to a dedicated fourteen-day log group', () => {
+  template.resourceCountIs('AWS::ApiGatewayV2::Stage', 1);
+  const accessLogId = Object.keys(
+    template.findResources('AWS::Logs::LogGroup', {
+      Properties: {
+        LogGroupName:
+          '/aws/vendedlogs/apigateway/batch-and-batter-dev-http-api',
+      },
+    }),
+  )[0];
+  assert.ok(accessLogId);
+  assert.equal(
+    template.toJSON().Resources[accessLogId].Properties.RetentionInDays,
+    14,
+  );
+  const stage = template.toJSON().Resources.HttpApiDefaultStage3EEB07D6;
+  assert.equal(stage.Properties.StageName, '$default');
+  assert.equal(stage.Properties.AutoDeploy, true);
+  assert.deepEqual(stage.Properties.AccessLogSettings.DestinationArn, {
+    'Fn::GetAtt': [accessLogId, 'Arn'],
+  });
+  const format = stage.Properties.AccessLogSettings.Format;
+  assert.deepEqual(JSON.parse(format), {
+    requestId: '$context.requestId',
+    routeKey: '$context.routeKey',
+    httpMethod: '$context.httpMethod',
+    path: '$context.path',
+    status: '$context.status',
+    responseLength: '$context.responseLength',
+    integrationStatus: '$context.integrationStatus',
+    integrationErrorMessage: '$context.integrationErrorMessage',
+    integrationLatency: '$context.integrationLatency',
+    integrationRequestId: '$context.integration.requestId',
+    requestTime: '$context.requestTime',
+  });
+  assert.doesNotMatch(
+    format,
+    /authorization|token|cookie|body|password|apiKey|query|claims|email|phone|payment|sourceIp/i,
+  );
+  template.resourceCountIs('AWS::Logs::ResourcePolicy', 0);
+});
+
 test('three on-demand tables have only the approved string PK/SK foundation', () => {
   template.resourceCountIs('AWS::DynamoDB::Table', 3);
   for (const name of ['catalog', 'commerce', 'operations']) {
@@ -171,7 +213,7 @@ test('media is private, encrypted, owner controlled and denies insecure transpor
 });
 
 test('Lambda has only scoped logging and the exact Catalog composition permissions', () => {
-  template.resourceCountIs('AWS::Logs::LogGroup', 1);
+  template.resourceCountIs('AWS::Logs::LogGroup', 2);
   template.hasResourceProperties('AWS::Logs::LogGroup', {
     RetentionInDays: 14,
   });
@@ -189,7 +231,11 @@ test('Lambda has only scoped logging and the exact Catalog composition permissio
     'logs:PutLogEvents',
   ]);
   assert.equal(statements[0].Effect, 'Allow');
-  const logId = Object.keys(template.findResources('AWS::Logs::LogGroup'))[0];
+  const logId = Object.keys(
+    template.findResources('AWS::Logs::LogGroup', {
+      Properties: { LogGroupName: '/aws/lambda/batch-and-batter-dev-api' },
+    }),
+  )[0];
   assert.deepEqual(statements[0].Resource, { 'Fn::GetAtt': [logId, 'Arn'] });
   const catalogId = Object.keys(
     template.findResources('AWS::DynamoDB::Table', {
@@ -417,10 +463,10 @@ test('every route integration invokes only the existing Lambda through route-sco
   }
 });
 
-test('publication adds only one route/integration/permission and changes only Lambda code', () => {
+test('observability adds only an access log group and changes only stage logging and Lambda code', () => {
   const baseline = JSON.parse(
     readFileSync(
-      join(__dirname, '../../../test/fixtures/phase-4b2b1-resources.json'),
+      join(__dirname, '../../../test/fixtures/phase-4b2b2a-resources.json'),
       'utf8',
     ),
   );
@@ -433,18 +479,16 @@ test('publication adds only one route/integration/permission and changes only La
       assert.ok(actual.Properties.Code.S3Key);
       prior.Properties.Code = actual.Properties.Code;
       assert.deepEqual(actual, prior, 'Lambda changed beyond code');
+    } else if (id === 'HttpApiDefaultStage3EEB07D6') {
+      const prior = structuredClone(expected) as typeof actual;
+      assert.ok(actual.Properties.AccessLogSettings);
+      prior.Properties.AccessLogSettings = actual.Properties.AccessLogSettings;
+      assert.deepEqual(actual, prior, 'Stage changed beyond access logging');
     } else
       assert.deepEqual(actual, expected, `Unrelated resource changed: ${id}`);
   }
   const added = Object.entries(current)
     .filter(([id]) => !(id in baseline))
     .map(([, resource]) => (resource as { Type: string }).Type);
-  assert.deepEqual(
-    added.sort(),
-    [
-      ...Array(1).fill('AWS::ApiGatewayV2::Route'),
-      ...Array(1).fill('AWS::ApiGatewayV2::Integration'),
-      ...Array(1).fill('AWS::Lambda::Permission'),
-    ].sort(),
-  );
+  assert.deepEqual(added.sort(), ['AWS::Logs::LogGroup']);
 });

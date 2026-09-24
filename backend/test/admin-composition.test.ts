@@ -329,8 +329,12 @@ test('unexpected AWS errors return generic 500 and logs omit body/token/cancella
   assert.equal(JSON.parse(response.body).code, 'INTERNAL_ERROR');
   assert.equal(logs.mock.callCount(), 1);
   assert.deepEqual(JSON.parse(logs.mock.calls[0].arguments[0]), {
-    event: 'admin_request_failed',
+    event: 'request.completed',
     requestId: 'composition-test',
+    routeKey: 'POST /admin/drops/{dropId}/products',
+    operation: 'attachDropProduct',
+    statusCode: 500,
+    code: 'INTERNAL_ERROR',
   });
 });
 test('public routes remain anonymous and composed DRAFT stays invisible', async () => {

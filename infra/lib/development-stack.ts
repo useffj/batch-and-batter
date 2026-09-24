@@ -161,6 +161,29 @@ export class DevelopmentStack extends Stack {
     const api = new apigateway.HttpApi(this, 'HttpApi', {
       apiName: `${prefix}-http-api`,
     });
+    const accessLogs = new logs.LogGroup(this, 'ApiAccessLogGroup', {
+      logGroupName: `/aws/vendedlogs/apigateway/${prefix}-http-api`,
+      retention: logs.RetentionDays.TWO_WEEKS,
+      removalPolicy: RemovalPolicy.DESTROY,
+    });
+    // Configure the existing default stage without changing its construct identity.
+    const stage = api.defaultStage!.node.defaultChild as apigateway.CfnStage;
+    stage.accessLogSettings = {
+      destinationArn: accessLogs.logGroupArn,
+      format: JSON.stringify({
+        requestId: '$context.requestId',
+        routeKey: '$context.routeKey',
+        httpMethod: '$context.httpMethod',
+        path: '$context.path',
+        status: '$context.status',
+        responseLength: '$context.responseLength',
+        integrationStatus: '$context.integrationStatus',
+        integrationErrorMessage: '$context.integrationErrorMessage',
+        integrationLatency: '$context.integrationLatency',
+        integrationRequestId: '$context.integration.requestId',
+        requestTime: '$context.requestTime',
+      }),
+    };
     api.addRoutes({
       path: '/health',
       methods: [apigateway.HttpMethod.GET],
