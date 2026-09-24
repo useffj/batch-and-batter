@@ -572,10 +572,21 @@ test('publish accepts no body or empty object; rejects overrides, malformed bodi
     const response = await createHandler(() => s.repository)(event(body));
     assert.equal(response.statusCode, 200);
     const data = JSON.parse(response.body);
-    assert.equal(data.drop.status, 'SCHEDULED');
-    assert.equal(data.storefront.storefrontDropId, dropId);
-    assert.equal(response.body.includes('PK'), false);
-    assert.equal(response.body.includes('SK'), false);
+    const publicationTimestamp = s.get(dropKey)!.updatedAt;
+    assert.ok(typeof publicationTimestamp === 'string');
+    assert.deepEqual(data, {
+      drop: { ...draft, status: 'SCHEDULED', updatedAt: publicationTimestamp },
+      storefront: { storefrontDropId: dropId, updatedAt: publicationTimestamp },
+    });
+    assert.ok(Date.parse(data.drop.updatedAt) > Date.parse(draft.updatedAt));
+    assert.equal(
+      data.storefront.updatedAt,
+      s.get(catalogKeys.storefront)!.updatedAt,
+    );
+    assert.ok(
+      s.commands.at(-1) instanceof TransactWriteCommand,
+      'Response must not perform post-publication reads or writes',
+    );
   }
   for (const body of [
     null,
@@ -675,7 +686,13 @@ test('public routes remain anonymous; DRAFT is hidden and published SCHEDULED is
   for (const route of ['GET /drops/current', 'GET /drops/{dropId}']) {
     const response = await handler(publicEvent(route));
     assert.equal(response.statusCode, 200);
-    assert.equal(JSON.parse(response.body).drop.status, 'SCHEDULED');
+    const data = JSON.parse(response.body);
+    assert.deepEqual(Object.keys(data), ['drop']);
+    assert.equal(data.drop.status, 'SCHEDULED');
+    assert.equal(data.drop.id, dropId);
+    assert.equal('dropId' in data.drop, false);
+    assert.ok(Array.isArray(data.drop.products));
+    assert.ok(Array.isArray(data.drop.pickupDates));
   }
 });
 
@@ -743,5 +760,64 @@ test('publication cancellation mappings use deterministic action precedence', as
     const before = structuredClone(s.items);
     await assert.rejects(s.repository.publishDraft(dropId), failure(expected));
     assert.deepEqual(s.items, before);
+  }
+});
+
+test('publish HTTP response explicitly selects admin fields and authoritative result timestamps, preserving optional closesAt', async () => {
+  const publicationTimestamp = '2026-09-24T12:34:56.789Z';
+  for (const closesAt of [undefined, '2099-10-06T18:00:00.000Z']) {
+    const expectedDrop = {
+      ...draft,
+      status: 'SCHEDULED' as const,
+      updatedAt: publicationTimestamp,
+      ...(closesAt ? { closesAt } : {}),
+    };
+    const expectedStorefront = {
+      storefrontDropId: dropId,
+      updatedAt: publicationTimestamp,
+    };
+    let publishCalls = 0;
+    const repository = fakeRepository({
+      publishDraft: async (id) => {
+        assert.equal(id, dropId);
+        publishCalls++;
+        // Deliberately contaminated result detects accidental raw-item serialization.
+        return {
+          drop: {
+            ...expectedDrop,
+            PK: 'private',
+            SK: 'META',
+            id: 'public-id',
+            products: [],
+            pickupDates: [],
+            availability: {},
+            $metadata: {},
+          },
+          storefront: {
+            ...expectedStorefront,
+            PK: 'STORE#CONFIG',
+            SK: 'STOREFRONT',
+            $metadata: {},
+          },
+        };
+      },
+    });
+    const onlyPublish = new Proxy(repository, {
+      get(target, property, receiver) {
+        assert.equal(
+          property,
+          'publishDraft',
+          'Response construction must not read or write again',
+        );
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const response = await createHandler(() => onlyPublish)(event());
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(JSON.parse(response.body), {
+      drop: expectedDrop,
+      storefront: expectedStorefront,
+    });
+    assert.equal(publishCalls, 1);
   }
 });
