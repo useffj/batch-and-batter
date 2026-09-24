@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { CatalogWriteError } from '../src/repository';
-import { createHandler, type ApiEvent } from '../src/api';
+import { createHandler as createHttpHandler, type ApiEvent } from '../src/api';
 import { publishRoute } from '../src/admin-publish';
 import { ADMIN_GROUP } from '../src/admin-auth';
 import { updatedAt } from '../src/timestamps';
@@ -18,6 +18,10 @@ import {
   fakeRepository,
 } from './fixtures';
 import { compositionStore, cancellation } from './composition-store';
+
+// Publication contract tests stub only the external scheduling side effect.
+const createHandler = (repository: Parameters<typeof createHttpHandler>[0]) =>
+  createHttpHandler(repository, () => ({ ensure: async () => {} }));
 
 const dropKey = catalogKeys.drop(dropId);
 const relationKey = catalogKeys.dropProduct(dropId, productId);
