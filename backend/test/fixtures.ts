@@ -59,6 +59,9 @@ export function fakeRepository(
   overrides: Partial<CatalogRepository> = {},
 ): CatalogRepository {
   return {
+    openScheduled: async () => {
+      throw new Error('Unexpected open');
+    },
     publishDraft: async () => {
       throw new Error('Unexpected publish');
     },

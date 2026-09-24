@@ -278,6 +278,11 @@ export class DevelopmentStack extends Stack {
         apigateway.HttpMethod.POST,
         'AdminPublishDropIntegration',
       ],
+      [
+        '/admin/drops/{dropId}/open',
+        apigateway.HttpMethod.POST,
+        'AdminOpenDropIntegration',
+      ],
     ] as const) {
       api.addRoutes({
         path: route,

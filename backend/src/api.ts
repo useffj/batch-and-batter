@@ -5,6 +5,7 @@ import { AdminError, requireAdmin } from './admin-auth';
 import { adminWrite, adminWriteRoutes } from './admin-writes';
 import { adminComposition, compositionRoutes } from './admin-composition';
 import { adminPublish, publishRoute } from './admin-publish';
+import { adminOpen, openRoute } from './admin-open';
 import { composeDrop, type CurrentDropResponse } from './storefront';
 import { logCompletion, type InvocationContext } from './request-logging';
 
@@ -61,24 +62,31 @@ export function createHandler(getRepository: () => CatalogRepository) {
       event.routeKey === 'GET /admin/me' ||
       adminWriteRoutes.includes(event.routeKey) ||
       compositionRoutes.includes(event.routeKey) ||
-      event.routeKey === publishRoute
+      event.routeKey === publishRoute ||
+      event.routeKey === openRoute
     ) {
       try {
         const identity = requireAdmin(event);
         if (event.routeKey === 'GET /admin/me') return json(200, identity);
         const result =
-          event.routeKey === publishRoute
-            ? await adminPublish(event, getRepository)
-            : compositionRoutes.includes(event.routeKey)
-              ? await adminComposition(event, getRepository)
-              : await adminWrite(event, getRepository);
+          event.routeKey === openRoute
+            ? await adminOpen(event, getRepository)
+            : event.routeKey === publishRoute
+              ? await adminPublish(event, getRepository)
+              : compositionRoutes.includes(event.routeKey)
+                ? await adminComposition(event, getRepository)
+                : await adminWrite(event, getRepository);
         return json(result.status, result.body);
       } catch (failure) {
         if (failure instanceof AdminError)
           return error(failure.status, failure.code, failure.message);
         if (failure instanceof CatalogWriteError) {
           const messages = {
-            DROP_NOT_READY: 'Drop is not ready to publish.',
+            DROP_NOT_READY:
+              event.routeKey === openRoute
+                ? 'Drop is not ready to open.'
+                : 'Drop is not ready to publish.',
+            STOREFRONT_CONFLICT: 'Drop is not assigned to the storefront.',
             STOREFRONT_OCCUPIED:
               'Another Drop is currently assigned to the storefront.',
             DROP_PRODUCT_NOT_FOUND: 'Drop product not found.',
@@ -92,7 +100,10 @@ export function createHandler(getRepository: () => CatalogRepository) {
             DROP_NOT_FOUND: 'Drop not found.',
             PRODUCT_CONFLICT: 'Product changed or already exists.',
             DROP_CONFLICT: 'Drop changed or already exists.',
-            DROP_NOT_EDITABLE: 'Only DRAFT Drops can be edited.',
+            DROP_NOT_EDITABLE:
+              event.routeKey === openRoute
+                ? 'Only SCHEDULED Drops can be opened.'
+                : 'Only DRAFT Drops can be edited.',
           };
           return error(
             failure.code.endsWith('NOT_FOUND') ? 404 : 409,
