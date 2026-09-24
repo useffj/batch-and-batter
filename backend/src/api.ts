@@ -6,6 +6,7 @@ import { adminWrite, adminWriteRoutes } from './admin-writes';
 import { adminComposition, compositionRoutes } from './admin-composition';
 import { adminPublish, publishRoute } from './admin-publish';
 import { composeDrop, type CurrentDropResponse } from './storefront';
+import { logCompletion, type InvocationContext } from './request-logging';
 
 export interface ApiEvent {
   routeKey: string;
@@ -23,7 +24,7 @@ export interface ApiResponse {
   headers: Record<string, string>;
   body: string;
 }
-function json(statusCode: number, body: unknown): ApiResponse {
+function jsonResponse(statusCode: number, body: unknown): ApiResponse {
   return {
     statusCode,
     headers: {
@@ -34,16 +35,28 @@ function json(statusCode: number, body: unknown): ApiResponse {
   };
 }
 export function createHandler(getRepository: () => CatalogRepository) {
-  return async (event: ApiEvent): Promise<ApiResponse> => {
+  return async (
+    event: ApiEvent,
+    context?: InvocationContext,
+  ): Promise<ApiResponse> => {
+    const complete = (response: ApiResponse, code?: string) => {
+      logCompletion(event, context, response, code);
+      return response;
+    };
+    const json = (status: number, body: unknown) =>
+      complete(jsonResponse(status, body));
     const error = (status: number, code: string, message: string) =>
-      json(status, {
+      complete(
+        jsonResponse(status, {
+          code,
+          message,
+          requestId: event.requestContext.requestId,
+        }),
         code,
-        message,
-        requestId: event.requestContext.requestId,
-      });
+      );
     if (event.routeKey.split(' ')[0] !== event.requestContext.http.method)
       return error(404, 'NOT_FOUND', 'Route not found.');
-    if (event.routeKey === 'GET /health') return health();
+    if (event.routeKey === 'GET /health') return complete(await health());
     if (
       event.routeKey === 'GET /admin/me' ||
       adminWriteRoutes.includes(event.routeKey) ||
@@ -87,12 +100,6 @@ export function createHandler(getRepository: () => CatalogRepository) {
             messages[failure.code],
           );
         }
-        console.error(
-          JSON.stringify({
-            event: 'admin_request_failed',
-            requestId: event.requestContext.requestId,
-          }),
-        );
         return error(500, 'INTERNAL_ERROR', 'Unable to complete the request.');
       }
     }
@@ -116,13 +123,6 @@ export function createHandler(getRepository: () => CatalogRepository) {
         ? json(200, { drop: response })
         : error(404, 'DROP_NOT_FOUND', 'Drop not found.');
     } catch {
-      // Do not log records, SDK errors, credentials or customer data.
-      console.error(
-        JSON.stringify({
-          event: 'catalog_read_failed',
-          requestId: event.requestContext.requestId,
-        }),
-      );
       return error(500, 'INTERNAL_ERROR', 'Unable to load the Drop.');
     }
   };

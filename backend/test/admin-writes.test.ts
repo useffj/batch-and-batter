@@ -315,7 +315,7 @@ for (const [route, operation, code, status] of [
     assert.equal(JSON.parse(response.body).requestId, 'write-test');
   });
 }
-test('unexpected failures return generic 500 and log only event/request ID', async (t) => {
+test('unexpected failures return generic 500 and log only safe completion metadata', async (t) => {
   const logs = t.mock.method(console, 'error', () => {});
   for (const route of adminWriteRoutes) {
     const response = await createHandler(() => {
@@ -325,10 +325,19 @@ test('unexpected failures return generic 500 and log only event/request ID', asy
     assert.equal(response.body.includes('private-sdk-detail'), false);
   }
   assert.equal(logs.mock.callCount(), 4);
-  for (const call of logs.mock.calls)
+  for (const [index, call] of logs.mock.calls.entries())
     assert.deepEqual(JSON.parse(call.arguments[0]), {
-      event: 'admin_request_failed',
+      event: 'request.completed',
       requestId: 'write-test',
+      routeKey: adminWriteRoutes[index],
+      operation: [
+        'createProduct',
+        'replaceProduct',
+        'createDraftDrop',
+        'replaceDraftDrop',
+      ][index],
+      statusCode: 500,
+      code: 'INTERNAL_ERROR',
     });
 });
 test('no public writes, deletes, or out-of-scope admin operations exist', async () => {

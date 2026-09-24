@@ -54,11 +54,24 @@ test('isolated deployment bundle loads and serves health without SDK, credential
       process.execPath,
       [
         '-e',
-        `require('./handler.js').handler({ routeKey: 'GET /health', requestContext: { requestId: 'artifact-test', http: { method: 'GET' } } }).then(r => console.log(JSON.stringify(r)))`,
+        `require('./handler.js').handler({ routeKey: 'GET /health', requestContext: { requestId: 'artifact-test', http: { method: 'GET' } } }, { awsRequestId: 'artifact-invocation' }).then(r => console.log(JSON.stringify(r)))`,
       ],
       { cwd: directory, env: { PATH: process.env.PATH }, encoding: 'utf8' },
     );
-    assert.deepEqual(JSON.parse(output), {
+    const records = output
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    assert.equal(records.length, 2);
+    assert.deepEqual(records[0], {
+      event: 'request.completed',
+      requestId: 'artifact-test',
+      lambdaRequestId: 'artifact-invocation',
+      routeKey: 'GET /health',
+      operation: 'health',
+      statusCode: 200,
+    });
+    assert.deepEqual(records[1], {
       statusCode: 200,
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ status: 'ok', service: 'batch-and-batter-api' }),

@@ -661,8 +661,12 @@ test('expected errors retain the API contract; unexpected service cancellations 
   assert.equal(response.statusCode, 500);
   assert.equal(response.body.includes('private'), false);
   assert.deepEqual(JSON.parse(logs.mock.calls[0].arguments[0]), {
-    event: 'admin_request_failed',
+    event: 'request.completed',
     requestId: 'publish-test',
+    routeKey: 'POST /admin/drops/{dropId}/publish',
+    operation: 'publishDrop',
+    statusCode: 500,
+    code: 'INTERNAL_ERROR',
   });
 });
 test('public routes remain anonymous; DRAFT is hidden and published SCHEDULED is visible without opening', async () => {
