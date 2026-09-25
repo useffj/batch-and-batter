@@ -344,6 +344,21 @@ export class DevelopmentStack extends Stack {
         'AdminOpenDropIntegration',
       ],
       [
+        '/admin/drops/{dropId}/pause',
+        apigateway.HttpMethod.POST,
+        'AdminPauseDropIntegration',
+      ],
+      [
+        '/admin/drops/{dropId}/resume',
+        apigateway.HttpMethod.POST,
+        'AdminResumeDropIntegration',
+      ],
+      [
+        '/admin/drops/{dropId}/close',
+        apigateway.HttpMethod.POST,
+        'AdminCloseDropIntegration',
+      ],
+      [
         '/admin/drops/{dropId}/reconcile-opening',
         apigateway.HttpMethod.POST,
         'AdminReconcileOpeningIntegration',

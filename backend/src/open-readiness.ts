@@ -20,12 +20,16 @@ export interface OpenSnapshot {
   products: (Product | undefined)[];
 }
 
-export function isOpenReady(snapshot: OpenSnapshot, now: number): boolean {
+export function isOpenReady(
+  snapshot: OpenSnapshot,
+  now: number,
+  source: 'SCHEDULED' | 'PAUSED' = 'SCHEDULED',
+): boolean {
   const { drop, relations, inventories, pickups, products } = snapshot;
   if (
     !Number.isFinite(now) ||
     !dropSchema.safeParse(drop).success ||
-    drop.status !== 'SCHEDULED' ||
+    drop.status !== source ||
     now < Date.parse(drop.opensAt)
   )
     return false;

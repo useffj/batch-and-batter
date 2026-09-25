@@ -7,6 +7,9 @@ import { Match, Template } from 'aws-cdk-lib/assertions';
 import { DevelopmentStack } from '../lib/development-stack';
 
 const compositionRoutes = [
+  'POST /admin/drops/{dropId}/pause',
+  'POST /admin/drops/{dropId}/resume',
+  'POST /admin/drops/{dropId}/close',
   'POST /admin/drops/{dropId}/reconcile-opening',
   'POST /admin/drops/{dropId}/open',
   'POST /admin/drops/{dropId}/publish',
@@ -86,7 +89,7 @@ test('three on-demand tables have only the approved string PK/SK foundation', ()
   }
 });
 
-test('one Node 24 Lambda preserves its identity and serves exactly the seventeen approved routes', () => {
+test('one Node 24 Lambda preserves its identity and serves exactly the twenty approved routes', () => {
   template.resourceCountIs('AWS::Lambda::Function', 1);
   template.hasResourceProperties('AWS::Lambda::Function', {
     Runtime: 'nodejs24.x',
@@ -96,7 +99,7 @@ test('one Node 24 Lambda preserves its identity and serves exactly the seventeen
   template.hasResourceProperties('AWS::ApiGatewayV2::Api', {
     ProtocolType: 'HTTP',
   });
-  template.resourceCountIs('AWS::ApiGatewayV2::Route', 17);
+  template.resourceCountIs('AWS::ApiGatewayV2::Route', 20);
   const functionId = Object.keys(
     template.findResources('AWS::Lambda::Function'),
   )[0];
@@ -347,7 +350,7 @@ test('one secretless client enables only password, SRP and refresh with explicit
   template.hasOutput('AdminAppClientId', { Value: { Ref: clientId } });
 });
 
-test('all fourteen admin routes bind the JWT authorizer to the existing pool, client and HTTP API', () => {
+test('all seventeen admin routes bind the JWT authorizer to the existing pool, client and HTTP API', () => {
   template.resourceCountIs('AWS::ApiGatewayV2::Authorizer', 1);
   const poolId = Object.keys(
     template.findResources('AWS::Cognito::UserPool'),
@@ -438,8 +441,8 @@ test('tables, pool including MFA, client and JWT authorizer exactly preserve the
 });
 
 test('every route integration invokes only the existing Lambda through route-scoped API Gateway permissions', () => {
-  template.resourceCountIs('AWS::ApiGatewayV2::Integration', 17);
-  template.resourceCountIs('AWS::Lambda::Permission', 17);
+  template.resourceCountIs('AWS::ApiGatewayV2::Integration', 20);
+  template.resourceCountIs('AWS::Lambda::Permission', 20);
   for (const resource of Object.values(
     template.findResources('AWS::ApiGatewayV2::Integration'),
   )) {
@@ -454,6 +457,9 @@ test('every route integration invokes only the existing Lambda through route-sco
   for (const route of [
     '/*/*/admin/drops/{dropId}/publish',
     '/*/*/admin/drops/{dropId}/open',
+    '/*/*/admin/drops/{dropId}/pause',
+    '/*/*/admin/drops/{dropId}/resume',
+    '/*/*/admin/drops/{dropId}/close',
     '/*/*/admin/drops/{dropId}/reconcile-opening',
     '/*/*/admin/products',
     '/*/*/admin/products/{productId}',
@@ -476,10 +482,10 @@ test('every route integration invokes only the existing Lambda through route-sco
   }
 });
 
-test('automatic opening changes only the approved Lambda configuration, schedule IAM and reconciliation route', () => {
+test('lifecycle adds only three protected routes and updates existing Lambda code', () => {
   const baseline = JSON.parse(
     readFileSync(
-      join(__dirname, '../../../test/fixtures/phase-4b2b2b1-resources.json'),
+      join(__dirname, '../../../test/fixtures/phase-4b2b2b2-resources.json'),
       'utf8',
     ),
   );
@@ -491,13 +497,7 @@ test('automatic opening changes only the approved Lambda configuration, schedule
       const prior = structuredClone(expected) as typeof actual;
       assert.ok(actual.Properties.Code.S3Key);
       prior.Properties.Code = actual.Properties.Code;
-      prior.Properties.Environment = actual.Properties.Environment;
-      assert.deepEqual(actual, prior, 'Lambda changed beyond code/environment');
-    } else if (actual.Type === 'AWS::IAM::Policy') {
-      const prior = structuredClone(expected) as typeof actual;
-      prior.Properties.PolicyDocument.Statement =
-        actual.Properties.PolicyDocument.Statement;
-      assert.deepEqual(actual, prior, 'Existing policy attachment changed');
+      assert.deepEqual(actual, prior, 'Lambda changed beyond code');
     } else
       assert.deepEqual(actual, expected, `Unrelated resource changed: ${id}`);
   }
@@ -505,13 +505,9 @@ test('automatic opening changes only the approved Lambda configuration, schedule
     .filter(([id]) => !(id in baseline))
     .map(([, resource]) => (resource as { Type: string }).Type);
   assert.deepEqual(added.sort(), [
-    'AWS::ApiGatewayV2::Integration',
-    'AWS::ApiGatewayV2::Route',
-    'AWS::IAM::Policy',
-    'AWS::IAM::Role',
-    'AWS::Lambda::EventInvokeConfig',
-    'AWS::Lambda::Permission',
-    'AWS::Scheduler::ScheduleGroup',
+    ...Array(3).fill('AWS::ApiGatewayV2::Integration'),
+    ...Array(3).fill('AWS::ApiGatewayV2::Route'),
+    ...Array(3).fill('AWS::Lambda::Permission'),
   ]);
 });
 

@@ -59,6 +59,15 @@ export function fakeRepository(
   overrides: Partial<CatalogRepository> = {},
 ): CatalogRepository {
   return {
+    pauseDrop: async () => {
+      throw new Error('Unexpected pause');
+    },
+    resumeDrop: async () => {
+      throw new Error('Unexpected resume');
+    },
+    closeDrop: async () => {
+      throw new Error('Unexpected close');
+    },
     openScheduled: async () => {
       throw new Error('Unexpected open');
     },

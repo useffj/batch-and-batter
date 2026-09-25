@@ -1,0 +1,1952 @@
+{
+  "OpeningScheduleGroup": {
+    "Type": "AWS::Scheduler::ScheduleGroup",
+    "Properties": {
+      "Name": "batch-and-batter-dev-openings",
+      "Tags": [
+        {
+          "Key": "Environment",
+          "Value": "dev"
+        },
+        {
+          "Key": "Project",
+          "Value": "batch-and-batter"
+        }
+      ]
+    }
+  },
+  "OpeningSchedulerRole0CC37F09": {
+    "Type": "AWS::IAM::Role",
+    "Properties": {
+      "AssumeRolePolicyDocument": {
+        "Statement": [
+          {
+            "Action": "sts:AssumeRole",
+            "Condition": {
+              "StringEquals": {
+                "aws:SourceAccount": {
+                  "Ref": "AWS::AccountId"
+                },
+                "aws:SourceArn": {
+                  "Fn::GetAtt": ["OpeningScheduleGroup", "Arn"]
+                }
+              }
+            },
+            "Effect": "Allow",
+            "Principal": {
+              "Service": "scheduler.amazonaws.com"
+            }
+          }
+        ],
+        "Version": "2012-10-17"
+      },
+      "Tags": [
+        {
+          "Key": "Environment",
+          "Value": "dev"
+        },
+        {
+          "Key": "Project",
+          "Value": "batch-and-batter"
+        }
+      ]
+    }
+  },
+  "OpeningSchedulerRoleDefaultPolicy3F96982E": {
+    "Type": "AWS::IAM::Policy",
+    "Properties": {
+      "PolicyDocument": {
+        "Statement": [
+          {
+            "Action": "lambda:InvokeFunction",
+            "Effect": "Allow",
+            "Resource": {
+              "Fn::Join": [
+                "",
+                [
+                  "arn:",
+                  {
+                    "Ref": "AWS::Partition"
+                  },
+                  ":lambda:",
+                  {
+                    "Ref": "AWS::Region"
+                  },
+                  ":",
+                  {
+                    "Ref": "AWS::AccountId"
+                  },
+                  ":function:batch-and-batter-dev-api"
+                ]
+              ]
+            }
+          }
+        ],
+        "Version": "2012-10-17"
+      },
+      "PolicyName": "OpeningSchedulerRoleDefaultPolicy3F96982E",
+      "Roles": [
+        {
+          "Ref": "OpeningSchedulerRole0CC37F09"
+        }
+      ]
+    }
+  },
+  "CatalogTableF8EA09BD": {
+    "Type": "AWS::DynamoDB::Table",
+    "Properties": {
+      "AttributeDefinitions": [
+        {
+          "AttributeName": "PK",
+          "AttributeType": "S"
+        },
+        {
+          "AttributeName": "SK",
+          "AttributeType": "S"
+        }
+      ],
+      "BillingMode": "PAY_PER_REQUEST",
+      "DeletionProtectionEnabled": false,
+      "KeySchema": [
+        {
+          "AttributeName": "PK",
+          "KeyType": "HASH"
+        },
+        {
+          "AttributeName": "SK",
+          "KeyType": "RANGE"
+        }
+      ],
+      "SSESpecification": {
+        "SSEEnabled": false
+      },
+      "TableName": "batch-and-batter-dev-catalog",
+      "Tags": [
+        {
+          "Key": "Environment",
+          "Value": "dev"
+        },
+        {
+          "Key": "Project",
+          "Value": "batch-and-batter"
+        }
+      ]
+    },
+    "UpdateReplacePolicy": "Delete",
+    "DeletionPolicy": "Delete"
+  },
+  "CommerceTable6CC80189": {
+    "Type": "AWS::DynamoDB::Table",
+    "Properties": {
+      "AttributeDefinitions": [
+        {
+          "AttributeName": "PK",
+          "AttributeType": "S"
+        },
+        {
+          "AttributeName": "SK",
+          "AttributeType": "S"
+        }
+      ],
+      "BillingMode": "PAY_PER_REQUEST",
+      "DeletionProtectionEnabled": false,
+      "KeySchema": [
+        {
+          "AttributeName": "PK",
+          "KeyType": "HASH"
+        },
+        {
+          "AttributeName": "SK",
+          "KeyType": "RANGE"
+        }
+      ],
+      "SSESpecification": {
+        "SSEEnabled": false
+      },
+      "TableName": "batch-and-batter-dev-commerce",
+      "Tags": [
+        {
+          "Key": "Environment",
+          "Value": "dev"
+        },
+        {
+          "Key": "Project",
+          "Value": "batch-and-batter"
+        }
+      ]
+    },
+    "UpdateReplacePolicy": "Delete",
+    "DeletionPolicy": "Delete"
+  },
+  "OperationsTable90528792": {
+    "Type": "AWS::DynamoDB::Table",
+    "Properties": {
+      "AttributeDefinitions": [
+        {
+          "AttributeName": "PK",
+          "AttributeType": "S"
+        },
+        {
+          "AttributeName": "SK",
+          "AttributeType": "S"
+        }
+      ],
+      "BillingMode": "PAY_PER_REQUEST",
+      "DeletionProtectionEnabled": false,
+      "KeySchema": [
+        {
+          "AttributeName": "PK",
+          "KeyType": "HASH"
+        },
+        {
+          "AttributeName": "SK",
+          "KeyType": "RANGE"
+        }
+      ],
+      "SSESpecification": {
+        "SSEEnabled": false
+      },
+      "TableName": "batch-and-batter-dev-operations",
+      "Tags": [
+        {
+          "Key": "Environment",
+          "Value": "dev"
+        },
+        {
+          "Key": "Project",
+          "Value": "batch-and-batter"
+        }
+      ]
+    },
+    "UpdateReplacePolicy": "Delete",
+    "DeletionPolicy": "Delete"
+  },
+  "ReservationDeadLetterQueue85C3AB51": {
+    "Type": "AWS::SQS::Queue",
+    "Properties": {
+      "MessageRetentionPeriod": 1209600,
+      "QueueName": "batch-and-batter-dev-reservation-dlq",
+      "SqsManagedSseEnabled": true,
+      "Tags": [
+        {
+          "Key": "Environment",
+          "Value": "dev"
+        },
+        {
+          "Key": "Project",
+          "Value": "batch-and-batter"
+        }
+      ]
+    },
+    "UpdateReplacePolicy": "Delete",
+    "DeletionPolicy": "Delete"
+  },
+  "ReservationQueue43323CC1": {
+    "Type": "AWS::SQS::Queue",
+    "Properties": {
+      "DelaySeconds": 0,
+      "MessageRetentionPeriod": 345600,
+      "QueueName": "batch-and-batter-dev-reservation",
+      "RedrivePolicy": {
+        "deadLetterTargetArn": {
+          "Fn::GetAtt": ["ReservationDeadLetterQueue85C3AB51", "Arn"]
+        },
+        "maxReceiveCount": 5
+      },
+      "SqsManagedSseEnabled": true,
+      "Tags": [
+        {
+          "Key": "Environment",
+          "Value": "dev"
+        },
+        {
+          "Key": "Project",
+          "Value": "batch-and-batter"
+        }
+      ],
+      "VisibilityTimeout": 30
+    },
+    "UpdateReplacePolicy": "Delete",
+    "DeletionPolicy": "Delete"
+  },
+  "NotificationDeadLetterQueueAEEB98A9": {
+    "Type": "AWS::SQS::Queue",
+    "Properties": {
+      "MessageRetentionPeriod": 1209600,
+      "QueueName": "batch-and-batter-dev-notification-dlq",
+      "SqsManagedSseEnabled": true,
+      "Tags": [
+        {
+          "Key": "Environment",
+          "Value": "dev"
+        },
+        {
+          "Key": "Project",
+          "Value": "batch-and-batter"
+        }
+      ]
+    },
+    "UpdateReplacePolicy": "Delete",
+    "DeletionPolicy": "Delete"
+  },
+  "NotificationQueue36610CC1": {
+    "Type": "AWS::SQS::Queue",
+    "Properties": {
+      "DelaySeconds": 0,
+      "MessageRetentionPeriod": 345600,
+      "QueueName": "batch-and-batter-dev-notification",
+      "RedrivePolicy": {
+        "deadLetterTargetArn": {
+          "Fn::GetAtt": ["NotificationDeadLetterQueueAEEB98A9", "Arn"]
+        },
+        "maxReceiveCount": 5
+      },
+      "SqsManagedSseEnabled": true,
+      "Tags": [
+        {
+          "Key": "Environment",
+          "Value": "dev"
+        },
+        {
+          "Key": "Project",
+          "Value": "batch-and-batter"
+        }
+      ],
+      "VisibilityTimeout": 30
+    },
+    "UpdateReplacePolicy": "Delete",
+    "DeletionPolicy": "Delete"
+  },
+  "AdminUserPoolD0AF18CF": {
+    "Type": "AWS::Cognito::UserPool",
+    "Properties": {
+      "AccountRecoverySetting": {
+        "RecoveryMechanisms": [
+          {
+            "Name": "admin_only",
+            "Priority": 1
+          }
+        ]
+      },
+      "AdminCreateUserConfig": {
+        "AllowAdminCreateUserOnly": true
+      },
+      "EmailVerificationMessage": "The verification code to your new account is {####}",
+      "EmailVerificationSubject": "Verify your new account",
+      "SmsVerificationMessage": "The verification code to your new account is {####}",
+      "UserPoolName": "batch-and-batter-dev-admins",
+      "UserPoolTags": {
+        "Environment": "dev",
+        "Project": "batch-and-batter"
+      },
+      "VerificationMessageTemplate": {
+        "DefaultEmailOption": "CONFIRM_WITH_CODE",
+        "EmailMessage": "The verification code to your new account is {####}",
+        "EmailSubject": "Verify your new account",
+        "SmsMessage": "The verification code to your new account is {####}"
+      }
+    },
+    "UpdateReplacePolicy": "Delete",
+    "DeletionPolicy": "Delete"
+  },
+  "AdminUserPoolAdminAppClient43C1FAD5": {
+    "Type": "AWS::Cognito::UserPoolClient",
+    "Properties": {
+      "AccessTokenValidity": 15,
+      "AllowedOAuthFlowsUserPoolClient": false,
+      "ClientName": "batch-and-batter-dev-admin-client",
+      "EnableTokenRevocation": true,
+      "ExplicitAuthFlows": [
+        "ALLOW_USER_PASSWORD_AUTH",
+        "ALLOW_USER_SRP_AUTH",
+        "ALLOW_REFRESH_TOKEN_AUTH"
+      ],
+      "GenerateSecret": false,
+      "IdTokenValidity": 15,
+      "PreventUserExistenceErrors": "ENABLED",
+      "RefreshTokenValidity": 1440,
+      "SupportedIdentityProviders": ["COGNITO"],
+      "TokenValidityUnits": {
+        "AccessToken": "minutes",
+        "IdToken": "minutes",
+        "RefreshToken": "minutes"
+      },
+      "UserPoolId": {
+        "Ref": "AdminUserPoolD0AF18CF"
+      }
+    }
+  },
+  "AdminGroup": {
+    "Type": "AWS::Cognito::UserPoolGroup",
+    "Properties": {
+      "GroupName": "batch-and-batter-admins",
+      "UserPoolId": {
+        "Ref": "AdminUserPoolD0AF18CF"
+      }
+    }
+  },
+  "ProductMediaBucketA9628921": {
+    "Type": "AWS::S3::Bucket",
+    "Properties": {
+      "BucketEncryption": {
+        "ServerSideEncryptionConfiguration": [
+          {
+            "ServerSideEncryptionByDefault": {
+              "SSEAlgorithm": "AES256"
+            }
+          }
+        ]
+      },
+      "BucketName": {
+        "Fn::Join": [
+          "",
+          [
+            "batch-and-batter-dev-product-media-",
+            {
+              "Ref": "AWS::AccountId"
+            },
+            "-",
+            {
+              "Ref": "AWS::Region"
+            }
+          ]
+        ]
+      },
+      "OwnershipControls": {
+        "Rules": [
+          {
+            "ObjectOwnership": "BucketOwnerEnforced"
+          }
+        ]
+      },
+      "PublicAccessBlockConfiguration": {
+        "BlockPublicAcls": true,
+        "BlockPublicPolicy": true,
+        "IgnorePublicAcls": true,
+        "RestrictPublicBuckets": true
+      },
+      "Tags": [
+        {
+          "Key": "Environment",
+          "Value": "dev"
+        },
+        {
+          "Key": "Project",
+          "Value": "batch-and-batter"
+        }
+      ]
+    },
+    "UpdateReplacePolicy": "Delete",
+    "DeletionPolicy": "Delete"
+  },
+  "ProductMediaBucketPolicy9286C9A1": {
+    "Type": "AWS::S3::BucketPolicy",
+    "Properties": {
+      "Bucket": {
+        "Ref": "ProductMediaBucketA9628921"
+      },
+      "PolicyDocument": {
+        "Statement": [
+          {
+            "Action": "s3:*",
+            "Condition": {
+              "Bool": {
+                "aws:SecureTransport": "false"
+              }
+            },
+            "Effect": "Deny",
+            "Principal": {
+              "AWS": "*"
+            },
+            "Resource": [
+              {
+                "Fn::GetAtt": ["ProductMediaBucketA9628921", "Arn"]
+              },
+              {
+                "Fn::Join": [
+                  "",
+                  [
+                    {
+                      "Fn::GetAtt": ["ProductMediaBucketA9628921", "Arn"]
+                    },
+                    "/*"
+                  ]
+                ]
+              }
+            ]
+          }
+        ],
+        "Version": "2012-10-17"
+      }
+    }
+  },
+  "ApplicationLogGroupE33FCF9B": {
+    "Type": "AWS::Logs::LogGroup",
+    "Properties": {
+      "LogGroupName": "/aws/lambda/batch-and-batter-dev-api",
+      "RetentionInDays": 14,
+      "Tags": [
+        {
+          "Key": "Environment",
+          "Value": "dev"
+        },
+        {
+          "Key": "Project",
+          "Value": "batch-and-batter"
+        }
+      ]
+    },
+    "UpdateReplacePolicy": "Delete",
+    "DeletionPolicy": "Delete"
+  },
+  "ApplicationRole90C00724": {
+    "Type": "AWS::IAM::Role",
+    "Properties": {
+      "AssumeRolePolicyDocument": {
+        "Statement": [
+          {
+            "Action": "sts:AssumeRole",
+            "Effect": "Allow",
+            "Principal": {
+              "Service": "lambda.amazonaws.com"
+            }
+          }
+        ],
+        "Version": "2012-10-17"
+      },
+      "Tags": [
+        {
+          "Key": "Environment",
+          "Value": "dev"
+        },
+        {
+          "Key": "Project",
+          "Value": "batch-and-batter"
+        }
+      ]
+    }
+  },
+  "ApplicationRoleDefaultPolicy2A2BCE7E": {
+    "Type": "AWS::IAM::Policy",
+    "Properties": {
+      "PolicyDocument": {
+        "Statement": [
+          {
+            "Action": ["scheduler:CreateSchedule", "scheduler:GetSchedule"],
+            "Effect": "Allow",
+            "Resource": {
+              "Fn::Join": [
+                "",
+                [
+                  "arn:",
+                  {
+                    "Ref": "AWS::Partition"
+                  },
+                  ":scheduler:",
+                  {
+                    "Ref": "AWS::Region"
+                  },
+                  ":",
+                  {
+                    "Ref": "AWS::AccountId"
+                  },
+                  ":schedule/batch-and-batter-dev-openings/open-*"
+                ]
+              ]
+            }
+          },
+          {
+            "Action": "iam:PassRole",
+            "Condition": {
+              "StringEquals": {
+                "iam:PassedToService": "scheduler.amazonaws.com"
+              }
+            },
+            "Effect": "Allow",
+            "Resource": {
+              "Fn::GetAtt": ["OpeningSchedulerRole0CC37F09", "Arn"]
+            }
+          },
+          {
+            "Action": ["logs:CreateLogStream", "logs:PutLogEvents"],
+            "Effect": "Allow",
+            "Resource": {
+              "Fn::GetAtt": ["ApplicationLogGroupE33FCF9B", "Arn"]
+            }
+          },
+          {
+            "Action": [
+              "dynamodb:GetItem",
+              "dynamodb:Query",
+              "dynamodb:PutItem",
+              "dynamodb:DeleteItem",
+              "dynamodb:ConditionCheckItem"
+            ],
+            "Effect": "Allow",
+            "Resource": {
+              "Fn::GetAtt": ["CatalogTableF8EA09BD", "Arn"]
+            }
+          }
+        ],
+        "Version": "2012-10-17"
+      },
+      "PolicyName": "ApplicationRoleDefaultPolicy2A2BCE7E",
+      "Roles": [
+        {
+          "Ref": "ApplicationRole90C00724"
+        }
+      ]
+    }
+  },
+  "ApplicationApi5D63FF39": {
+    "Type": "AWS::Lambda::Function",
+    "Properties": {
+      "Code": {
+        "S3Bucket": {
+          "Fn::Sub": "cdk-hnb659fds-assets-${AWS::AccountId}-${AWS::Region}"
+        },
+        "S3Key": "aa211d6830c377f322120665de36ae727294f70823ca4ca1844db055f8a2dbff.zip"
+      },
+      "Environment": {
+        "Variables": {
+          "CATALOG_TABLE_NAME": {
+            "Ref": "CatalogTableF8EA09BD"
+          },
+          "OPEN_SCHEDULE_GROUP": {
+            "Ref": "OpeningScheduleGroup"
+          },
+          "OPEN_TARGET_ARN": {
+            "Fn::Join": [
+              "",
+              [
+                "arn:",
+                {
+                  "Ref": "AWS::Partition"
+                },
+                ":lambda:",
+                {
+                  "Ref": "AWS::Region"
+                },
+                ":",
+                {
+                  "Ref": "AWS::AccountId"
+                },
+                ":function:batch-and-batter-dev-api"
+              ]
+            ]
+          },
+          "OPEN_SCHEDULE_ROLE_ARN": {
+            "Fn::GetAtt": ["OpeningSchedulerRole0CC37F09", "Arn"]
+          }
+        }
+      },
+      "FunctionName": "batch-and-batter-dev-api",
+      "Handler": "handler.handler",
+      "LoggingConfig": {
+        "LogGroup": {
+          "Ref": "ApplicationLogGroupE33FCF9B"
+        }
+      },
+      "MemorySize": 128,
+      "Role": {
+        "Fn::GetAtt": ["ApplicationRole90C00724", "Arn"]
+      },
+      "Runtime": "nodejs24.x",
+      "Tags": [
+        {
+          "Key": "Environment",
+          "Value": "dev"
+        },
+        {
+          "Key": "Project",
+          "Value": "batch-and-batter"
+        }
+      ],
+      "Timeout": 5
+    },
+    "DependsOn": [
+      "ApplicationRoleDefaultPolicy2A2BCE7E",
+      "ApplicationRole90C00724"
+    ]
+  },
+  "ApplicationApiEventInvokeConfig9BCDA961": {
+    "Type": "AWS::Lambda::EventInvokeConfig",
+    "Properties": {
+      "FunctionName": {
+        "Ref": "ApplicationApi5D63FF39"
+      },
+      "MaximumEventAgeInSeconds": 900,
+      "MaximumRetryAttempts": 2,
+      "Qualifier": "$LATEST"
+    }
+  },
+  "HttpApiF5A9A8A7": {
+    "Type": "AWS::ApiGatewayV2::Api",
+    "Properties": {
+      "Name": "batch-and-batter-dev-http-api",
+      "ProtocolType": "HTTP",
+      "Tags": {
+        "Environment": "dev",
+        "Project": "batch-and-batter"
+      }
+    }
+  },
+  "HttpApiDefaultStage3EEB07D6": {
+    "Type": "AWS::ApiGatewayV2::Stage",
+    "Properties": {
+      "AccessLogSettings": {
+        "DestinationArn": {
+          "Fn::GetAtt": ["ApiAccessLogGroupCEA70788", "Arn"]
+        },
+        "Format": "{\"requestId\":\"$context.requestId\",\"routeKey\":\"$context.routeKey\",\"httpMethod\":\"$context.httpMethod\",\"path\":\"$context.path\",\"status\":\"$context.status\",\"responseLength\":\"$context.responseLength\",\"integrationStatus\":\"$context.integrationStatus\",\"integrationErrorMessage\":\"$context.integrationErrorMessage\",\"integrationLatency\":\"$context.integrationLatency\",\"integrationRequestId\":\"$context.integration.requestId\",\"requestTime\":\"$context.requestTime\"}"
+      },
+      "ApiId": {
+        "Ref": "HttpApiF5A9A8A7"
+      },
+      "AutoDeploy": true,
+      "StageName": "$default",
+      "Tags": {
+        "Environment": "dev",
+        "Project": "batch-and-batter"
+      }
+    }
+  },
+  "HttpApiGEThealthHealthIntegration700E4B25": {
+    "Type": "AWS::ApiGatewayV2::Integration",
+    "Properties": {
+      "ApiId": {
+        "Ref": "HttpApiF5A9A8A7"
+      },
+      "IntegrationType": "AWS_PROXY",
+      "IntegrationUri": {
+        "Fn::GetAtt": ["ApplicationApi5D63FF39", "Arn"]
+      },
+      "PayloadFormatVersion": "2.0"
+    }
+  },
+  "HttpApiGEThealthHealthIntegrationPermissionEC5DEC43": {
+    "Type": "AWS::Lambda::Permission",
+    "Properties": {
+      "Action": "lambda:InvokeFunction",
+      "FunctionName": {
+        "Fn::GetAtt": ["ApplicationApi5D63FF39", "Arn"]
+      },
+      "Principal": "apigateway.amazonaws.com",
+      "SourceArn": {
+        "Fn::Join": [
+          "",
+          [
+            "arn:",
+            {
+              "Ref": "AWS::Partition"
+            },
+            ":execute-api:",
+            {
+              "Ref": "AWS::Region"
+            },
+            ":",
+            {
+              "Ref": "AWS::AccountId"
+            },
+            ":",
+            {
+              "Ref": "HttpApiF5A9A8A7"
+            },
+            "/*/*/health"
+          ]
+        ]
+      }
+    }
+  },
+  "HttpApiGEThealthAB1F4856": {
+    "Type": "AWS::ApiGatewayV2::Route",
+    "Properties": {
+      "ApiId": {
+        "Ref": "HttpApiF5A9A8A7"
+      },
+      "AuthorizationType": "NONE",
+      "RouteKey": "GET /health",
+      "Target": {
+        "Fn::Join": [
+          "",
+          [
+            "integrations/",
+            {
+              "Ref": "HttpApiGEThealthHealthIntegration700E4B25"
+            }
+          ]
+        ]
+      }
+    }
+  },
+  "HttpApiGETdropscurrentCurrentDropIntegrationB94678D8": {
+    "Type": "AWS::ApiGatewayV2::Integration",
+    "Properties": {
+      "ApiId": {
+        "Ref": "HttpApiF5A9A8A7"
+      },
+      "IntegrationType": "AWS_PROXY",
+      "IntegrationUri": {
+        "Fn::GetAtt": ["ApplicationApi5D63FF39", "Arn"]
+      },
+      "PayloadFormatVersion": "2.0"
+    }
+  },
+  "HttpApiGETdropscurrentCurrentDropIntegrationPermission4EC656A7": {
+    "Type": "AWS::Lambda::Permission",
+    "Properties": {
+      "Action": "lambda:InvokeFunction",
+      "FunctionName": {
+        "Fn::GetAtt": ["ApplicationApi5D63FF39", "Arn"]
+      },
+      "Principal": "apigateway.amazonaws.com",
+      "SourceArn": {
+        "Fn::Join": [
+          "",
+          [
+            "arn:",
+            {
+              "Ref": "AWS::Partition"
+            },
+            ":execute-api:",
+            {
+              "Ref": "AWS::Region"
+            },
+            ":",
+            {
+              "Ref": "AWS::AccountId"
+            },
+            ":",
+            {
+              "Ref": "HttpApiF5A9A8A7"
+            },
+            "/*/*/drops/current"
+          ]
+        ]
+      }
+    }
+  },
+  "HttpApiGETdropscurrentEE28C22E": {
+    "Type": "AWS::ApiGatewayV2::Route",
+    "Properties": {
+      "ApiId": {
+        "Ref": "HttpApiF5A9A8A7"
+      },
+      "AuthorizationType": "NONE",
+      "RouteKey": "GET /drops/current",
+      "Target": {
+        "Fn::Join": [
+          "",
+          [
+            "integrations/",
+            {
+              "Ref": "HttpApiGETdropscurrentCurrentDropIntegrationB94678D8"
+            }
+          ]
+        ]
+      }
+    }
+  },
+  "HttpApiGETdropsdropIdDropIntegration3368BE64": {
+    "Type": "AWS::ApiGatewayV2::Integration",
+    "Properties": {
+      "ApiId": {
+        "Ref": "HttpApiF5A9A8A7"
+      },
+      "IntegrationType": "AWS_PROXY",
+      "IntegrationUri": {
+        "Fn::GetAtt": ["ApplicationApi5D63FF39", "Arn"]
+      },
+      "PayloadFormatVersion": "2.0"
+    }
+  },
+  "HttpApiGETdropsdropIdDropIntegrationPermissionEEC5D84C": {
+    "Type": "AWS::Lambda::Permission",
+    "Properties": {
+      "Action": "lambda:InvokeFunction",
+      "FunctionName": {
+        "Fn::GetAtt": ["ApplicationApi5D63FF39", "Arn"]
+      },
+      "Principal": "apigateway.amazonaws.com",
+      "SourceArn": {
+        "Fn::Join": [
+          "",
+          [
+            "arn:",
+            {
+              "Ref": "AWS::Partition"
+            },
+            ":execute-api:",
+            {
+              "Ref": "AWS::Region"
+            },
+            ":",
+            {
+              "Ref": "AWS::AccountId"
+            },
+            ":",
+            {
+              "Ref": "HttpApiF5A9A8A7"
+            },
+            "/*/*/drops/{dropId}"
+          ]
+        ]
+      }
+    }
+  },
+  "HttpApiGETdropsdropId1F26A210": {
+    "Type": "AWS::ApiGatewayV2::Route",
+    "Properties": {
+      "ApiId": {
+        "Ref": "HttpApiF5A9A8A7"
+      },
+      "AuthorizationType": "NONE",
+      "RouteKey": "GET /drops/{dropId}",
+      "Target": {
+        "Fn::Join": [
+          "",
+          [
+            "integrations/",
+            {
+              "Ref": "HttpApiGETdropsdropIdDropIntegration3368BE64"
+            }
+          ]
+        ]
+      }
+    }
+  },
+  "HttpApiGETadminmeAdminMeIntegration39DE8842": {
+    "Type": "AWS::ApiGatewayV2::Integration",
+    "Properties": {
+      "ApiId": {
+        "Ref": "HttpApiF5A9A8A7"
+      },
+      "IntegrationType": "AWS_PROXY",
+      "IntegrationUri": {
+        "Fn::GetAtt": ["ApplicationApi5D63FF39", "Arn"]
+      },
+      "PayloadFormatVersion": "2.0"
+    }
+  },
+  "HttpApiGETadminmeAdminMeIntegrationPermission50DF5F3A": {
+    "Type": "AWS::Lambda::Permission",
+    "Properties": {
+      "Action": "lambda:InvokeFunction",
+      "FunctionName": {
+        "Fn::GetAtt": ["ApplicationApi5D63FF39", "Arn"]
+      },
+      "Principal": "apigateway.amazonaws.com",
+      "SourceArn": {
+        "Fn::Join": [
+          "",
+          [
+            "arn:",
+            {
+              "Ref": "AWS::Partition"
+            },
+            ":execute-api:",
+            {
+              "Ref": "AWS::Region"
+            },
+            ":",
+            {
+              "Ref": "AWS::AccountId"
+            },
+            ":",
+            {
+              "Ref": "HttpApiF5A9A8A7"
+            },
+            "/*/*/admin/me"
+          ]
+        ]
+      }
+    }
+  },
+  "HttpApiGETadminme38711914": {
+    "Type": "AWS::ApiGatewayV2::Route",
+    "Properties": {
+      "ApiId": {
+        "Ref": "HttpApiF5A9A8A7"
+      },
+      "AuthorizationType": "JWT",
+      "AuthorizerId": {
+        "Ref": "HttpApiAdminJwtAuthorizerA698361D"
+      },
+      "RouteKey": "GET /admin/me",
+      "Target": {
+        "Fn::Join": [
+          "",
+          [
+            "integrations/",
+            {
+              "Ref": "HttpApiGETadminmeAdminMeIntegration39DE8842"
+            }
+          ]
+        ]
+      }
+    }
+  },
+  "HttpApiAdminJwtAuthorizerA698361D": {
+    "Type": "AWS::ApiGatewayV2::Authorizer",
+    "Properties": {
+      "ApiId": {
+        "Ref": "HttpApiF5A9A8A7"
+      },
+      "AuthorizerType": "JWT",
+      "IdentitySource": ["$request.header.Authorization"],
+      "JwtConfiguration": {
+        "Audience": [
+          {
+            "Ref": "AdminUserPoolAdminAppClient43C1FAD5"
+          }
+        ],
+        "Issuer": {
+          "Fn::GetAtt": ["AdminUserPoolD0AF18CF", "ProviderURL"]
+        }
+      },
+      "Name": "AdminJwtAuthorizer"
+    }
+  },
+  "HttpApiPOSTadminproductsAdminCreateProductIntegration58E798B2": {
+    "Type": "AWS::ApiGatewayV2::Integration",
+    "Properties": {
+      "ApiId": {
+        "Ref": "HttpApiF5A9A8A7"
+      },
+      "IntegrationType": "AWS_PROXY",
+      "IntegrationUri": {
+        "Fn::GetAtt": ["ApplicationApi5D63FF39", "Arn"]
+      },
+      "PayloadFormatVersion": "2.0"
+    }
+  },
+  "HttpApiPOSTadminproductsAdminCreateProductIntegrationPermission15F006B1": {
+    "Type": "AWS::Lambda::Permission",
+    "Properties": {
+      "Action": "lambda:InvokeFunction",
+      "FunctionName": {
+        "Fn::GetAtt": ["ApplicationApi5D63FF39", "Arn"]
+      },
+      "Principal": "apigateway.amazonaws.com",
+      "SourceArn": {
+        "Fn::Join": [
+          "",
+          [
+            "arn:",
+            {
+              "Ref": "AWS::Partition"
+            },
+            ":execute-api:",
+            {
+              "Ref": "AWS::Region"
+            },
+            ":",
+            {
+              "Ref": "AWS::AccountId"
+            },
+            ":",
+            {
+              "Ref": "HttpApiF5A9A8A7"
+            },
+            "/*/*/admin/products"
+          ]
+        ]
+      }
+    }
+  },
+  "HttpApiPOSTadminproducts0A1E4567": {
+    "Type": "AWS::ApiGatewayV2::Route",
+    "Properties": {
+      "ApiId": {
+        "Ref": "HttpApiF5A9A8A7"
+      },
+      "AuthorizationType": "JWT",
+      "AuthorizerId": {
+        "Ref": "HttpApiAdminJwtAuthorizerA698361D"
+      },
+      "RouteKey": "POST /admin/products",
+      "Target": {
+        "Fn::Join": [
+          "",
+          [
+            "integrations/",
+            {
+              "Ref": "HttpApiPOSTadminproductsAdminCreateProductIntegration58E798B2"
+            }
+          ]
+        ]
+      }
+    }
+  },
+  "HttpApiPUTadminproductsproductIdAdminReplaceProductIntegrationAD57D662": {
+    "Type": "AWS::ApiGatewayV2::Integration",
+    "Properties": {
+      "ApiId": {
+        "Ref": "HttpApiF5A9A8A7"
+      },
+      "IntegrationType": "AWS_PROXY",
+      "IntegrationUri": {
+        "Fn::GetAtt": ["ApplicationApi5D63FF39", "Arn"]
+      },
+      "PayloadFormatVersion": "2.0"
+    }
+  },
+  "HttpApiPUTadminproductsproductIdAdminReplaceProductIntegrationPermission12282694": {
+    "Type": "AWS::Lambda::Permission",
+    "Properties": {
+      "Action": "lambda:InvokeFunction",
+      "FunctionName": {
+        "Fn::GetAtt": ["ApplicationApi5D63FF39", "Arn"]
+      },
+      "Principal": "apigateway.amazonaws.com",
+      "SourceArn": {
+        "Fn::Join": [
+          "",
+          [
+            "arn:",
+            {
+              "Ref": "AWS::Partition"
+            },
+            ":execute-api:",
+            {
+              "Ref": "AWS::Region"
+            },
+            ":",
+            {
+              "Ref": "AWS::AccountId"
+            },
+            ":",
+            {
+              "Ref": "HttpApiF5A9A8A7"
+            },
+            "/*/*/admin/products/{productId}"
+          ]
+        ]
+      }
+    }
+  },
+  "HttpApiPUTadminproductsproductId21068A12": {
+    "Type": "AWS::ApiGatewayV2::Route",
+    "Properties": {
+      "ApiId": {
+        "Ref": "HttpApiF5A9A8A7"
+      },
+      "AuthorizationType": "JWT",
+      "AuthorizerId": {
+        "Ref": "HttpApiAdminJwtAuthorizerA698361D"
+      },
+      "RouteKey": "PUT /admin/products/{productId}",
+      "Target": {
+        "Fn::Join": [
+          "",
+          [
+            "integrations/",
+            {
+              "Ref": "HttpApiPUTadminproductsproductIdAdminReplaceProductIntegrationAD57D662"
+            }
+          ]
+        ]
+      }
+    }
+  },
+  "HttpApiPOSTadmindropsAdminCreateDropIntegration657C5DF2": {
+    "Type": "AWS::ApiGatewayV2::Integration",
+    "Properties": {
+      "ApiId": {
+        "Ref": "HttpApiF5A9A8A7"
+      },
+      "IntegrationType": "AWS_PROXY",
+      "IntegrationUri": {
+        "Fn::GetAtt": ["ApplicationApi5D63FF39", "Arn"]
+      },
+      "PayloadFormatVersion": "2.0"
+    }
+  },
+  "HttpApiPOSTadmindropsAdminCreateDropIntegrationPermission53D736FD": {
+    "Type": "AWS::Lambda::Permission",
+    "Properties": {
+      "Action": "lambda:InvokeFunction",
+      "FunctionName": {
+        "Fn::GetAtt": ["ApplicationApi5D63FF39", "Arn"]
+      },
+      "Principal": "apigateway.amazonaws.com",
+      "SourceArn": {
+        "Fn::Join": [
+          "",
+          [
+            "arn:",
+            {
+              "Ref": "AWS::Partition"
+            },
+            ":execute-api:",
+            {
+              "Ref": "AWS::Region"
+            },
+            ":",
+            {
+              "Ref": "AWS::AccountId"
+            },
+            ":",
+            {
+              "Ref": "HttpApiF5A9A8A7"
+            },
+            "/*/*/admin/drops"
+          ]
+        ]
+      }
+    }
+  },
+  "HttpApiPOSTadmindropsB8D0FEAA": {
+    "Type": "AWS::ApiGatewayV2::Route",
+    "Properties": {
+      "ApiId": {
+        "Ref": "HttpApiF5A9A8A7"
+      },
+      "AuthorizationType": "JWT",
+      "AuthorizerId": {
+        "Ref": "HttpApiAdminJwtAuthorizerA698361D"
+      },
+      "RouteKey": "POST /admin/drops",
+      "Target": {
+        "Fn::Join": [
+          "",
+          [
+            "integrations/",
+            {
+              "Ref": "HttpApiPOSTadmindropsAdminCreateDropIntegration657C5DF2"
+            }
+          ]
+        ]
+      }
+    }
+  },
+  "HttpApiPUTadmindropsdropIdAdminReplaceDropIntegrationA7C53DD6": {
+    "Type": "AWS::ApiGatewayV2::Integration",
+    "Properties": {
+      "ApiId": {
+        "Ref": "HttpApiF5A9A8A7"
+      },
+      "IntegrationType": "AWS_PROXY",
+      "IntegrationUri": {
+        "Fn::GetAtt": ["ApplicationApi5D63FF39", "Arn"]
+      },
+      "PayloadFormatVersion": "2.0"
+    }
+  },
+  "HttpApiPUTadmindropsdropIdAdminReplaceDropIntegrationPermissionB93C0CFB": {
+    "Type": "AWS::Lambda::Permission",
+    "Properties": {
+      "Action": "lambda:InvokeFunction",
+      "FunctionName": {
+        "Fn::GetAtt": ["ApplicationApi5D63FF39", "Arn"]
+      },
+      "Principal": "apigateway.amazonaws.com",
+      "SourceArn": {
+        "Fn::Join": [
+          "",
+          [
+            "arn:",
+            {
+              "Ref": "AWS::Partition"
+            },
+            ":execute-api:",
+            {
+              "Ref": "AWS::Region"
+            },
+            ":",
+            {
+              "Ref": "AWS::AccountId"
+            },
+            ":",
+            {
+              "Ref": "HttpApiF5A9A8A7"
+            },
+            "/*/*/admin/drops/{dropId}"
+          ]
+        ]
+      }
+    }
+  },
+  "HttpApiPUTadmindropsdropIdDB22F13A": {
+    "Type": "AWS::ApiGatewayV2::Route",
+    "Properties": {
+      "ApiId": {
+        "Ref": "HttpApiF5A9A8A7"
+      },
+      "AuthorizationType": "JWT",
+      "AuthorizerId": {
+        "Ref": "HttpApiAdminJwtAuthorizerA698361D"
+      },
+      "RouteKey": "PUT /admin/drops/{dropId}",
+      "Target": {
+        "Fn::Join": [
+          "",
+          [
+            "integrations/",
+            {
+              "Ref": "HttpApiPUTadmindropsdropIdAdminReplaceDropIntegrationA7C53DD6"
+            }
+          ]
+        ]
+      }
+    }
+  },
+  "HttpApiGETadmindropsdropIdcompositionAdminCompositionIntegration9DD064FD": {
+    "Type": "AWS::ApiGatewayV2::Integration",
+    "Properties": {
+      "ApiId": {
+        "Ref": "HttpApiF5A9A8A7"
+      },
+      "IntegrationType": "AWS_PROXY",
+      "IntegrationUri": {
+        "Fn::GetAtt": ["ApplicationApi5D63FF39", "Arn"]
+      },
+      "PayloadFormatVersion": "2.0"
+    }
+  },
+  "HttpApiGETadmindropsdropIdcompositionAdminCompositionIntegrationPermissionBB90F17B": {
+    "Type": "AWS::Lambda::Permission",
+    "Properties": {
+      "Action": "lambda:InvokeFunction",
+      "FunctionName": {
+        "Fn::GetAtt": ["ApplicationApi5D63FF39", "Arn"]
+      },
+      "Principal": "apigateway.amazonaws.com",
+      "SourceArn": {
+        "Fn::Join": [
+          "",
+          [
+            "arn:",
+            {
+              "Ref": "AWS::Partition"
+            },
+            ":execute-api:",
+            {
+              "Ref": "AWS::Region"
+            },
+            ":",
+            {
+              "Ref": "AWS::AccountId"
+            },
+            ":",
+            {
+              "Ref": "HttpApiF5A9A8A7"
+            },
+            "/*/*/admin/drops/{dropId}/composition"
+          ]
+        ]
+      }
+    }
+  },
+  "HttpApiGETadmindropsdropIdcomposition933ECB5E": {
+    "Type": "AWS::ApiGatewayV2::Route",
+    "Properties": {
+      "ApiId": {
+        "Ref": "HttpApiF5A9A8A7"
+      },
+      "AuthorizationType": "JWT",
+      "AuthorizerId": {
+        "Ref": "HttpApiAdminJwtAuthorizerA698361D"
+      },
+      "RouteKey": "GET /admin/drops/{dropId}/composition",
+      "Target": {
+        "Fn::Join": [
+          "",
+          [
+            "integrations/",
+            {
+              "Ref": "HttpApiGETadmindropsdropIdcompositionAdminCompositionIntegration9DD064FD"
+            }
+          ]
+        ]
+      }
+    }
+  },
+  "HttpApiPOSTadmindropsdropIdproductsAdminAttachDropProductIntegration4903859C": {
+    "Type": "AWS::ApiGatewayV2::Integration",
+    "Properties": {
+      "ApiId": {
+        "Ref": "HttpApiF5A9A8A7"
+      },
+      "IntegrationType": "AWS_PROXY",
+      "IntegrationUri": {
+        "Fn::GetAtt": ["ApplicationApi5D63FF39", "Arn"]
+      },
+      "PayloadFormatVersion": "2.0"
+    }
+  },
+  "HttpApiPOSTadmindropsdropIdproductsAdminAttachDropProductIntegrationPermission6ADF081D": {
+    "Type": "AWS::Lambda::Permission",
+    "Properties": {
+      "Action": "lambda:InvokeFunction",
+      "FunctionName": {
+        "Fn::GetAtt": ["ApplicationApi5D63FF39", "Arn"]
+      },
+      "Principal": "apigateway.amazonaws.com",
+      "SourceArn": {
+        "Fn::Join": [
+          "",
+          [
+            "arn:",
+            {
+              "Ref": "AWS::Partition"
+            },
+            ":execute-api:",
+            {
+              "Ref": "AWS::Region"
+            },
+            ":",
+            {
+              "Ref": "AWS::AccountId"
+            },
+            ":",
+            {
+              "Ref": "HttpApiF5A9A8A7"
+            },
+            "/*/*/admin/drops/{dropId}/products"
+          ]
+        ]
+      }
+    }
+  },
+  "HttpApiPOSTadmindropsdropIdproducts72311E3E": {
+    "Type": "AWS::ApiGatewayV2::Route",
+    "Properties": {
+      "ApiId": {
+        "Ref": "HttpApiF5A9A8A7"
+      },
+      "AuthorizationType": "JWT",
+      "AuthorizerId": {
+        "Ref": "HttpApiAdminJwtAuthorizerA698361D"
+      },
+      "RouteKey": "POST /admin/drops/{dropId}/products",
+      "Target": {
+        "Fn::Join": [
+          "",
+          [
+            "integrations/",
+            {
+              "Ref": "HttpApiPOSTadmindropsdropIdproductsAdminAttachDropProductIntegration4903859C"
+            }
+          ]
+        ]
+      }
+    }
+  },
+  "HttpApiPUTadmindropsdropIdproductsproductIdAdminReplaceDropProductIntegration30B1DA41": {
+    "Type": "AWS::ApiGatewayV2::Integration",
+    "Properties": {
+      "ApiId": {
+        "Ref": "HttpApiF5A9A8A7"
+      },
+      "IntegrationType": "AWS_PROXY",
+      "IntegrationUri": {
+        "Fn::GetAtt": ["ApplicationApi5D63FF39", "Arn"]
+      },
+      "PayloadFormatVersion": "2.0"
+    }
+  },
+  "HttpApiPUTadmindropsdropIdproductsproductIdAdminReplaceDropProductIntegrationPermission6C143DB1": {
+    "Type": "AWS::Lambda::Permission",
+    "Properties": {
+      "Action": "lambda:InvokeFunction",
+      "FunctionName": {
+        "Fn::GetAtt": ["ApplicationApi5D63FF39", "Arn"]
+      },
+      "Principal": "apigateway.amazonaws.com",
+      "SourceArn": {
+        "Fn::Join": [
+          "",
+          [
+            "arn:",
+            {
+              "Ref": "AWS::Partition"
+            },
+            ":execute-api:",
+            {
+              "Ref": "AWS::Region"
+            },
+            ":",
+            {
+              "Ref": "AWS::AccountId"
+            },
+            ":",
+            {
+              "Ref": "HttpApiF5A9A8A7"
+            },
+            "/*/*/admin/drops/{dropId}/products/{productId}"
+          ]
+        ]
+      }
+    }
+  },
+  "HttpApiPUTadmindropsdropIdproductsproductIdFC0287A7": {
+    "Type": "AWS::ApiGatewayV2::Route",
+    "Properties": {
+      "ApiId": {
+        "Ref": "HttpApiF5A9A8A7"
+      },
+      "AuthorizationType": "JWT",
+      "AuthorizerId": {
+        "Ref": "HttpApiAdminJwtAuthorizerA698361D"
+      },
+      "RouteKey": "PUT /admin/drops/{dropId}/products/{productId}",
+      "Target": {
+        "Fn::Join": [
+          "",
+          [
+            "integrations/",
+            {
+              "Ref": "HttpApiPUTadmindropsdropIdproductsproductIdAdminReplaceDropProductIntegration30B1DA41"
+            }
+          ]
+        ]
+      }
+    }
+  },
+  "HttpApiDELETEadmindropsdropIdproductsproductIdAdminRemoveDropProductIntegrationFECF067C": {
+    "Type": "AWS::ApiGatewayV2::Integration",
+    "Properties": {
+      "ApiId": {
+        "Ref": "HttpApiF5A9A8A7"
+      },
+      "IntegrationType": "AWS_PROXY",
+      "IntegrationUri": {
+        "Fn::GetAtt": ["ApplicationApi5D63FF39", "Arn"]
+      },
+      "PayloadFormatVersion": "2.0"
+    }
+  },
+  "HttpApiDELETEadmindropsdropIdproductsproductIdAdminRemoveDropProductIntegrationPermissionB280A0BF": {
+    "Type": "AWS::Lambda::Permission",
+    "Properties": {
+      "Action": "lambda:InvokeFunction",
+      "FunctionName": {
+        "Fn::GetAtt": ["ApplicationApi5D63FF39", "Arn"]
+      },
+      "Principal": "apigateway.amazonaws.com",
+      "SourceArn": {
+        "Fn::Join": [
+          "",
+          [
+            "arn:",
+            {
+              "Ref": "AWS::Partition"
+            },
+            ":execute-api:",
+            {
+              "Ref": "AWS::Region"
+            },
+            ":",
+            {
+              "Ref": "AWS::AccountId"
+            },
+            ":",
+            {
+              "Ref": "HttpApiF5A9A8A7"
+            },
+            "/*/*/admin/drops/{dropId}/products/{productId}"
+          ]
+        ]
+      }
+    }
+  },
+  "HttpApiDELETEadmindropsdropIdproductsproductId56B6760A": {
+    "Type": "AWS::ApiGatewayV2::Route",
+    "Properties": {
+      "ApiId": {
+        "Ref": "HttpApiF5A9A8A7"
+      },
+      "AuthorizationType": "JWT",
+      "AuthorizerId": {
+        "Ref": "HttpApiAdminJwtAuthorizerA698361D"
+      },
+      "RouteKey": "DELETE /admin/drops/{dropId}/products/{productId}",
+      "Target": {
+        "Fn::Join": [
+          "",
+          [
+            "integrations/",
+            {
+              "Ref": "HttpApiDELETEadmindropsdropIdproductsproductIdAdminRemoveDropProductIntegrationFECF067C"
+            }
+          ]
+        ]
+      }
+    }
+  },
+  "HttpApiPUTadmindropsdropIdpickupsdateAdminPutPickupIntegrationEEDF2D0E": {
+    "Type": "AWS::ApiGatewayV2::Integration",
+    "Properties": {
+      "ApiId": {
+        "Ref": "HttpApiF5A9A8A7"
+      },
+      "IntegrationType": "AWS_PROXY",
+      "IntegrationUri": {
+        "Fn::GetAtt": ["ApplicationApi5D63FF39", "Arn"]
+      },
+      "PayloadFormatVersion": "2.0"
+    }
+  },
+  "HttpApiPUTadmindropsdropIdpickupsdateAdminPutPickupIntegrationPermissionC9EF5B1C": {
+    "Type": "AWS::Lambda::Permission",
+    "Properties": {
+      "Action": "lambda:InvokeFunction",
+      "FunctionName": {
+        "Fn::GetAtt": ["ApplicationApi5D63FF39", "Arn"]
+      },
+      "Principal": "apigateway.amazonaws.com",
+      "SourceArn": {
+        "Fn::Join": [
+          "",
+          [
+            "arn:",
+            {
+              "Ref": "AWS::Partition"
+            },
+            ":execute-api:",
+            {
+              "Ref": "AWS::Region"
+            },
+            ":",
+            {
+              "Ref": "AWS::AccountId"
+            },
+            ":",
+            {
+              "Ref": "HttpApiF5A9A8A7"
+            },
+            "/*/*/admin/drops/{dropId}/pickups/{date}"
+          ]
+        ]
+      }
+    }
+  },
+  "HttpApiPUTadmindropsdropIdpickupsdate56D28260": {
+    "Type": "AWS::ApiGatewayV2::Route",
+    "Properties": {
+      "ApiId": {
+        "Ref": "HttpApiF5A9A8A7"
+      },
+      "AuthorizationType": "JWT",
+      "AuthorizerId": {
+        "Ref": "HttpApiAdminJwtAuthorizerA698361D"
+      },
+      "RouteKey": "PUT /admin/drops/{dropId}/pickups/{date}",
+      "Target": {
+        "Fn::Join": [
+          "",
+          [
+            "integrations/",
+            {
+              "Ref": "HttpApiPUTadmindropsdropIdpickupsdateAdminPutPickupIntegrationEEDF2D0E"
+            }
+          ]
+        ]
+      }
+    }
+  },
+  "HttpApiDELETEadmindropsdropIdpickupsdateAdminRemovePickupIntegration78A0002F": {
+    "Type": "AWS::ApiGatewayV2::Integration",
+    "Properties": {
+      "ApiId": {
+        "Ref": "HttpApiF5A9A8A7"
+      },
+      "IntegrationType": "AWS_PROXY",
+      "IntegrationUri": {
+        "Fn::GetAtt": ["ApplicationApi5D63FF39", "Arn"]
+      },
+      "PayloadFormatVersion": "2.0"
+    }
+  },
+  "HttpApiDELETEadmindropsdropIdpickupsdateAdminRemovePickupIntegrationPermission27859A70": {
+    "Type": "AWS::Lambda::Permission",
+    "Properties": {
+      "Action": "lambda:InvokeFunction",
+      "FunctionName": {
+        "Fn::GetAtt": ["ApplicationApi5D63FF39", "Arn"]
+      },
+      "Principal": "apigateway.amazonaws.com",
+      "SourceArn": {
+        "Fn::Join": [
+          "",
+          [
+            "arn:",
+            {
+              "Ref": "AWS::Partition"
+            },
+            ":execute-api:",
+            {
+              "Ref": "AWS::Region"
+            },
+            ":",
+            {
+              "Ref": "AWS::AccountId"
+            },
+            ":",
+            {
+              "Ref": "HttpApiF5A9A8A7"
+            },
+            "/*/*/admin/drops/{dropId}/pickups/{date}"
+          ]
+        ]
+      }
+    }
+  },
+  "HttpApiDELETEadmindropsdropIdpickupsdateF9DA36F5": {
+    "Type": "AWS::ApiGatewayV2::Route",
+    "Properties": {
+      "ApiId": {
+        "Ref": "HttpApiF5A9A8A7"
+      },
+      "AuthorizationType": "JWT",
+      "AuthorizerId": {
+        "Ref": "HttpApiAdminJwtAuthorizerA698361D"
+      },
+      "RouteKey": "DELETE /admin/drops/{dropId}/pickups/{date}",
+      "Target": {
+        "Fn::Join": [
+          "",
+          [
+            "integrations/",
+            {
+              "Ref": "HttpApiDELETEadmindropsdropIdpickupsdateAdminRemovePickupIntegration78A0002F"
+            }
+          ]
+        ]
+      }
+    }
+  },
+  "HttpApiPOSTadmindropsdropIdpublishAdminPublishDropIntegration6A609B5E": {
+    "Type": "AWS::ApiGatewayV2::Integration",
+    "Properties": {
+      "ApiId": {
+        "Ref": "HttpApiF5A9A8A7"
+      },
+      "IntegrationType": "AWS_PROXY",
+      "IntegrationUri": {
+        "Fn::GetAtt": ["ApplicationApi5D63FF39", "Arn"]
+      },
+      "PayloadFormatVersion": "2.0"
+    }
+  },
+  "HttpApiPOSTadmindropsdropIdpublishAdminPublishDropIntegrationPermission62C679C0": {
+    "Type": "AWS::Lambda::Permission",
+    "Properties": {
+      "Action": "lambda:InvokeFunction",
+      "FunctionName": {
+        "Fn::GetAtt": ["ApplicationApi5D63FF39", "Arn"]
+      },
+      "Principal": "apigateway.amazonaws.com",
+      "SourceArn": {
+        "Fn::Join": [
+          "",
+          [
+            "arn:",
+            {
+              "Ref": "AWS::Partition"
+            },
+            ":execute-api:",
+            {
+              "Ref": "AWS::Region"
+            },
+            ":",
+            {
+              "Ref": "AWS::AccountId"
+            },
+            ":",
+            {
+              "Ref": "HttpApiF5A9A8A7"
+            },
+            "/*/*/admin/drops/{dropId}/publish"
+          ]
+        ]
+      }
+    }
+  },
+  "HttpApiPOSTadmindropsdropIdpublish29C6ACD2": {
+    "Type": "AWS::ApiGatewayV2::Route",
+    "Properties": {
+      "ApiId": {
+        "Ref": "HttpApiF5A9A8A7"
+      },
+      "AuthorizationType": "JWT",
+      "AuthorizerId": {
+        "Ref": "HttpApiAdminJwtAuthorizerA698361D"
+      },
+      "RouteKey": "POST /admin/drops/{dropId}/publish",
+      "Target": {
+        "Fn::Join": [
+          "",
+          [
+            "integrations/",
+            {
+              "Ref": "HttpApiPOSTadmindropsdropIdpublishAdminPublishDropIntegration6A609B5E"
+            }
+          ]
+        ]
+      }
+    }
+  },
+  "HttpApiPOSTadmindropsdropIdopenAdminOpenDropIntegration486096E1": {
+    "Type": "AWS::ApiGatewayV2::Integration",
+    "Properties": {
+      "ApiId": {
+        "Ref": "HttpApiF5A9A8A7"
+      },
+      "IntegrationType": "AWS_PROXY",
+      "IntegrationUri": {
+        "Fn::GetAtt": ["ApplicationApi5D63FF39", "Arn"]
+      },
+      "PayloadFormatVersion": "2.0"
+    }
+  },
+  "HttpApiPOSTadmindropsdropIdopenAdminOpenDropIntegrationPermission5BC157D5": {
+    "Type": "AWS::Lambda::Permission",
+    "Properties": {
+      "Action": "lambda:InvokeFunction",
+      "FunctionName": {
+        "Fn::GetAtt": ["ApplicationApi5D63FF39", "Arn"]
+      },
+      "Principal": "apigateway.amazonaws.com",
+      "SourceArn": {
+        "Fn::Join": [
+          "",
+          [
+            "arn:",
+            {
+              "Ref": "AWS::Partition"
+            },
+            ":execute-api:",
+            {
+              "Ref": "AWS::Region"
+            },
+            ":",
+            {
+              "Ref": "AWS::AccountId"
+            },
+            ":",
+            {
+              "Ref": "HttpApiF5A9A8A7"
+            },
+            "/*/*/admin/drops/{dropId}/open"
+          ]
+        ]
+      }
+    }
+  },
+  "HttpApiPOSTadmindropsdropIdopenCCDE67B3": {
+    "Type": "AWS::ApiGatewayV2::Route",
+    "Properties": {
+      "ApiId": {
+        "Ref": "HttpApiF5A9A8A7"
+      },
+      "AuthorizationType": "JWT",
+      "AuthorizerId": {
+        "Ref": "HttpApiAdminJwtAuthorizerA698361D"
+      },
+      "RouteKey": "POST /admin/drops/{dropId}/open",
+      "Target": {
+        "Fn::Join": [
+          "",
+          [
+            "integrations/",
+            {
+              "Ref": "HttpApiPOSTadmindropsdropIdopenAdminOpenDropIntegration486096E1"
+            }
+          ]
+        ]
+      }
+    }
+  },
+  "HttpApiPOSTadmindropsdropIdreconcileopeningAdminReconcileOpeningIntegration784CE6EC": {
+    "Type": "AWS::ApiGatewayV2::Integration",
+    "Properties": {
+      "ApiId": {
+        "Ref": "HttpApiF5A9A8A7"
+      },
+      "IntegrationType": "AWS_PROXY",
+      "IntegrationUri": {
+        "Fn::GetAtt": ["ApplicationApi5D63FF39", "Arn"]
+      },
+      "PayloadFormatVersion": "2.0"
+    }
+  },
+  "HttpApiPOSTadmindropsdropIdreconcileopeningAdminReconcileOpeningIntegrationPermission305A3722": {
+    "Type": "AWS::Lambda::Permission",
+    "Properties": {
+      "Action": "lambda:InvokeFunction",
+      "FunctionName": {
+        "Fn::GetAtt": ["ApplicationApi5D63FF39", "Arn"]
+      },
+      "Principal": "apigateway.amazonaws.com",
+      "SourceArn": {
+        "Fn::Join": [
+          "",
+          [
+            "arn:",
+            {
+              "Ref": "AWS::Partition"
+            },
+            ":execute-api:",
+            {
+              "Ref": "AWS::Region"
+            },
+            ":",
+            {
+              "Ref": "AWS::AccountId"
+            },
+            ":",
+            {
+              "Ref": "HttpApiF5A9A8A7"
+            },
+            "/*/*/admin/drops/{dropId}/reconcile-opening"
+          ]
+        ]
+      }
+    }
+  },
+  "HttpApiPOSTadmindropsdropIdreconcileopening8FB4C36F": {
+    "Type": "AWS::ApiGatewayV2::Route",
+    "Properties": {
+      "ApiId": {
+        "Ref": "HttpApiF5A9A8A7"
+      },
+      "AuthorizationType": "JWT",
+      "AuthorizerId": {
+        "Ref": "HttpApiAdminJwtAuthorizerA698361D"
+      },
+      "RouteKey": "POST /admin/drops/{dropId}/reconcile-opening",
+      "Target": {
+        "Fn::Join": [
+          "",
+          [
+            "integrations/",
+            {
+              "Ref": "HttpApiPOSTadmindropsdropIdreconcileopeningAdminReconcileOpeningIntegration784CE6EC"
+            }
+          ]
+        ]
+      }
+    }
+  },
+  "ApiAccessLogGroupCEA70788": {
+    "Type": "AWS::Logs::LogGroup",
+    "Properties": {
+      "LogGroupName": "/aws/vendedlogs/apigateway/batch-and-batter-dev-http-api",
+      "RetentionInDays": 14,
+      "Tags": [
+        {
+          "Key": "Environment",
+          "Value": "dev"
+        },
+        {
+          "Key": "Project",
+          "Value": "batch-and-batter"
+        }
+      ]
+    },
+    "UpdateReplacePolicy": "Delete",
+    "DeletionPolicy": "Delete"
+  }
+}

@@ -157,6 +157,9 @@ test('all registered routes have stable operation names, including authenticatio
     ['DELETE /admin/drops/{dropId}/pickups/{date}', 'removePickup'],
     ['POST /admin/drops/{dropId}/publish', 'publishDrop'],
     ['POST /admin/drops/{dropId}/open', 'openDrop'],
+    ['POST /admin/drops/{dropId}/pause', 'pauseDrop'],
+    ['POST /admin/drops/{dropId}/resume', 'resumeDrop'],
+    ['POST /admin/drops/{dropId}/close', 'closeDrop'],
     ['POST /admin/drops/{dropId}/reconcile-opening', 'reconcileOpening'],
   ];
   for (const [route, operation] of routes) {
