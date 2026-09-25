@@ -64,6 +64,20 @@ export function compositionStore() {
           case 'attribute_not_exists(PK)':
             passes = !current;
             break;
+          case 'attribute_exists(PK) AND #status = :source AND #updated = :expected':
+          case 'attribute_exists(PK) AND #status = :paused AND #updated = :expected':
+            assert.deepEqual(operation.ExpressionAttributeNames, {
+              '#status': 'status',
+              '#updated': 'updatedAt',
+            });
+            passes =
+              !!current &&
+              current.status ===
+                (operation.ExpressionAttributeValues![':source'] ??
+                  operation.ExpressionAttributeValues![':paused']) &&
+              current.updatedAt ===
+                operation.ExpressionAttributeValues![':expected'];
+            break;
           case 'attribute_exists(PK) AND #status = :scheduled AND #updated = :expected':
             assert.deepEqual(operation.ExpressionAttributeNames, {
               '#status': 'status',

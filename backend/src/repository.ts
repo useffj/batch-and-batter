@@ -27,6 +27,9 @@ import {
 
 export interface CatalogRepository {
   openScheduled(dropId: string): Promise<Drop>;
+  pauseDrop(dropId: string): Promise<Drop>;
+  resumeDrop(dropId: string): Promise<Drop>;
+  closeDrop(dropId: string): Promise<Drop>;
   publishDraft(dropId: string): Promise<{
     drop: Drop;
     storefront: { storefrontDropId: string; updatedAt: string };
@@ -271,13 +274,90 @@ export class DynamoCatalogRepository implements CatalogRepository {
     ]);
     return { drop: scheduled, storefront };
   }
+  async pauseDrop(dropId: string): Promise<Drop> {
+    return this.pauseOrClose(dropId, 'PAUSED');
+  }
+  async closeDrop(dropId: string): Promise<Drop> {
+    return this.pauseOrClose(dropId, 'CLOSED');
+  }
+  private async lifecycleRevisionFailure(
+    dropId: string,
+    source: Drop['status'],
+  ): Promise<CatalogWriteError['code']> {
+    const current = await this.getDrop(dropId);
+    if (!current) return 'DROP_NOT_FOUND';
+    return current.status !== source
+      ? 'DROP_NOT_EDITABLE'
+      : 'COMPOSITION_CONFLICT';
+  }
+  private async pauseOrClose(
+    dropId: string,
+    target: 'PAUSED' | 'CLOSED',
+  ): Promise<Drop> {
+    const previous = await this.getDrop(dropId);
+    if (!previous) throw new CatalogWriteError('DROP_NOT_FOUND');
+    if (
+      previous.status !== 'OPEN' &&
+      !(target === 'CLOSED' && previous.status === 'PAUSED')
+    )
+      throw new CatalogWriteError('DROP_NOT_EDITABLE');
+    if ((await this.getStorefrontDropId()) !== dropId)
+      throw new CatalogWriteError('STOREFRONT_CONFLICT');
+    const next = dropSchema.parse({
+      ...previous,
+      status: target,
+      updatedAt: updatedAt(previous.updatedAt),
+    });
+    const actions: NonNullable<TransactWriteCommandInput['TransactItems']> = [
+      {
+        Put: {
+          TableName: this.tableName,
+          Item: { ...next, ...catalogKeys.drop(dropId) },
+          ConditionExpression:
+            'attribute_exists(PK) AND #status = :source AND #updated = :expected',
+          ExpressionAttributeNames: {
+            '#status': 'status',
+            '#updated': 'updatedAt',
+          },
+          ExpressionAttributeValues: {
+            ':source': previous.status,
+            ':expected': previous.updatedAt,
+          },
+        },
+      },
+    ];
+    if (target === 'CLOSED')
+      actions.push({
+        Delete: {
+          TableName: this.tableName,
+          Key: catalogKeys.storefront,
+          ConditionExpression: '#storefrontDropId = :dropId',
+          ExpressionAttributeNames: { '#storefrontDropId': 'storefrontDropId' },
+          ExpressionAttributeValues: { ':dropId': dropId },
+        },
+      });
+    await this.sendTransaction(actions, [
+      () => this.lifecycleRevisionFailure(dropId, previous.status),
+      ...(target === 'CLOSED' ? ['STOREFRONT_CONFLICT' as const] : []),
+    ]);
+    return next;
+  }
   async openScheduled(dropId: string): Promise<Drop> {
+    return this.openFrom(dropId, 'SCHEDULED');
+  }
+  async resumeDrop(dropId: string): Promise<Drop> {
+    return this.openFrom(dropId, 'PAUSED');
+  }
+  private async openFrom(
+    dropId: string,
+    source: 'SCHEDULED' | 'PAUSED',
+  ): Promise<Drop> {
     let snapshot: OpenSnapshot;
     try {
       // Read META first so its revision protects the subsequent composition reads.
       const drop = await this.getDrop(dropId);
       if (!drop) throw new CatalogWriteError('DROP_NOT_FOUND');
-      if (drop.status !== 'SCHEDULED')
+      if (drop.status !== source)
         throw new CatalogWriteError('DROP_NOT_EDITABLE');
       if ((await this.getStorefrontDropId()) !== dropId)
         throw new CatalogWriteError('STOREFRONT_CONFLICT');
@@ -297,7 +377,7 @@ export class DynamoCatalogRepository implements CatalogRepository {
       throw error;
     }
     // Evaluate server time after loading: opensAt may pass during those reads.
-    if (!isOpenReady(snapshot, Date.now()))
+    if (!isOpenReady(snapshot, Date.now(), source))
       throw new CatalogWriteError('DROP_NOT_READY');
     const { drop, products } = snapshot;
     const actionCount = 2 + products.length;
@@ -307,19 +387,19 @@ export class DynamoCatalogRepository implements CatalogRepository {
       status: 'OPEN',
       updatedAt: updatedAt(drop.updatedAt),
     });
+    const sourceToken = source === 'SCHEDULED' ? ':scheduled' : ':paused';
     const actions: NonNullable<TransactWriteCommandInput['TransactItems']> = [
       {
         Put: {
           TableName: this.tableName,
           Item: { ...opened, ...catalogKeys.drop(dropId) },
-          ConditionExpression:
-            'attribute_exists(PK) AND #status = :scheduled AND #updated = :expected',
+          ConditionExpression: `attribute_exists(PK) AND #status = ${sourceToken} AND #updated = :expected`,
           ExpressionAttributeNames: {
             '#status': 'status',
             '#updated': 'updatedAt',
           },
           ExpressionAttributeValues: {
-            ':scheduled': 'SCHEDULED',
+            [sourceToken]: source,
             ':expected': drop.updatedAt,
           },
         },
@@ -354,13 +434,7 @@ export class DynamoCatalogRepository implements CatalogRepository {
       }),
     ];
     await this.sendTransaction(actions, [
-      async () => {
-        const current = await this.getDrop(dropId);
-        if (!current) return 'DROP_NOT_FOUND';
-        return current.status !== 'SCHEDULED'
-          ? 'DROP_NOT_EDITABLE'
-          : 'COMPOSITION_CONFLICT';
-      },
+      () => this.lifecycleRevisionFailure(dropId, source),
       'STOREFRONT_CONFLICT',
       ...products.map(() => 'COMPOSITION_CONFLICT' as const),
     ]);

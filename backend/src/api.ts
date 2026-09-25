@@ -6,6 +6,7 @@ import { adminWrite, adminWriteRoutes } from './admin-writes';
 import { adminComposition, compositionRoutes } from './admin-composition';
 import { adminPublish, publishRoute } from './admin-publish';
 import { adminOpen, openRoute } from './admin-open';
+import { adminLifecycle, lifecycleRoutes } from './admin-lifecycle';
 import {
   adminReconcileOpening,
   reconcileOpeningRoute,
@@ -74,13 +75,15 @@ export function createHandler(
       compositionRoutes.includes(event.routeKey) ||
       event.routeKey === publishRoute ||
       event.routeKey === openRoute ||
-      event.routeKey === reconcileOpeningRoute
+      event.routeKey === reconcileOpeningRoute ||
+      lifecycleRoutes.includes(event.routeKey)
     ) {
       try {
         const identity = requireAdmin(event);
         if (event.routeKey === 'GET /admin/me') return json(200, identity);
-        const result =
-          event.routeKey === reconcileOpeningRoute
+        const result = lifecycleRoutes.includes(event.routeKey)
+          ? await adminLifecycle(event, getRepository)
+          : event.routeKey === reconcileOpeningRoute
             ? await adminReconcileOpening(event, getRepository, getSchedules)
             : event.routeKey === openRoute
               ? await adminOpen(event, getRepository)
@@ -96,7 +99,8 @@ export function createHandler(
         if (failure instanceof CatalogWriteError) {
           const messages = {
             DROP_NOT_READY:
-              event.routeKey === openRoute
+              event.routeKey === openRoute ||
+              event.routeKey === 'POST /admin/drops/{dropId}/resume'
                 ? 'Drop is not ready to open.'
                 : 'Drop is not ready to publish.',
             STOREFRONT_CONFLICT: 'Drop is not assigned to the storefront.',
@@ -113,8 +117,9 @@ export function createHandler(
             DROP_NOT_FOUND: 'Drop not found.',
             PRODUCT_CONFLICT: 'Product changed or already exists.',
             DROP_CONFLICT: 'Drop changed or already exists.',
-            DROP_NOT_EDITABLE:
-              event.routeKey === openRoute
+            DROP_NOT_EDITABLE: lifecycleRoutes.includes(event.routeKey)
+              ? 'Drop status does not allow this operation.'
+              : event.routeKey === openRoute
                 ? 'Only SCHEDULED Drops can be opened.'
                 : 'Only DRAFT Drops can be edited.',
           };
