@@ -1,4 +1,6 @@
 import { handler as health } from './health';
+import { cartApi, cartRoutes } from './cart-api';
+import type { CartService } from './cart-repository';
 import { idSchema } from './domain';
 import { CatalogWriteError, type CatalogRepository } from './repository';
 import { AdminError, requireAdmin } from './admin-auth';
@@ -22,6 +24,7 @@ export interface ApiEvent {
     http: { method: string };
     authorizer?: { jwt?: { claims?: Record<string, unknown> } };
   };
+  headers?: Record<string, string | undefined>;
   body?: string;
   isBase64Encoded?: boolean;
   pathParameters?: Record<string, string | undefined>;
@@ -46,6 +49,9 @@ export function createHandler(
   getSchedules: () => OpeningSchedules = () => {
     throw new Error('Opening schedules are not configured');
   },
+  getCarts: () => CartService = () => {
+    throw new Error('Cart service is not configured');
+  },
 ) {
   return async (
     event: ApiEvent,
@@ -68,6 +74,8 @@ export function createHandler(
       );
     if (event.routeKey.split(' ')[0] !== event.requestContext.http.method)
       return error(404, 'NOT_FOUND', 'Route not found.');
+    if (cartRoutes.includes(event.routeKey))
+      return cartApi(event, getCarts, context);
     if (event.routeKey === 'GET /health') return complete(await health());
     if (
       event.routeKey === 'GET /admin/me' ||

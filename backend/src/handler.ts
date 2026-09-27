@@ -1,3 +1,4 @@
+import { DynamoCartRepository, type CartService } from './cart-repository';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { SchedulerClient } from '@aws-sdk/client-scheduler';
@@ -15,8 +16,9 @@ import type { InvocationContext } from './request-logging';
 export function createEntrypoint(
   getRepository: () => CatalogRepository,
   getSchedules: () => OpeningSchedules,
+  getCarts?: () => CartService,
 ) {
-  const http = createHandler(getRepository, getSchedules);
+  const http = createHandler(getRepository, getSchedules, getCarts);
   const automatic = createAutoOpenHandler(getRepository);
   return (event: unknown, context?: InvocationContext) => {
     if (
@@ -30,6 +32,7 @@ export function createEntrypoint(
 }
 let repository: DynamoCatalogRepository | undefined;
 let schedules: SchedulerOpeningSchedules | undefined;
+let carts: DynamoCartRepository | undefined;
 export const handler = createEntrypoint(
   () =>
     (repository ??= new DynamoCatalogRepository(
@@ -42,5 +45,21 @@ export const handler = createEntrypoint(
       process.env.OPEN_SCHEDULE_GROUP ?? '',
       process.env.OPEN_TARGET_ARN ?? '',
       process.env.OPEN_SCHEDULE_ROLE_ARN ?? '',
+    )),
+  () =>
+    (carts ??= new DynamoCartRepository(
+      DynamoDBDocumentClient.from(
+        new DynamoDBClient({
+          maxAttempts: 1,
+          requestHandler: {
+            connectionTimeout: 300,
+            requestTimeout: 700,
+            throwOnRequestTimeout: true,
+          },
+        }),
+      ),
+      process.env.CATALOG_TABLE_NAME ?? '',
+      process.env.COMMERCE_TABLE_NAME ?? '',
+      process.env.OPERATIONS_TABLE_NAME ?? '',
     )),
 );
