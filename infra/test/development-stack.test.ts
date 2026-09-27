@@ -89,8 +89,8 @@ test('three on-demand tables have only the approved string PK/SK foundation', ()
   }
 });
 
-test('one Node 24 Lambda preserves its identity and serves exactly the twenty-four approved routes', () => {
-  template.resourceCountIs('AWS::Lambda::Function', 1);
+test('application Node 24 Lambda preserves its identity and serves exactly the twenty-four approved routes', () => {
+  template.resourceCountIs('AWS::Lambda::Function', 3);
   template.hasResourceProperties('AWS::Lambda::Function', {
     Runtime: 'nodejs24.x',
     Handler: 'handler.handler',
@@ -171,7 +171,7 @@ for (const name of ['reservation', 'notification']) {
       DelaySeconds: 0,
       SqsManagedSseEnabled: true,
       MessageRetentionPeriod: 345600,
-      VisibilityTimeout: 30,
+      VisibilityTimeout: name === 'reservation' ? 60 : 30,
       RedrivePolicy: {
         deadLetterTargetArn: { 'Fn::GetAtt': [dlqId, 'Arn'] },
         maxReceiveCount: 5,
@@ -222,15 +222,15 @@ test('media is private, encrypted, owner controlled and denies insecure transpor
 });
 
 test('Lambda has only scoped logging and the exact Catalog composition permissions', () => {
-  template.resourceCountIs('AWS::Logs::LogGroup', 2);
+  template.resourceCountIs('AWS::Logs::LogGroup', 4);
   template.hasResourceProperties('AWS::Logs::LogGroup', {
     RetentionInDays: 14,
   });
-  template.resourceCountIs('AWS::IAM::Role', 2);
+  template.resourceCountIs('AWS::IAM::Role', 5);
   template.hasResourceProperties('AWS::IAM::Role', {
     ManagedPolicyArns: Match.absent(),
   });
-  template.resourceCountIs('AWS::IAM::Policy', 2);
+  template.resourceCountIs('AWS::IAM::Policy', 5);
   const policies = template.findResources('AWS::IAM::Policy');
   const statements = Object.values(policies)
     .find((p) =>
@@ -289,7 +289,7 @@ test('Lambda has only scoped logging and the exact Catalog composition permissio
       },
     });
   }
-  // Exact statements exclude SQS and unrelated permissions.
+  // Additional single-action statements are checked against the Phase 5A1 baseline below.
   template.resourceCountIs('AWS::IAM::ManagedPolicy', 0);
 });
 
@@ -317,8 +317,8 @@ test('stateful development resources carry project/environment tags and removal 
     }
   }
   template.resourceCountIs('AWS::SQS::Queue', 4);
-  template.resourceCountIs('AWS::Lambda::EventSourceMapping', 0);
-  template.resourceCountIs('AWS::Scheduler::Schedule', 0);
+  template.resourceCountIs('AWS::Lambda::EventSourceMapping', 1);
+  template.resourceCountIs('AWS::Scheduler::Schedule', 1);
 });
 
 test('development removal settings cannot be reused for production accidentally', () => {
@@ -501,48 +501,58 @@ test('every route integration invokes only the existing Lambda through route-sco
   }
 });
 
-test('carts add only four public routes, table environment and scoped IAM to existing resources', () => {
+test('Phase 5A2 changes only approved properties of Phase 5A1 resources', () => {
   const baseline = JSON.parse(
     readFileSync(
-      join(__dirname, '../../../test/fixtures/phase-4b2b2b3-resources.json'),
+      join(__dirname, '../../../test/fixtures/phase-5a1-resources.json'),
       'utf8',
     ),
   );
   const current = template.toJSON().Resources;
-  for (const [id, expected] of Object.entries(baseline)) {
-    assert.ok(current[id], `Existing resource removed: ${id}`);
-    const { Metadata: _metadata, ...actual } = current[id];
+  for (const [id, original] of Object.entries(baseline)) {
+    assert.ok(current[id], `Removed resource: ${id}`);
+    const { Metadata: ignored, ...actual } = current[id];
+    const expected = structuredClone(original) as typeof actual;
     if (id === 'ApplicationApi5D63FF39') {
-      const prior = structuredClone(expected) as typeof actual;
-      assert.ok(actual.Properties.Code.S3Key);
-      prior.Properties.Code = actual.Properties.Code;
-      prior.Properties.Environment.Variables.COMMERCE_TABLE_NAME = {
-        Ref: 'CommerceTable6CC80189',
+      expected.Properties.Code = actual.Properties.Code;
+      expected.Properties.Environment.Variables.RESERVATION_QUEUE_URL = {
+        Ref: 'ReservationQueue43323CC1',
       };
-      prior.Properties.Environment.Variables.OPERATIONS_TABLE_NAME = {
-        Ref: 'OperationsTable90528792',
-      };
-      assert.deepEqual(actual, prior, 'Lambda changed beyond code');
     } else if (id.startsWith('ApplicationRoleDefaultPolicy')) {
-      const prior = structuredClone(expected) as typeof actual;
-      for (const table of ['CommerceTable6CC80189', 'OperationsTable90528792'])
-        prior.Properties.PolicyDocument.Statement.push({
+      expected.Properties.PolicyDocument.Statement.push(
+        {
           Effect: 'Allow',
-          Action: ['dynamodb:GetItem', 'dynamodb:PutItem'],
-          Resource: { 'Fn::GetAtt': [table, 'Arn'] },
-        });
-      assert.deepEqual(actual, prior);
-    } else
-      assert.deepEqual(actual, expected, `Unrelated resource changed: ${id}`);
+          Action: 'dynamodb:DeleteItem',
+          Resource: { 'Fn::GetAtt': ['OperationsTable90528792', 'Arn'] },
+        },
+        {
+          Effect: 'Allow',
+          Action: 'sqs:SendMessage',
+          Resource: { 'Fn::GetAtt': ['ReservationQueue43323CC1', 'Arn'] },
+        },
+      );
+    } else if (id === 'ReservationQueue43323CC1')
+      expected.Properties.VisibilityTimeout = 60;
+    assert.deepEqual(actual, expected, `Unapproved resource change: ${id}`);
   }
   const added = Object.entries(current)
     .filter(([id]) => !(id in baseline))
-    .map(([, resource]) => (resource as { Type: string }).Type);
-  assert.deepEqual(added.sort(), [
-    ...Array(4).fill('AWS::ApiGatewayV2::Integration'),
-    ...Array(4).fill('AWS::ApiGatewayV2::Route'),
-    ...Array(4).fill('AWS::Lambda::Permission'),
-  ]);
+    .map(([, r]) => (r as { Type: string }).Type)
+    .sort();
+  assert.deepEqual(
+    added,
+    [
+      ...Array(14).fill('AWS::CloudWatch::Alarm'),
+      ...Array(3).fill('AWS::IAM::Policy'),
+      ...Array(3).fill('AWS::IAM::Role'),
+      'AWS::Lambda::EventInvokeConfig',
+      'AWS::Lambda::EventSourceMapping',
+      ...Array(2).fill('AWS::Lambda::Function'),
+      ...Array(2).fill('AWS::Logs::LogGroup'),
+      'AWS::Scheduler::Schedule',
+      'AWS::Scheduler::ScheduleGroup',
+    ].sort(),
+  );
 });
 
 test('automatic opening has exact group trust, minimal policies and bounded async execution', () => {
@@ -607,7 +617,7 @@ test('automatic opening has exact group trust, minimal policies and bounded asyn
   });
   const applicationPolicy = policies.find((p) => p !== schedulerPolicy)!;
   const statements = applicationPolicy.Properties.PolicyDocument.Statement;
-  assert.equal(statements.length, 6);
+  assert.equal(statements.length, 8);
   assert.deepEqual(statements.slice(0, 2), [
     {
       Action: ['scheduler:CreateSchedule', 'scheduler:GetSchedule'],
@@ -642,7 +652,7 @@ test('automatic opening has exact group trust, minimal policies and bounded asyn
       },
     },
   });
-  template.resourceCountIs('AWS::Lambda::EventInvokeConfig', 1);
+  template.resourceCountIs('AWS::Lambda::EventInvokeConfig', 2);
   template.hasResourceProperties('AWS::Lambda::EventInvokeConfig', {
     FunctionName: { Ref: 'ApplicationApi5D63FF39' },
     Qualifier: '$LATEST',
@@ -650,4 +660,130 @@ test('automatic opening has exact group trust, minimal policies and bounded asyn
     MaximumRetryAttempts: 2,
     DestinationConfig: Match.absent(),
   });
+});
+
+test('expiry worker, recovery, IAM and notification-free alarms are narrowly bounded', () => {
+  const resources = template.toJSON().Resources;
+  const find = (prefix: string) =>
+    Object.keys(resources).find((id) => id.startsWith(prefix))!;
+  const functions = template.findResources('AWS::Lambda::Function');
+  const workerId = Object.keys(functions).find((id) =>
+    id.startsWith('CartExpiryWorker'),
+  )!;
+  const reconcilerId = Object.keys(functions).find((id) =>
+    id.startsWith('CartExpiryReconciler'),
+  )!;
+  for (const [id, timeout, concurrency, handler] of [
+    [workerId, 10, 5, 'expiry-worker-handler.handler'],
+    [reconcilerId, 30, 1, 'expiry-reconciler-handler.handler'],
+  ] as const) {
+    assert.equal(resources[id].Properties.Timeout, timeout);
+    assert.equal(
+      resources[id].Properties.ReservedConcurrentExecutions,
+      concurrency,
+    );
+    assert.equal(resources[id].Properties.Handler, handler);
+    assert.equal(resources[id].Properties.Runtime, 'nodejs24.x');
+    assert.ok(
+      resources[id].Properties.Environment.Variables.RESERVATION_QUEUE_URL,
+    );
+  }
+  template.hasResourceProperties('AWS::Lambda::EventSourceMapping', {
+    BatchSize: 1,
+    MaximumBatchingWindowInSeconds: 0,
+    ScalingConfig: { MaximumConcurrency: 5 },
+    FunctionResponseTypes: ['ReportBatchItemFailures'],
+    EventSourceArn: { 'Fn::GetAtt': ['ReservationQueue43323CC1', 'Arn'] },
+    FunctionName: { Ref: workerId },
+    Enabled: true,
+  });
+  template.hasResourceProperties('AWS::Lambda::EventInvokeConfig', {
+    FunctionName: { Ref: reconcilerId },
+    Qualifier: '$LATEST',
+    MaximumRetryAttempts: 2,
+    MaximumEventAgeInSeconds: 120,
+    DestinationConfig: {
+      OnFailure: {
+        Destination: {
+          'Fn::GetAtt': [find('ReservationDeadLetterQueue'), 'Arn'],
+        },
+      },
+    },
+  });
+  template.hasResourceProperties('AWS::Scheduler::Schedule', {
+    ScheduleExpression: 'rate(1 minute)',
+    FlexibleTimeWindow: { Mode: 'OFF' },
+    State: 'ENABLED',
+    Target: Match.objectLike({
+      Arn: { 'Fn::GetAtt': [reconcilerId, 'Arn'] },
+      RetryPolicy: { MaximumRetryAttempts: 2, MaximumEventAgeInSeconds: 120 },
+    }),
+  });
+  const expected: Record<string, [string[], string][]> = {
+    CartExpiryWorkerRoleDefaultPolicy: [
+      [
+        ['logs:CreateLogStream', 'logs:PutLogEvents'],
+        find('CartExpiryWorkerLogGroup'),
+      ],
+      [['dynamodb:GetItem', 'dynamodb:PutItem'], 'CatalogTableF8EA09BD'],
+      [
+        ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:ConditionCheckItem'],
+        'CommerceTable6CC80189',
+      ],
+      [['dynamodb:GetItem', 'dynamodb:DeleteItem'], 'OperationsTable90528792'],
+      [
+        [
+          'sqs:ReceiveMessage',
+          'sqs:DeleteMessage',
+          'sqs:GetQueueAttributes',
+          'sqs:SendMessage',
+        ],
+        'ReservationQueue43323CC1',
+      ],
+    ],
+    CartExpiryReconcilerRoleDefaultPolicy: [
+      [
+        ['logs:CreateLogStream', 'logs:PutLogEvents'],
+        find('CartExpiryReconcilerLogGroup'),
+      ],
+      [
+        ['dynamodb:GetItem', 'dynamodb:Query', 'dynamodb:PutItem'],
+        'OperationsTable90528792',
+      ],
+      [['sqs:SendMessage'], 'ReservationQueue43323CC1'],
+      [['sqs:SendMessage'], find('ReservationDeadLetterQueue')],
+    ],
+    CartExpiryRecoveryRoleDefaultPolicy: [
+      [['lambda:InvokeFunction'], reconcilerId],
+      [['sqs:SendMessage'], find('ReservationDeadLetterQueue')],
+    ],
+  };
+  for (const [prefix, statements] of Object.entries(expected)) {
+    assert.deepEqual(
+      resources[find(prefix)].Properties.PolicyDocument.Statement,
+      statements.map(([actions, id]) => ({
+        Effect: 'Allow',
+        Action: actions.length === 1 ? actions[0] : actions,
+        Resource: { 'Fn::GetAtt': [id, 'Arn'] },
+      })),
+    );
+  }
+  const trust =
+    resources[find('CartExpiryRecoveryRole')].Properties
+      .AssumeRolePolicyDocument.Statement[0];
+  assert.deepEqual(trust.Principal, { Service: 'scheduler.amazonaws.com' });
+  assert.deepEqual(trust.Condition, {
+    StringEquals: {
+      'aws:SourceAccount': { Ref: 'AWS::AccountId' },
+      'aws:SourceArn': { 'Fn::GetAtt': ['CartExpiryRecoveryGroup', 'Arn'] },
+    },
+  });
+  for (const alarm of Object.values(
+    template.findResources('AWS::CloudWatch::Alarm'),
+  )) {
+    assert.equal(alarm.Properties.AlarmActions, undefined);
+    assert.equal(alarm.Properties.OKActions, undefined);
+  }
+  template.resourceCountIs('AWS::SNS::Topic', 0);
+  template.resourceCountIs('AWS::SNS::Subscription', 0);
 });

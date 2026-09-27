@@ -1,4 +1,14 @@
 import {
+  expiryWork,
+  expiryKey,
+  expiryMessage,
+  expiryWorkSchema,
+  deleteExpiryWork,
+  expiryDelay,
+  expiryLog,
+  type ExpiryDispatch,
+} from './cart-expiry';
+import {
   GetCommand,
   TransactWriteCommand,
   type DynamoDBDocumentClient,
@@ -39,7 +49,7 @@ import {
 type Actions = NonNullable<TransactWriteCommandInput['TransactItems']>;
 type Key = { PK: string; SK: string };
 type Kind =
-  'drop' | 'storefront' | 'product' | 'inventory' | 'cart' | 'receipt';
+  'drop' | 'storefront' | 'product' | 'inventory' | 'cart' | 'receipt' | 'work';
 export interface CartService {
   get(id: string, tokenHash: string): Promise<CartResult>;
   mutate(
@@ -62,6 +72,7 @@ export class DynamoCartRepository implements CartService {
       random: () => Math.random(),
       id: generateUlid,
     },
+    private readonly dispatch?: ExpiryDispatch,
   ) {
     if (!catalog || !commerce || !operations)
       throw new Error('Cart tables required');
@@ -154,8 +165,58 @@ export class DynamoCartRepository implements CartService {
         throw new CartError('IDEMPOTENCY_CONFLICT');
       return receipt.response;
     };
+    // Dispatch is best effort AFTER durable ownership. Its failure cannot change
+    // a committed API response. Replays must recheck current Cart and work.
+    const finish = async (response: CartResult): Promise<CartResult> => {
+      if (request.operation !== 'create' || !this.dispatch) return response;
+      try {
+        const dispatchBudget = () => {
+          const ms = Math.floor(Math.min(400, remaining() - 200));
+          if (ms <= 0) throw new Error('Dispatch budget exhausted');
+          return ms;
+        };
+        const cart = await this.read(
+          this.commerce,
+          cartKey(response.cart.cartId),
+          cartSchema,
+          dispatchBudget,
+        );
+        if (!cart || cart.status !== 'ACTIVE') return response;
+        const work = await this.read(
+          this.operations,
+          expiryKey(cart.cartId, cart.shoppingExpiresAt),
+          expiryWorkSchema,
+          dispatchBudget,
+        );
+        if (!work) return response;
+        if (
+          work.cartId !== cart.cartId ||
+          work.deadline !== cart.shoppingExpiresAt
+        )
+          throw new Error('Invalid work');
+        await this.dispatch.send(
+          expiryMessage(cart.cartId, cart.shoppingExpiresAt),
+          expiryDelay(cart.shoppingExpiresAt, this.runtime.now()),
+          dispatchBudget(),
+        );
+        expiryLog(
+          'dispatchCartExpiry',
+          'sent',
+          { DispatchSuccess: 1 },
+          { cartId: cart.cartId, deadline: cart.shoppingExpiresAt },
+        );
+      } catch {
+        expiryLog(
+          'dispatchCartExpiry',
+          'deferred',
+          { DispatchFailure: 1 },
+          { cartId: response.cart.cartId },
+        );
+      }
+      return response;
+    };
     const prior = await replay();
-    if (prior) return prior;
+    if (prior) return finish(prior);
     const cartId = request.cartId ?? this.runtime.id();
     let observedCartRevision: string | undefined;
     let observedDropRevision: string | undefined;
@@ -175,7 +236,7 @@ export class DynamoCartRepository implements CartService {
             old.updatedAt !== observedCartRevision
           ) {
             const response = await replay();
-            if (response) return response;
+            if (response) return finish(response);
             throw new CartError('CART_CONFLICT');
           }
           observedCartRevision = old.updatedAt;
@@ -472,6 +533,29 @@ export class DynamoCartRepository implements CartService {
           },
           'receipt',
         );
+        if (request.operation === 'create')
+          append(
+            {
+              Put: {
+                TableName: this.operations,
+                Item: expiryWork(
+                  cartId,
+                  next.shoppingExpiresAt,
+                  next.createdAt,
+                ),
+                ConditionExpression: 'attribute_not_exists(PK)',
+              },
+            },
+            'work',
+          );
+        if (settling)
+          append(
+            deleteExpiryWork(
+              this.operations,
+              expiryMessage(cartId, next.shoppingExpiresAt),
+            ),
+            'work',
+          );
         if (actions.length > 100) throw new CartError('VALIDATION_ERROR');
         metrics.attempts++;
         try {
@@ -479,11 +563,11 @@ export class DynamoCartRepository implements CartService {
             new TransactWriteCommand({ TransactItems: actions }),
             { abortSignal: AbortSignal.timeout(budget()) },
           );
-          return response;
+          return finish(response);
         } catch (error) {
           // Resolve committed ownership before classifying an ambiguous response or cancellation.
           const committed = await replay();
-          if (committed) return committed;
+          if (committed) return finish(committed);
           if (
             !(error instanceof Error) ||
             error.name !== 'TransactionCanceledException'
@@ -519,6 +603,7 @@ export class DynamoCartRepository implements CartService {
                 product: 'PRODUCT_NOT_AVAILABLE',
                 cart: 'CART_CONFLICT',
                 receipt: 'CART_BUSY',
+                work: 'CART_BUSY',
               };
               throw new CartError(codes[kind]!);
             }
@@ -538,7 +623,7 @@ export class DynamoCartRepository implements CartService {
       throw new CartError('CART_BUSY');
     } catch (error) {
       const committed = await replay();
-      if (committed) return committed;
+      if (committed) return finish(committed);
       throw error;
     }
   }

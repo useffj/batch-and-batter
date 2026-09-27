@@ -58,7 +58,7 @@ test('create atomically snapshots two lines with exact transaction ordering and 
     { productId: otherProductId, quantity: 3, priceCents: 450, cookieUnits: 1 },
   ]);
   const a = s.transactions[0];
-  assert.equal(a.length, 8);
+  assert.equal(a.length, 9);
   assert.deepEqual(
     a.slice(0, 4).map((x) => x.ConditionCheck!.Key),
     [
@@ -70,7 +70,7 @@ test('create atomically snapshots two lines with exact transaction ordering and 
   );
   assert.deepEqual(
     a.slice(4).map((x) => x.Put!.TableName),
-    ['catalog', 'catalog', 'commerce', 'operations'],
+    ['catalog', 'catalog', 'commerce', 'operations', 'operations'],
   );
   assert.equal(
     a[4].Put!.ConditionExpression,
@@ -142,14 +142,14 @@ for (const [label, change, code] of [
     await assert.rejects(r.mutate(s.request(), metrics()), error(code));
     assert.deepEqual(s.rows, before);
   });
-test('12 products use 28 actions; 13, empty, duplicate and unsafe quantities rejected', async () => {
+test('12 products use 29 actions; 13, empty, duplicate and unsafe quantities rejected', async () => {
   const { store: s, repo: r } = setup(12);
   const items = Array.from({ length: 12 }, (_, i) => ({
     productId: pid(i + 2),
     quantity: 1,
   }));
   await r.mutate(s.request(items), metrics());
-  assert.equal(s.transactions[0].length, 28);
+  assert.equal(s.transactions[0].length, 29);
   for (const invalid of [
     [...items, { productId: pid(40), quantity: 1 }],
     [],
@@ -590,8 +590,14 @@ test('full 12-to-12 substitution uses 40 unique actions; reduction and release o
   assert.equal(s.transactions.at(-1)!.length, 14);
   assert.ok(s.transactions.at(-1)!.every((a) => a.Put));
   await r.mutate(release(s, reduced), metrics());
-  assert.equal(s.transactions.at(-1)!.length, 3);
-  assert.ok(s.transactions.at(-1)!.every((a) => a.Put));
+  assert.equal(s.transactions.at(-1)!.length, 4);
+  assert.ok(
+    s.transactions
+      .at(-1)!
+      .slice(0, -1)
+      .every((a) => a.Put),
+  );
+  assert.ok(s.transactions.at(-1)!.at(-1)!.Delete);
   s.invariants();
 });
 test('release versus synchronous expiry settlement has a single winner and never releases twice', async () => {

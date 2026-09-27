@@ -1,3 +1,4 @@
+import { addCartExpiry } from './cart-expiry';
 import * as path from 'node:path';
 import {
   CfnOutput,
@@ -83,6 +84,8 @@ export class DevelopmentStack extends Stack {
       new CfnOutput(this, `${name}TableName`, { value: table.tableName });
     }
 
+    let reservationQueue: sqs.Queue | undefined;
+    let reservationDlq: sqs.Queue | undefined;
     for (const name of ['Reservation', 'Notification']) {
       const deadLetterQueue = new sqs.Queue(this, `${name}DeadLetterQueue`, {
         queueName: `${prefix}-${name.toLowerCase()}-dlq`,
@@ -96,11 +99,15 @@ export class DevelopmentStack extends Stack {
         fifo: false,
         encryption: sqs.QueueEncryption.SQS_MANAGED,
         deliveryDelay: Duration.seconds(0),
-        visibilityTimeout: Duration.seconds(30),
+        visibilityTimeout: Duration.seconds(name === 'Reservation' ? 60 : 30),
         retentionPeriod: Duration.days(4),
         deadLetterQueue: { queue: deadLetterQueue, maxReceiveCount: 5 },
         removalPolicy: RemovalPolicy.DESTROY,
       });
+      if (name === 'Reservation') {
+        reservationQueue = queue;
+        reservationDlq = deadLetterQueue;
+      }
       new CfnOutput(this, `${name}QueueName`, { value: queue.queueName });
       new CfnOutput(this, `${name}DeadLetterQueueName`, {
         value: deadLetterQueue.queueName,
@@ -209,6 +216,20 @@ export class DevelopmentStack extends Stack {
         }),
       );
     }
+    if (!reservationQueue || !reservationDlq)
+      throw new Error('Reservation queues required');
+    role.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ['dynamodb:DeleteItem'],
+        resources: [operationsTable.tableArn],
+      }),
+    );
+    role.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ['sqs:SendMessage'],
+        resources: [reservationQueue.queueArn],
+      }),
+    );
     const application = new lambda.Function(this, 'ApplicationApi', {
       functionName: `${prefix}-api`,
       runtime: lambda.Runtime.NODEJS_24_X,
@@ -217,6 +238,7 @@ export class DevelopmentStack extends Stack {
         path.join(__dirname, '../../../../backend/dist/lambda'),
       ),
       environment: {
+        RESERVATION_QUEUE_URL: reservationQueue.queueUrl,
         CATALOG_TABLE_NAME: catalogTable.tableName,
         COMMERCE_TABLE_NAME: commerceTable.tableName,
         OPERATIONS_TABLE_NAME: operationsTable.tableName,
@@ -412,6 +434,15 @@ export class DevelopmentStack extends Stack {
         ),
       });
     }
+    addCartExpiry(
+      this,
+      prefix,
+      catalogTable,
+      commerceTable,
+      operationsTable,
+      reservationQueue,
+      reservationDlq,
+    );
     new CfnOutput(this, 'HttpApiEndpoint', { value: api.apiEndpoint });
   }
 }

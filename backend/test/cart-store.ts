@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import {
   GetCommand,
+  QueryCommand,
+  PutCommand,
   TransactWriteCommand,
   type DynamoDBDocumentClient,
   type TransactWriteCommandInput,
@@ -30,7 +32,10 @@ export class CartStore {
   elapsed = 0;
   sequence = 100;
   keySequence = 0;
-  before?: (actions: Actions) => void;
+  before?: (actions: Actions) => void | Promise<void>;
+  queryPageSize = 25;
+  queries: any[] = [];
+  beforeCursor?: () => void;
   after?: () => void;
   forcedCode?: string;
   sleeps: number[] = [];
@@ -89,7 +94,7 @@ export class CartStore {
       items,
     };
   }
-  repository() {
+  repository(dispatch?: import('../src/cart-expiry').ExpiryDispatch) {
     return new DynamoCartRepository(
       { send: this.send.bind(this) } as unknown as Pick<
         DynamoDBDocumentClient,
@@ -109,6 +114,7 @@ export class CartStore {
         random: () => 0.5,
         id: () => pid(++this.sequence),
       },
+      dispatch,
     );
   }
   async send(command: unknown): Promise<any> {
@@ -120,35 +126,83 @@ export class CartStore {
         ),
       };
     }
+    if (command instanceof QueryCommand) {
+      const q = command.input;
+      assert.equal(q.ConsistentRead, true);
+      this.queries.push(q);
+      const matches = [...this.rows.values()]
+        .filter(
+          (row) =>
+            row.PK === q.ExpressionAttributeValues![':pk'] &&
+            row.SK <= q.ExpressionAttributeValues![':upper'] &&
+            (!q.ExclusiveStartKey || row.SK > q.ExclusiveStartKey.SK),
+        )
+        .sort((a, b) => a.SK.localeCompare(b.SK));
+      const items = matches.slice(
+        0,
+        Math.min(this.queryPageSize, q.Limit ?? Infinity),
+      );
+      const last = items.at(-1);
+      return {
+        Items: structuredClone(items),
+        ...(matches.length > items.length
+          ? { LastEvaluatedKey: { PK: last!.PK, SK: last!.SK } }
+          : {}),
+      };
+    }
+    if (command instanceof PutCommand) {
+      this.beforeCursor?.();
+      const row = this.row(command.input.TableName!, command.input.Item!);
+      if (
+        row
+          ? row.revision !==
+            command.input.ExpressionAttributeValues?.[':revision']
+          : command.input.ConditionExpression !== 'attribute_not_exists(PK)'
+      )
+        throw new Error('Cursor conflict');
+      this.put(command.input.TableName!, command.input.Item!);
+      return {};
+    }
     assert.ok(command instanceof TransactWriteCommand);
     await new Promise((resolve) => setImmediate(resolve));
     const actions = command.input.TransactItems!;
     this.transactions.push(structuredClone(actions));
-    this.before?.(actions);
+    await this.before?.(actions);
     const keys = actions.map((a) => {
-      const op = a.Put ?? a.ConditionCheck!;
-      return this.key(op.TableName!, a.Put?.Item ?? a.ConditionCheck!.Key!);
+      const op = a.Put ?? a.Delete ?? a.ConditionCheck!;
+      return this.key(
+        op.TableName!,
+        a.Put?.Item ?? a.Delete?.Key ?? a.ConditionCheck!.Key!,
+      );
     });
     assert.equal(new Set(keys).size, keys.length);
     const reasons = actions.map((a) => {
-      const op = a.Put ?? a.ConditionCheck!;
+      const op = a.Put ?? a.Delete ?? a.ConditionCheck!;
       const row = this.row(
         op.TableName!,
-        a.Put?.Item ?? a.ConditionCheck!.Key!,
+        a.Put?.Item ?? a.Delete?.Key ?? a.ConditionCheck!.Key!,
       );
       const names = op.ExpressionAttributeNames ?? {},
         values = op.ExpressionAttributeValues ?? {};
-      const ok = op.ConditionExpression!.split(' AND ').every((term) => {
-        if (term === 'attribute_exists(PK)') return !!row;
-        if (term === 'attribute_not_exists(PK)') return !row;
-        const match = /^(#[a-zA-Z]+) (=|>) (:[a-zA-Z]+)$/.exec(term);
-        assert.ok(match, `Unsupported condition ${term}`);
-        const actual = row?.[names[match[1]]],
-          expected = values[match[3]];
-        return match[2] === '='
-          ? actual === expected
-          : actual !== undefined && actual > expected;
-      });
+      const condition = op.ConditionExpression!;
+      const optional = condition.startsWith('attribute_not_exists(PK) OR (');
+      const expression = optional
+        ? condition.slice('attribute_not_exists(PK) OR ('.length, -1)
+        : condition;
+      const ok =
+        (optional && !row) ||
+        expression.split(' AND ').every((term) => {
+          if (term === 'attribute_exists(PK)') return !!row;
+          if (term === 'attribute_not_exists(PK)') return !row;
+          const match = /^(#[a-zA-Z]+) (=|>|<=) (:[a-zA-Z]+)$/.exec(term);
+          assert.ok(match, `Unsupported condition ${term}`);
+          const actual = row?.[names[match[1]]],
+            expected = values[match[3]];
+          return match[2] === '='
+            ? actual === expected
+            : actual !== undefined &&
+                (match[2] === '>' ? actual > expected : actual <= expected);
+        });
       return { Code: ok ? 'None' : 'ConditionalCheckFailed' };
     });
     if (this.forcedCode) reasons[0] = { Code: this.forcedCode };
@@ -157,7 +211,11 @@ export class CartStore {
         name: 'TransactionCanceledException',
         CancellationReasons: reasons,
       });
-    for (const a of actions) if (a.Put) this.put(a.Put.TableName!, a.Put.Item!);
+    for (const a of actions) {
+      if (a.Put) this.put(a.Put.TableName!, a.Put.Item!);
+      if (a.Delete)
+        this.rows.delete(this.key(a.Delete.TableName!, a.Delete.Key!));
+    }
     this.commits++;
     this.invariants();
     this.after?.();
