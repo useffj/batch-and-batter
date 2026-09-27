@@ -89,7 +89,7 @@ test('three on-demand tables have only the approved string PK/SK foundation', ()
   }
 });
 
-test('one Node 24 Lambda preserves its identity and serves exactly the twenty approved routes', () => {
+test('one Node 24 Lambda preserves its identity and serves exactly the twenty-four approved routes', () => {
   template.resourceCountIs('AWS::Lambda::Function', 1);
   template.hasResourceProperties('AWS::Lambda::Function', {
     Runtime: 'nodejs24.x',
@@ -99,7 +99,7 @@ test('one Node 24 Lambda preserves its identity and serves exactly the twenty ap
   template.hasResourceProperties('AWS::ApiGatewayV2::Api', {
     ProtocolType: 'HTTP',
   });
-  template.resourceCountIs('AWS::ApiGatewayV2::Route', 20);
+  template.resourceCountIs('AWS::ApiGatewayV2::Route', 24);
   const functionId = Object.keys(
     template.findResources('AWS::Lambda::Function'),
   )[0];
@@ -111,6 +111,10 @@ test('one Node 24 Lambda preserves its identity and serves exactly the twenty ap
     routes.map((route) => route.Properties.RouteKey).sort(),
     [
       ...compositionRoutes,
+      'POST /carts',
+      'GET /carts/{cartId}',
+      'PUT /carts/{cartId}/items',
+      'DELETE /carts/{cartId}',
       'GET /admin/me',
       'GET /drops/current',
       'GET /drops/{dropId}',
@@ -239,7 +243,7 @@ test('Lambda has only scoped logging and the exact Catalog composition permissio
         typeof s.Action !== 'string' &&
         !s.Action.includes('scheduler:CreateSchedule'),
     );
-  assert.equal(statements.length, 2);
+  assert.equal(statements.length, 4);
   assert.deepEqual(statements[0].Action, [
     'logs:CreateLogStream',
     'logs:PutLogEvents',
@@ -270,7 +274,22 @@ test('Lambda has only scoped logging and the exact Catalog composition permissio
   template.hasResourceProperties('AWS::Lambda::Function', {
     Environment: { Variables: { CATALOG_TABLE_NAME: { Ref: catalogId } } },
   });
-  // Exact statements exclude Commerce, Operations, SQS and all other service permissions.
+  for (const [index, name] of ['Commerce', 'Operations'].entries()) {
+    const id = Object.keys(template.findResources('AWS::DynamoDB::Table')).find(
+      (id) => id.startsWith(name),
+    )!;
+    assert.deepEqual(statements[index + 2], {
+      Effect: 'Allow',
+      Action: ['dynamodb:GetItem', 'dynamodb:PutItem'],
+      Resource: { 'Fn::GetAtt': [id, 'Arn'] },
+    });
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      Environment: {
+        Variables: { [`${name.toUpperCase()}_TABLE_NAME`]: { Ref: id } },
+      },
+    });
+  }
+  // Exact statements exclude SQS and unrelated permissions.
   template.resourceCountIs('AWS::IAM::ManagedPolicy', 0);
 });
 
@@ -441,8 +460,8 @@ test('tables, pool including MFA, client and JWT authorizer exactly preserve the
 });
 
 test('every route integration invokes only the existing Lambda through route-scoped API Gateway permissions', () => {
-  template.resourceCountIs('AWS::ApiGatewayV2::Integration', 20);
-  template.resourceCountIs('AWS::Lambda::Permission', 20);
+  template.resourceCountIs('AWS::ApiGatewayV2::Integration', 24);
+  template.resourceCountIs('AWS::Lambda::Permission', 24);
   for (const resource of Object.values(
     template.findResources('AWS::ApiGatewayV2::Integration'),
   )) {
@@ -482,10 +501,10 @@ test('every route integration invokes only the existing Lambda through route-sco
   }
 });
 
-test('lifecycle adds only three protected routes and updates existing Lambda code', () => {
+test('carts add only four public routes, table environment and scoped IAM to existing resources', () => {
   const baseline = JSON.parse(
     readFileSync(
-      join(__dirname, '../../../test/fixtures/phase-4b2b2b2-resources.json'),
+      join(__dirname, '../../../test/fixtures/phase-4b2b2b3-resources.json'),
       'utf8',
     ),
   );
@@ -497,7 +516,22 @@ test('lifecycle adds only three protected routes and updates existing Lambda cod
       const prior = structuredClone(expected) as typeof actual;
       assert.ok(actual.Properties.Code.S3Key);
       prior.Properties.Code = actual.Properties.Code;
+      prior.Properties.Environment.Variables.COMMERCE_TABLE_NAME = {
+        Ref: 'CommerceTable6CC80189',
+      };
+      prior.Properties.Environment.Variables.OPERATIONS_TABLE_NAME = {
+        Ref: 'OperationsTable90528792',
+      };
       assert.deepEqual(actual, prior, 'Lambda changed beyond code');
+    } else if (id.startsWith('ApplicationRoleDefaultPolicy')) {
+      const prior = structuredClone(expected) as typeof actual;
+      for (const table of ['CommerceTable6CC80189', 'OperationsTable90528792'])
+        prior.Properties.PolicyDocument.Statement.push({
+          Effect: 'Allow',
+          Action: ['dynamodb:GetItem', 'dynamodb:PutItem'],
+          Resource: { 'Fn::GetAtt': [table, 'Arn'] },
+        });
+      assert.deepEqual(actual, prior);
     } else
       assert.deepEqual(actual, expected, `Unrelated resource changed: ${id}`);
   }
@@ -505,9 +539,9 @@ test('lifecycle adds only three protected routes and updates existing Lambda cod
     .filter(([id]) => !(id in baseline))
     .map(([, resource]) => (resource as { Type: string }).Type);
   assert.deepEqual(added.sort(), [
-    ...Array(3).fill('AWS::ApiGatewayV2::Integration'),
-    ...Array(3).fill('AWS::ApiGatewayV2::Route'),
-    ...Array(3).fill('AWS::Lambda::Permission'),
+    ...Array(4).fill('AWS::ApiGatewayV2::Integration'),
+    ...Array(4).fill('AWS::ApiGatewayV2::Route'),
+    ...Array(4).fill('AWS::Lambda::Permission'),
   ]);
 });
 
@@ -573,7 +607,7 @@ test('automatic opening has exact group trust, minimal policies and bounded asyn
   });
   const applicationPolicy = policies.find((p) => p !== schedulerPolicy)!;
   const statements = applicationPolicy.Properties.PolicyDocument.Statement;
-  assert.equal(statements.length, 4);
+  assert.equal(statements.length, 6);
   assert.deepEqual(statements.slice(0, 2), [
     {
       Action: ['scheduler:CreateSchedule', 'scheduler:GetSchedule'],

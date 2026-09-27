@@ -2,10 +2,15 @@ import type { ApiEvent, ApiResponse } from './api';
 
 export interface InvocationContext {
   awsRequestId: string;
+  getRemainingTimeInMillis?: () => number;
 }
 
 // Never derive operation names from paths, parameters, bodies or claims.
 const operations = new Map([
+  ['POST /carts', 'createCart'],
+  ['GET /carts/{cartId}', 'getCart'],
+  ['PUT /carts/{cartId}/items', 'updateCart'],
+  ['DELETE /carts/{cartId}', 'releaseCart'],
   ['GET /health', 'health'],
   ['GET /drops/current', 'getCurrentDrop'],
   ['GET /drops/{dropId}', 'getDrop'],
@@ -29,6 +34,15 @@ const operations = new Map([
 ]);
 
 const errorCodes = new Set([
+  'RESERVATION_EXPIRED',
+  'CART_CONFLICT',
+  'IDEMPOTENCY_CONFLICT',
+  'IDEMPOTENCY_KEY_EXPIRED',
+  'DROP_NOT_OPEN',
+  'PRODUCT_NOT_AVAILABLE',
+  'INSUFFICIENT_INVENTORY',
+  'QUANTITY_LIMIT_EXCEEDED',
+  'CART_BUSY',
   'NOT_FOUND',
   'INVALID_DROP_ID',
   'UNAUTHORIZED',
@@ -65,6 +79,7 @@ export function logCompletion(
   context: InvocationContext | undefined,
   response: ApiResponse,
   code?: string,
+  timing?: { attempts: number; durationMs: number },
 ): void {
   // Logging must not turn a committed write into an apparent HTTP failure.
   try {
@@ -77,6 +92,9 @@ export function logCompletion(
       operation: operation ?? 'unmatched',
       statusCode: response.statusCode,
       ...(code && errorCodes.has(code) ? { code } : {}),
+      ...(timing
+        ? { attempts: timing.attempts, durationMs: timing.durationMs }
+        : {}),
     });
     if (response.statusCode >= 500) console.error(record);
     else console.info(record);

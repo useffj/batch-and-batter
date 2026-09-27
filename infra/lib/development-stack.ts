@@ -65,6 +65,8 @@ export class DevelopmentStack extends Stack {
     Tags.of(this).add('Environment', props.environment);
 
     let catalogTable: dynamodb.Table | undefined;
+    let commerceTable: dynamodb.Table | undefined;
+    let operationsTable: dynamodb.Table | undefined;
     for (const name of ['Catalog', 'Commerce', 'Operations']) {
       const table = new dynamodb.Table(this, `${name}Table`, {
         tableName: `${prefix}-${name.toLowerCase()}`,
@@ -76,6 +78,8 @@ export class DevelopmentStack extends Stack {
         removalPolicy: RemovalPolicy.DESTROY,
       });
       if (name === 'Catalog') catalogTable = table;
+      if (name === 'Commerce') commerceTable = table;
+      if (name === 'Operations') operationsTable = table;
       new CfnOutput(this, `${name}TableName`, { value: table.tableName });
     }
 
@@ -183,7 +187,8 @@ export class DevelopmentStack extends Stack {
         resources: [logGroup.logGroupArn],
       }),
     );
-    if (!catalogTable) throw new Error('Catalog table is required');
+    if (!catalogTable || !commerceTable || !operationsTable)
+      throw new Error('Application tables are required');
     role.addToPolicy(
       new iam.PolicyStatement({
         actions: [
@@ -196,6 +201,14 @@ export class DevelopmentStack extends Stack {
         resources: [catalogTable.tableArn],
       }),
     );
+    for (const table of [commerceTable, operationsTable]) {
+      role.addToPolicy(
+        new iam.PolicyStatement({
+          actions: ['dynamodb:GetItem', 'dynamodb:PutItem'],
+          resources: [table.tableArn],
+        }),
+      );
+    }
     const application = new lambda.Function(this, 'ApplicationApi', {
       functionName: `${prefix}-api`,
       runtime: lambda.Runtime.NODEJS_24_X,
@@ -205,6 +218,8 @@ export class DevelopmentStack extends Stack {
       ),
       environment: {
         CATALOG_TABLE_NAME: catalogTable.tableName,
+        COMMERCE_TABLE_NAME: commerceTable.tableName,
+        OPERATIONS_TABLE_NAME: operationsTable.tableName,
         OPEN_SCHEDULE_GROUP: scheduleGroup.ref,
         OPEN_TARGET_ARN: applicationArn,
         OPEN_SCHEDULE_ROLE_ARN: schedulerRole.roleArn,
@@ -259,6 +274,29 @@ export class DevelopmentStack extends Stack {
       api.addRoutes({
         path: route,
         methods: [apigateway.HttpMethod.GET],
+        integration: new integrations.HttpLambdaIntegration(
+          integrationId,
+          application,
+        ),
+      });
+    }
+    for (const [route, method, integrationId] of [
+      ['/carts', apigateway.HttpMethod.POST, 'CreateCartIntegration'],
+      ['/carts/{cartId}', apigateway.HttpMethod.GET, 'GetCartIntegration'],
+      [
+        '/carts/{cartId}/items',
+        apigateway.HttpMethod.PUT,
+        'ReplaceCartIntegration',
+      ],
+      [
+        '/carts/{cartId}',
+        apigateway.HttpMethod.DELETE,
+        'ReleaseCartIntegration',
+      ],
+    ] as const) {
+      api.addRoutes({
+        path: route,
+        methods: [method],
         integration: new integrations.HttpLambdaIntegration(
           integrationId,
           application,
