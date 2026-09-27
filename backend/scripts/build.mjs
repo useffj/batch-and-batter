@@ -12,8 +12,12 @@ await rm(new URL('../dist/lambda/', import.meta.url), {
 await mkdir(new URL('../dist/lambda/', import.meta.url), { recursive: true });
 const result = await build({
   absWorkingDir: root,
-  entryPoints: ['src/handler.ts'],
-  outfile: 'dist/lambda/handler.js',
+  entryPoints: [
+    'src/handler.ts',
+    'src/expiry-worker-handler.ts',
+    'src/expiry-reconciler-handler.ts',
+  ],
+  outdir: 'dist/lambda',
   bundle: true,
   platform: 'node',
   target: 'node24',

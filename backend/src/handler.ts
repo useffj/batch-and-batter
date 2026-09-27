@@ -1,3 +1,5 @@
+import { SQSClient } from '@aws-sdk/client-sqs';
+import { SqsExpiryDispatch } from './cart-expiry';
 import { DynamoCartRepository, type CartService } from './cart-repository';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
@@ -61,5 +63,10 @@ export const handler = createEntrypoint(
       process.env.CATALOG_TABLE_NAME ?? '',
       process.env.COMMERCE_TABLE_NAME ?? '',
       process.env.OPERATIONS_TABLE_NAME ?? '',
+      undefined,
+      new SqsExpiryDispatch(
+        new SQSClient({ maxAttempts: 1 }),
+        process.env.RESERVATION_QUEUE_URL ?? '',
+      ),
     )),
 );

@@ -12,15 +12,23 @@ test('artifact contains only compiled runtime code and production dependencies',
   await verifyArtifact(root);
 });
 test('rebuilding produces byte-identical bundle and metadata', async () => {
-  const bundle = await readFile(new URL('dist/lambda/handler.js', root));
+  const names = [
+    'handler.js',
+    'expiry-worker-handler.js',
+    'expiry-reconciler-handler.js',
+  ];
+  const bundles = await Promise.all(
+    names.map((name) => readFile(new URL(`dist/lambda/${name}`, root))),
+  );
   const metadata = await readFile(new URL('dist/bundle-meta.json', root));
   execFileSync(process.execPath, ['scripts/build.mjs'], {
     cwd: fileURLToPath(root),
   });
-  assert.deepEqual(
-    await readFile(new URL('dist/lambda/handler.js', root)),
-    bundle,
-  );
+  for (const [i, name] of names.entries())
+    assert.deepEqual(
+      await readFile(new URL(`dist/lambda/${name}`, root)),
+      bundles[i],
+    );
   assert.deepEqual(
     await readFile(new URL('dist/bundle-meta.json', root)),
     metadata,
@@ -37,7 +45,7 @@ test('artifact guard rejects accidental files, including env, credentials, tests
     const file = new URL(`dist/lambda/${filename}`, root);
     try {
       await writeFile(file, 'unsafe test fixture');
-      await assert.rejects(verifyArtifact(root), /Only compiled handler/);
+      await assert.rejects(verifyArtifact(root), /Only the three compiled/);
     } finally {
       await rm(file);
     }
@@ -92,5 +100,27 @@ test('artifact guard rejects embedded credential assignments without flagging SD
     await assert.rejects(verifyArtifact(root), /Credential material/);
   } finally {
     await writeFile(file, original);
+  }
+});
+
+test('dedicated expiry bundles load in isolation without source or installed SDK', async () => {
+  const directory = await mkdtemp(
+    join(tmpdir(), 'batch-batter-expiry-artifact-'),
+  );
+  try {
+    for (const name of ['expiry-worker-handler', 'expiry-reconciler-handler']) {
+      await copyFile(
+        new URL(`dist/lambda/${name}.js`, root),
+        join(directory, `${name}.js`),
+      );
+      const result = execFileSync(
+        process.execPath,
+        ['-e', `console.log(typeof require('./${name}.js').handler)`],
+        { cwd: directory, env: { PATH: process.env.PATH }, encoding: 'utf8' },
+      );
+      assert.equal(result.trim(), 'function');
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
   }
 });

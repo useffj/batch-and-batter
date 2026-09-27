@@ -6,8 +6,8 @@ export async function verifyArtifact(root) {
   const files = await readdir(new URL('dist/lambda/', root));
   assert.deepEqual(
     files,
-    ['handler.js'],
-    'Only compiled handler.js may be deployed',
+    ['expiry-reconciler-handler.js', 'expiry-worker-handler.js', 'handler.js'],
+    'Only the three compiled Lambda entry points may be deployed',
   );
   const metadata = JSON.parse(
     await readFile(new URL('dist/bundle-meta.json', root), 'utf8'),
@@ -37,6 +37,7 @@ export async function verifyArtifact(root) {
   for (const packageName of [
     '@aws-sdk/client-dynamodb',
     '@aws-sdk/client-scheduler',
+    '@aws-sdk/client-sqs',
     '@aws-sdk/lib-dynamodb',
     'zod',
   ]) {
@@ -52,14 +53,13 @@ export async function verifyArtifact(root) {
         `Unbundled runtime dependency: ${imported.path}`,
       );
   }
-  const bundle = await readFile(
-    new URL('dist/lambda/handler.js', root),
-    'utf8',
-  );
-  assert.ok(
-    !/(?:AKIA|ASIA)[A-Z0-9]{16}|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|aws_(?:secret_access_key|access_key_id)\s*=(?!=|>)\s*\S+/i.test(
-      bundle,
-    ),
-    'Credential material in bundle',
-  );
+  for (const file of files) {
+    const bundle = await readFile(new URL(`dist/lambda/${file}`, root), 'utf8');
+    assert.ok(
+      !/(?:AKIA|ASIA)[A-Z0-9]{16}|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|aws_(?:secret_access_key|access_key_id)\s*=(?!=|>)\s*\S+/i.test(
+        bundle,
+      ),
+      'Credential material in bundle',
+    );
+  }
 }
