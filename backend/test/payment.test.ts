@@ -82,6 +82,16 @@ async function setup(count = 1) {
     'operations',
     DEVELOPMENT_ONLY_ZERO_TAX_ZERO_FEE,
     { now: () => s.now, id: () => pid(++s.sequence) },
+    {
+      retrieveConfirmationToken: async (id) => ({
+        id,
+        livemode: false,
+        expiresAt: s.now + 3600000,
+        paymentIntent: null,
+        setupIntent: null,
+        type: 'card',
+      }),
+    },
   );
   const request = {
     cartId: created.cart.cartId,
@@ -90,6 +100,7 @@ async function setup(count = 1) {
     ifMatch: etag(created.cart.updatedAt),
     pickupDate: pickup.date,
     customer,
+    confirmationTokenId: 'ctoken_LocalFixture',
   };
   const cart = () =>
     cartSchema.parse(
@@ -104,7 +115,7 @@ async function setup(count = 1) {
 const fails = (code: string) => (e: unknown) =>
   (e as { code?: string })?.code === code;
 
-test('handoff freezes snapshots, owns inventory, creates exactly ten distinct atomic actions and three durable records', async () => {
+test('handoff freezes snapshots, owns inventory, creates eleven distinct atomic actions including submission ownership and three durable records', async () => {
   const { s, repo, request, created, cart, inventory } = await setup(12);
   const stock = structuredClone(
     [...s.rows].filter(([k]) => k.includes('|INVENTORY#')),
@@ -142,7 +153,7 @@ test('handoff freezes snapshots, owns inventory, creates exactly ten distinct at
   assert.ok(s.row('operations', work.workflow));
   assert.equal(work.workflow.deadline, c.paymentStartedAt);
   const actions = s.transactions.at(-1)!;
-  assert.equal(actions.length, 10);
+  assert.equal(actions.length, 11);
   assert.deepEqual(
     actions.map((a) =>
       a.Put ? 'Put' : a.Delete ? 'Delete' : 'ConditionCheck',
@@ -155,6 +166,7 @@ test('handoff freezes snapshots, owns inventory, creates exactly ten distinct at
       'Put',
       'Put',
       'Delete',
+      'Put',
       'Put',
       'Put',
       'Put',
@@ -180,7 +192,7 @@ test('handoff freezes snapshots, owns inventory, creates exactly ten distinct at
   assert.equal(o.items[0].name, 'Cookie');
   assert.equal(inventory().reserved, 2);
 });
-for (let index = 0; index < 10; index++)
+for (let index = 0; index < 11; index++)
   test(`failure at handoff action ${index} rolls back every ownership/order/work write`, async () => {
     const { s, repo, request } = await setup();
     const before = structuredClone(s.rows);
@@ -545,6 +557,7 @@ for (const injection of [
   test(`checkout rejects client ${injection}`, () =>
     assert.equal(
       startPaymentSchema.safeParse({
+        confirmationTokenId: 'ctoken_LocalFixture',
         pickupDate: pickup.date,
         customer,
         [injection]: 123,
@@ -603,7 +616,11 @@ test('local API safe DTO/logs and production entrypoint leaves payment routes un
       'If-Match': request.ifMatch,
     },
     pathParameters: { cartId: request.cartId },
-    body: JSON.stringify({ pickupDate: pickup.date, customer }),
+    body: JSON.stringify({
+      pickupDate: pickup.date,
+      customer,
+      confirmationTokenId: request.confirmationTokenId,
+    }),
   };
   const logs: string[] = [];
   const original = console.info;
@@ -647,6 +664,19 @@ test('local API safe DTO/logs and production entrypoint leaves payment routes un
 });
 // Deterministic port implementation: never imported by a runtime entrypoint.
 class FakeProvider implements PaymentProvider {
+  async retrieveConfirmationToken(id: string) {
+    return {
+      id,
+      livemode: false as const,
+      expiresAt: Date.now() + 3600000,
+      paymentIntent: null,
+      setupIntent: null,
+      type: 'card' as const,
+    };
+  }
+  async customerAction() {
+    return { intent: this.result, clientSecret: null };
+  }
   calls: string[] = [];
   private result: IntentSnapshot = {
     id: 'local-test-only',
@@ -655,6 +685,16 @@ class FakeProvider implements PaymentProvider {
     amountReceivedCents: 0,
     currency: 'usd',
     captureMethod: 'manual',
+    confirmationMethod: 'manual',
+    amountCapturableCents: 900,
+    livemode: false,
+    metadata: {
+      environment: 'dev',
+      cartId: pid(100),
+      orderId: pid(101),
+      paymentAttemptId: pid(102),
+      dropId,
+    },
   };
   async createIntent(c: AuthorizedPaymentCommand) {
     this.calls.push('create');
@@ -849,7 +889,11 @@ test('local API rejects amount injection and does not log malicious error payloa
       body: JSON.stringify({ pickupDate: pickup.date, customer, amount: 1 }),
     };
     assert.equal((await localPaymentApi(event, repo)).statusCode, 400);
-    event.body = JSON.stringify({ pickupDate: pickup.date, customer });
+    event.body = JSON.stringify({
+      pickupDate: pickup.date,
+      customer,
+      confirmationTokenId: request.confirmationTokenId,
+    });
     const response = await localPaymentApi(event, {
       get: repo.get.bind(repo),
       start: async () => {

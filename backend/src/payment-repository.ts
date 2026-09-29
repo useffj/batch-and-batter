@@ -1,3 +1,5 @@
+import type { PaymentReader } from './payment-provider';
+import { command, executionSchema } from './payment-execution-domain';
 import {
   GetCommand,
   TransactWriteCommand,
@@ -69,6 +71,11 @@ export class PaymentRepository {
     private readonly operations: string,
     private readonly pricing: PaymentPricing,
     private readonly runtime = { now: () => Date.now(), id: generateUlid },
+    private readonly provider?: Pick<
+      PaymentReader,
+      'retrieveConfirmationToken'
+    >,
+    private readonly providerScope = 'dev:local',
   ) {
     if (!catalog || !commerce || !operations)
       throw new Error('Payment tables required');
@@ -106,6 +113,7 @@ export class PaymentRepository {
   }
   async start(request: PaymentStartRequest) {
     const input = startPaymentSchema.parse({
+      confirmationTokenId: request.confirmationTokenId,
       pickupDate: request.pickupDate,
       customer: request.customer,
     });
@@ -118,6 +126,7 @@ export class PaymentRepository {
     const fingerprint = hash(
       JSON.stringify({
         cartId: request.cartId,
+        confirmationTokenId: input.confirmationTokenId,
         pickupDate: input.pickupDate,
         customer: input.customer,
         ifMatch: request.ifMatch,
@@ -210,7 +219,26 @@ export class PaymentRepository {
       });
     }
     if (!pickupEligible()) throw new CartError('INVALID_PICKUP_DATE');
+    if (!this.provider) throw new CartError('INTERNAL_ERROR');
+    let submission;
+    try {
+      submission = await this.provider.retrieveConfirmationToken(
+        input.confirmationTokenId,
+      );
+    } catch {
+      throw new CartError('VALIDATION_ERROR');
+    }
     const now = this.runtime.now();
+    if (
+      submission.id !== input.confirmationTokenId ||
+      submission.livemode !== false ||
+      submission.type !== 'card' ||
+      submission.expiresAt <= now ||
+      submission.paymentIntent ||
+      submission.setupIntent
+    )
+      throw new CartError('VALIDATION_ERROR');
+    if (!pickupEligible()) throw new CartError('INVALID_PICKUP_DATE');
     freshKey(key.issuedAt, now);
     if (now >= Date.parse(cart.shoppingExpiresAt))
       throw new CartError('RESERVATION_EXPIRED');
@@ -231,7 +259,32 @@ export class PaymentRepository {
       orderId,
     });
     const amount = paymentAmount(cart, this.pricing);
+    const initialWork = paymentWork(next).workflow;
+    const execution = executionSchema.parse({
+      scope: this.providerScope,
+      confirmationTokenId: input.confirmationTokenId,
+      revision: 0,
+      parameters: {
+        amountCents: amount.totalCents,
+        currency: amount.currency,
+        captureMethod: 'manual',
+        confirmationMethod: 'manual',
+        paymentMethodTypes: ['card'],
+        metadata: {
+          environment: 'dev',
+          cartId: cart.cartId,
+          orderId,
+          paymentAttemptId,
+          dropId: cart.dropId,
+        },
+      },
+      create: command('CREATE', paymentAttemptId, 0, now),
+      confirmations: [],
+      stage: 'CREATE_INTENT',
+      workflow: { PK: initialWork.PK, SK: initialWork.SK, revision: 0 },
+    });
     const attempt = paymentAttemptSchema.parse({
+      execution,
       paymentAttemptId,
       cartId: cart.cartId,
       orderId,
@@ -361,6 +414,14 @@ export class PaymentRepository {
         createdAt: started,
         retainUntil: Math.ceil((now + 7 * 86400000) / 1000),
       }),
+      newPut(this.commerce, {
+        PK: `STRIPE_SUBMISSION#${hash(`${this.providerScope}:${input.confirmationTokenId}`)}`,
+        SK: 'META',
+        paymentAttemptId,
+        cartId: cart.cartId,
+        orderId,
+        createdAt: started,
+      }),
     ];
     try {
       await this.client.send(
@@ -387,6 +448,11 @@ export class PaymentRepository {
           if (reasons[i].Code === 'ConditionalCheckFailed')
             throw new CartError(codes[i]);
       }
+      if (
+        reasons?.length === actions.length &&
+        reasons[10]?.Code === 'ConditionalCheckFailed'
+      )
+        throw new CartError('VALIDATION_ERROR');
       // No unsafe rebase or new IDs after ambiguity; replay authority resolves the winner.
       throw new CartError('CART_BUSY');
     }
