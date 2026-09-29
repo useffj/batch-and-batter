@@ -261,4 +261,5 @@ export function addCartExpiry(
       period: Duration.minutes(1),
     }),
   );
+  return recovery;
 }

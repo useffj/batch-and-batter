@@ -14,6 +14,8 @@ test('artifact contains only compiled runtime code and production dependencies',
 test('rebuilding produces byte-identical bundle and metadata', async () => {
   const names = [
     'handler.js',
+    'payment-worker-handler.js',
+    'stripe-webhook-handler.js',
     'expiry-worker-handler.js',
     'expiry-reconciler-handler.js',
   ];
@@ -45,7 +47,7 @@ test('artifact guard rejects accidental files, including env, credentials, tests
     const file = new URL(`dist/lambda/${filename}`, root);
     try {
       await writeFile(file, 'unsafe test fixture');
-      await assert.rejects(verifyArtifact(root), /Only the three compiled/);
+      await assert.rejects(verifyArtifact(root), /Only the five compiled/);
     } finally {
       await rm(file);
     }
@@ -123,4 +125,54 @@ test('dedicated expiry bundles load in isolation without source or installed SDK
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test('deployed app defaults admission off before secret/provider or transactional writes', () => {
+  const output = execFileSync(
+    process.execPath,
+    [
+      '-e',
+      `
+    const http = require('node:http');
+    const targets = [];
+    const server = http.createServer((req, res) => {
+      targets.push(req.headers['x-amz-target']);
+      req.resume(); req.on('end', () => { res.setHeader('content-type','application/x-amz-json-1.0'); res.end('{}'); });
+    });
+    server.listen(0, '127.0.0.1', async () => {
+      process.env.AWS_ENDPOINT_URL_DYNAMODB = 'http://127.0.0.1:' + server.address().port;
+      try {
+        const r = await require('./dist/lambda/handler.js').handler({
+          routeKey: 'POST /carts/{cartId}/payment/start',
+          requestContext: { requestId: 'artifact-disabled', http: { method: 'POST' } },
+          pathParameters: { cartId: '01K5J1' + '100'.padStart(20, '0') },
+          headers: { 'x-cart-token': Buffer.alloc(32,17).toString('base64url'),
+            'if-match': '"' + 'a'.repeat(64) + '"', 'idempotency-key': 'v1.' + Date.now() + '.' + Buffer.alloc(32,23).toString('base64url') },
+          body: JSON.stringify({ confirmationTokenId: 'ctoken_ArtifactFixture', pickupDate: '2026-10-01',
+            customer: { name: 'Artifact Fixture', email: 'artifact@example.test', phone: '+15555550123', smsTransactionalConsent: false } })
+        });
+        console.log(JSON.stringify({ r, targets }));
+      } finally { server.close(); }
+    });
+  `,
+    ],
+    {
+      cwd: fileURLToPath(root),
+      encoding: 'utf8',
+      env: {
+        PATH: process.env.PATH,
+        AWS_REGION: 'us-east-2',
+        AWS_ACCESS_KEY_ID: 'synthetic',
+        AWS_SECRET_ACCESS_KEY: 'synthetic',
+        AWS_EC2_METADATA_DISABLED: 'true',
+        CATALOG_TABLE_NAME: 'catalog',
+        COMMERCE_TABLE_NAME: 'commerce',
+        OPERATIONS_TABLE_NAME: 'operations',
+      },
+    },
+  );
+  const result = JSON.parse(output.trim().split('\n').at(-1));
+  assert.equal(result.r.statusCode, 503);
+  assert.equal(JSON.parse(result.r.body).code, 'PAYMENTS_DISABLED');
+  assert.deepEqual(result.targets, ['DynamoDB_20120810.GetItem']);
 });

@@ -6,8 +6,14 @@ export async function verifyArtifact(root) {
   const files = await readdir(new URL('dist/lambda/', root));
   assert.deepEqual(
     files,
-    ['expiry-reconciler-handler.js', 'expiry-worker-handler.js', 'handler.js'],
-    'Only the three compiled Lambda entry points may be deployed',
+    [
+      'expiry-reconciler-handler.js',
+      'expiry-worker-handler.js',
+      'handler.js',
+      'payment-worker-handler.js',
+      'stripe-webhook-handler.js',
+    ],
+    'Only the five compiled Lambda entry points may be deployed',
   );
   const metadata = JSON.parse(
     await readFile(new URL('dist/bundle-meta.json', root), 'utf8'),
@@ -44,6 +50,18 @@ export async function verifyArtifact(root) {
     assert.ok(
       inputs.some((input) => input.startsWith(`node_modules/${packageName}/`)),
       `${packageName} must be bundled`,
+    );
+  }
+  for (const name of ['expiry-worker-handler', 'expiry-reconciler-handler']) {
+    const output = metadata.outputs[`dist/lambda/${name}.js`];
+    assert.ok(output);
+    assert.ok(
+      !Object.keys(output.inputs).some((p) =>
+        /node_modules\/stripe\/|src\/stripe-provider|client-ssm|payment-settlement/.test(
+          p,
+        ),
+      ),
+      'Expiry bundles must exclude financial provider and secrets',
     );
   }
   for (const output of Object.values(metadata.outputs)) {

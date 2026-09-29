@@ -1,3 +1,4 @@
+import { addPayments } from './payments';
 import { addCartExpiry } from './cart-expiry';
 import * as path from 'node:path';
 import {
@@ -248,8 +249,8 @@ export class DevelopmentStack extends Stack {
       },
       role,
       logGroup,
-      timeout: Duration.seconds(5),
-      memorySize: 128,
+      timeout: Duration.seconds(15),
+      memorySize: 256,
     });
     application.configureAsyncInvoke({
       retryAttempts: 2,
@@ -434,7 +435,7 @@ export class DevelopmentStack extends Stack {
         ),
       });
     }
-    addCartExpiry(
+    const recovery = addCartExpiry(
       this,
       prefix,
       catalogTable,
@@ -442,6 +443,17 @@ export class DevelopmentStack extends Stack {
       operationsTable,
       reservationQueue,
       reservationDlq,
+    );
+    addPayments(
+      this,
+      prefix,
+      application,
+      role,
+      api,
+      catalogTable,
+      commerceTable,
+      operationsTable,
+      recovery,
     );
     new CfnOutput(this, 'HttpApiEndpoint', { value: api.apiEndpoint });
   }

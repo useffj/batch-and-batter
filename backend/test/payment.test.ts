@@ -92,6 +92,8 @@ async function setup(count = 1) {
         type: 'card',
       }),
     },
+    'dev:local',
+    true,
   );
   const request = {
     cartId: created.cart.cartId,

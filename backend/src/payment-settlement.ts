@@ -1,3 +1,4 @@
+import { monitoringProjection } from './payment-metrics';
 // Local-only financial coordinator. No environment/client creation or deployed entrypoint imports.
 import {
   TransactWriteCommand,
@@ -305,6 +306,7 @@ export class FinancialWorkflow extends PaymentWorkflow {
       next.stage,
       opts.due ?? this.now(),
       s.work.createdAt,
+      monitoringProjection(next, opts.cart ?? s.cart),
     );
     const e = executionSchema.parse({
       ...next,

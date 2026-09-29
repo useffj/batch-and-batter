@@ -1,4 +1,9 @@
 import {
+  financialGauges,
+  observeFinancial,
+  paymentMetrics,
+} from './payment-metrics';
+import {
   paymentWorkSchema,
   workflowWorkSchema,
   paymentWorkKey,
@@ -33,7 +38,7 @@ export class ExpiryReconciler {
     private readonly operations: string,
     private readonly dispatch: ExpiryDispatch,
     private readonly runtime: ExpiryRuntime = expiryRuntime,
-    // Optional local model port. No deployed entrypoint supplies financial routing.
+    // Financial port keeps provider credentials and execution out of the reconciler.
     private readonly financial?: {
       message(row: Record<string, unknown>): PaymentMessage | undefined;
       send(message: PaymentMessage, timeoutMs: number): Promise<void>;
@@ -59,6 +64,9 @@ export class ExpiryReconciler {
         ),
       };
     };
+    const gauges = financialGauges();
+    let financialFailures = 0,
+      coverageComplete = true;
     let deferredPayment = 0;
     let examined = 0,
       sent = 0,
@@ -132,6 +140,24 @@ export class ExpiryReconciler {
             );
           else invalid++;
         }
+        // Independent bounded monitoring pass includes future retries and work behind the dispatch cursor.
+        // Incomplete coverage suppresses healthy zero gauges and the heartbeat.
+        if (this.financial) {
+          const future = await this.client.send(
+            new QueryCommand({
+              TableName: this.operations,
+              ConsistentRead: true,
+              KeyConditionExpression: 'PK = :pk',
+              ExpressionAttributeValues: { ':pk': pk },
+              Limit: 25,
+            }),
+            options(),
+          );
+          for (const row of future.Items ?? [])
+            if (this.financial.message(row))
+              observeFinancial(gauges, row, this.runtime.now());
+          if (future.LastEvaluatedKey) coverageComplete = false;
+        }
         let count = 0;
         let complete = false;
         while (count < 25 && left() >= 1500) {
@@ -170,6 +196,7 @@ export class ExpiryReconciler {
               .safeParse(data);
             const work = expiryWorkSchema.safeParse(data);
             if (financialMessage) {
+              observeFinancial(gauges, row, this.runtime.now());
               try {
                 const timeoutMs = Math.max(1, Math.min(400, left()));
                 let timer: ReturnType<typeof setTimeout> | undefined;
@@ -189,6 +216,7 @@ export class ExpiryReconciler {
                 sent++;
               } catch {
                 failures++;
+                financialFailures++;
               }
             } else if (
               payment.success &&
@@ -256,10 +284,22 @@ export class ExpiryReconciler {
           }),
           options(),
         );
+        if (!complete) coverageComplete = false;
         visited++;
       } catch {
         failures++;
       }
+    }
+    if (this.financial) {
+      const complete =
+        coverageComplete && visited === 16 && failures === 0 && invalid === 0;
+      paymentMetrics('reconciler', {
+        ...Object.fromEntries(
+          Object.entries(gauges).filter(([, v]) => complete || v > 0),
+        ),
+        FinancialRoutingFailure: financialFailures,
+        RecoveryHeartbeat: complete ? 1 : 0,
+      });
     }
     expiryLog(
       'reconcileCartExpiry',

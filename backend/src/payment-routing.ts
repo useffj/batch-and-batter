@@ -1,4 +1,4 @@
-// Local financial discovery model. Deliberately not imported by deployed entrypoints.
+// Pure financial discovery used by the bounded reconciler; no provider initialization.
 import { z } from 'zod';
 import {
   paymentWorkSchema,
@@ -6,7 +6,7 @@ import {
   paymentWorkKey,
 } from './payment-domain';
 import { workflowSchema, paymentMessage } from './payment-execution-domain';
-import { inboxSchema, eventWorkKey } from './stripe-webhook';
+import { inboxSchema, eventWorkKey } from './stripe-inbox-domain';
 import { expiryShard } from './cart-expiry';
 export function financialWorkMessage(row: Record<string, unknown>) {
   const { PK, SK, ...data } = row;

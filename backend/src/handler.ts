@@ -1,3 +1,4 @@
+import { createPaymentHttp } from './payment-http-runtime';
 import { SQSClient } from '@aws-sdk/client-sqs';
 import { SqsExpiryDispatch } from './cart-expiry';
 import { DynamoCartRepository, type CartService } from './cart-repository';
@@ -21,14 +22,25 @@ export function createEntrypoint(
   getCarts?: () => CartService,
 ) {
   const http = createHandler(getRepository, getSchedules, getCarts);
+  let payment: ReturnType<typeof createPaymentHttp> | undefined;
   const automatic = createAutoOpenHandler(getRepository);
   return (event: unknown, context?: InvocationContext) => {
     if (
       event &&
       typeof event === 'object' &&
       ('requestContext' in event || 'routeKey' in event || 'version' in event)
-    )
-      return http(event as ApiEvent, context);
+    ) {
+      const httpEvent = event as ApiEvent;
+      if (
+        [
+          'POST /carts/{cartId}/payment/start',
+          'POST /carts/{cartId}/payment/confirm',
+          'GET /carts/{cartId}/payment',
+        ].includes(httpEvent.routeKey)
+      )
+        return (payment ??= createPaymentHttp())(httpEvent);
+      return http(httpEvent, context);
+    }
     return automatic(event, context);
   };
 }

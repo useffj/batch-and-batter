@@ -135,7 +135,10 @@ export class CartStore {
         .filter(
           (row) =>
             row.PK === q.ExpressionAttributeValues![':pk'] &&
-            row.SK <= q.ExpressionAttributeValues![':upper'] &&
+            (!(':upper' in q.ExpressionAttributeValues!) ||
+              row.SK <= q.ExpressionAttributeValues![':upper']) &&
+            (!(':lower' in q.ExpressionAttributeValues!) ||
+              row.SK > q.ExpressionAttributeValues![':lower']) &&
             (!q.ExclusiveStartKey || row.SK > q.ExclusiveStartKey.SK),
         )
         .sort((a, b) => a.SK.localeCompare(b.SK));

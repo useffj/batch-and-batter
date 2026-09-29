@@ -1,7 +1,7 @@
 import { paymentMessageSchema } from './payment-execution-domain';
 import type { PaymentWorkflow } from './payment-workflow';
 import type { StripeInbox } from './stripe-webhook';
-// Factory intentionally absent from all deployed entrypoints/build assets.
+// Queue factory shared by tests and the dedicated financial entrypoint.
 export function createPaymentWorker(
   workflow: PaymentWorkflow,
   inbox: StripeInbox,

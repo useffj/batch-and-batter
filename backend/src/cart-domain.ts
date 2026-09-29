@@ -193,6 +193,7 @@ const errors = {
     503,
     'Cart could not be confirmed. Retry with the same idempotency key.',
   ],
+  PAYMENTS_DISABLED: [503, 'New payments are disabled.'],
   INTERNAL_ERROR: [500, 'Unable to complete the cart request.'],
 } as const;
 export type CartCode = keyof typeof errors;
