@@ -39,6 +39,7 @@ import {
   freshKey,
   etag,
   checkedTotal,
+  shoppingExpired,
   type Cart,
   type CartRequest,
   type CartResult,
@@ -114,9 +115,7 @@ export class DynamoCartRepository implements CartService {
     return {
       status: 200,
       cart: cartDto(c),
-      expired:
-        c.status === 'EXPIRED' ||
-        this.runtime.now() >= Date.parse(c.shoppingExpiresAt),
+      expired: shoppingExpired(c, this.runtime.now()),
     };
   }
   async mutate(
@@ -240,6 +239,13 @@ export class DynamoCartRepository implements CartService {
             throw new CartError('CART_CONFLICT');
           }
           observedCartRevision = old.updatedAt;
+          if (
+            request.operation === 'release' &&
+            ['PAYMENT_PENDING', 'PAYMENT_COMMITTING', 'CONVERTED'].includes(
+              old.status,
+            )
+          )
+            throw new CartError('CART_CONFLICT');
           if (request.operation === 'replace') {
             if (old.status !== 'ACTIVE') throw new CartError('CART_CONFLICT');
             if (request.ifMatch !== etag(old.updatedAt))

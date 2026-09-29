@@ -21,10 +21,26 @@ const lineSchema = z.strictObject({
   priceCents: positive,
   cookieUnits: positive,
 });
-export const cartSchema = z.strictObject({
+const cartRecord = z.strictObject({
   cartId: idSchema,
   dropId: idSchema,
-  status: z.enum(['ACTIVE', 'CANCELLED', 'EXPIRED']),
+  status: z.enum([
+    'ACTIVE',
+    'PAYMENT_PENDING',
+    'PAYMENT_COMMITTING',
+    'CONVERTED',
+    'CANCELLED',
+    'EXPIRED',
+  ]),
+  paymentGraceUsed: z.literal(true).optional(),
+  paymentStartedAt: z.iso.datetime().optional(),
+  paymentDeadline: z.iso.datetime().optional(),
+  paymentAttemptId: idSchema.optional(),
+  orderId: idSchema.optional(),
+  committingStartedAt: z.iso.datetime().optional(),
+  committingDeadline: z.iso.datetime().optional(),
+  recoveryRequired: z.literal(true).optional(),
+  recoveryReason: z.literal('UNKNOWN_FINANCIAL_OUTCOME').optional(),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
   shoppingExpiresAt: z.iso.datetime(),
@@ -37,9 +53,71 @@ export const cartSchema = z.strictObject({
       (items) => new Set(items.map((i) => i.productId)).size === items.length,
     ),
 });
+function validPaymentState(c: z.infer<typeof cartRecord>): boolean {
+  const fields = [
+    c.paymentGraceUsed,
+    c.paymentStartedAt,
+    c.paymentDeadline,
+    c.paymentAttemptId,
+    c.orderId,
+  ];
+  const any = fields.some((v) => v !== undefined);
+  const all = fields.every((v) => v !== undefined);
+  if (any && !all) return false;
+  if (c.status === 'ACTIVE' && any) return false;
+  if (
+    ['PAYMENT_PENDING', 'PAYMENT_COMMITTING', 'CONVERTED'].includes(c.status) &&
+    !all
+  )
+    return false;
+  if (
+    all &&
+    (Date.parse(c.paymentDeadline!) !==
+      Date.parse(c.paymentStartedAt!) + 240000 ||
+      Date.parse(c.paymentStartedAt!) >= Date.parse(c.shoppingExpiresAt))
+  )
+    return false;
+  const committing =
+    c.committingStartedAt !== undefined || c.committingDeadline !== undefined;
+  if (c.status === 'PAYMENT_COMMITTING' && !committing) return false;
+  if (
+    committing &&
+    (!all ||
+      c.status === 'PAYMENT_PENDING' ||
+      c.status === 'ACTIVE' ||
+      !c.committingStartedAt ||
+      !c.committingDeadline ||
+      Date.parse(c.committingDeadline) !==
+        Date.parse(c.committingStartedAt) + 120000 ||
+      Date.parse(c.committingStartedAt) < Date.parse(c.paymentStartedAt!) ||
+      Date.parse(c.committingStartedAt) > Date.parse(c.paymentDeadline!))
+  )
+    return false;
+  if (
+    (c.recoveryRequired !== undefined || c.recoveryReason !== undefined) &&
+    (c.status !== 'PAYMENT_COMMITTING' ||
+      !c.recoveryRequired ||
+      !c.recoveryReason)
+  )
+    return false;
+  return true;
+}
+export const cartSchema = cartRecord.refine(
+  validPaymentState,
+  'Invalid payment ownership state',
+);
 export type Cart = z.infer<typeof cartSchema>;
+export const ownsReserved = (status: Cart['status']) =>
+  ['ACTIVE', 'PAYMENT_PENDING', 'PAYMENT_COMMITTING'].includes(status);
+export const shoppingExpired = (cart: Cart, now: number) =>
+  cart.status === 'EXPIRED' ||
+  (cart.status === 'ACTIVE' && now >= Date.parse(cart.shoppingExpiresAt));
 export type DesiredItem = z.infer<typeof desiredItemsSchema>[number];
-export const cartDtoSchema = cartSchema.omit({ managementTokenHash: true });
+export const cartDtoSchema = cartRecord.omit({
+  managementTokenHash: true,
+  recoveryRequired: true,
+  recoveryReason: true,
+});
 export type CartDto = z.infer<typeof cartDtoSchema>;
 export function cartDto(c: Cart): CartDto {
   return {
@@ -49,6 +127,21 @@ export function cartDto(c: Cart): CartDto {
     createdAt: c.createdAt,
     updatedAt: c.updatedAt,
     shoppingExpiresAt: c.shoppingExpiresAt,
+    ...(c.paymentGraceUsed
+      ? {
+          paymentGraceUsed: c.paymentGraceUsed,
+          paymentStartedAt: c.paymentStartedAt!,
+          paymentDeadline: c.paymentDeadline!,
+          paymentAttemptId: c.paymentAttemptId!,
+          orderId: c.orderId!,
+        }
+      : {}),
+    ...(c.committingStartedAt
+      ? {
+          committingStartedAt: c.committingStartedAt,
+          committingDeadline: c.committingDeadline!,
+        }
+      : {}),
     items: c.items.map((i) => ({
       productId: i.productId,
       quantity: i.quantity,
@@ -61,6 +154,8 @@ const errors = {
   VALIDATION_ERROR: [400, 'Invalid request data.'],
   UNAUTHORIZED: [401, 'Cart credentials are invalid.'],
   RESERVATION_EXPIRED: [410, 'Your cookie reservation has expired.'],
+  PAYMENT_ALREADY_STARTED: [409, 'Payment has already started for this cart.'],
+  INVALID_PICKUP_DATE: [400, 'Selected pickup date is not available.'],
   CART_CONFLICT: [
     409,
     'Cart changed or is no longer editable. Reload before retrying.',

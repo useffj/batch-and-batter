@@ -8,7 +8,7 @@ import {
   type TransactWriteCommandInput,
 } from '@aws-sdk/lib-dynamodb';
 import { DynamoCartRepository } from '../src/cart-repository';
-import { secretHash, type CartRequest } from '../src/cart-domain';
+import { secretHash, ownsReserved, type CartRequest } from '../src/cart-domain';
 import { catalogKeys } from '../src/keys';
 import {
   drop,
@@ -194,6 +194,8 @@ export class CartStore {
         expression.split(' AND ').every((term) => {
           if (term === 'attribute_exists(PK)') return !!row;
           if (term === 'attribute_not_exists(PK)') return !row;
+          if (term.startsWith('attribute_not_exists(#'))
+            return row?.[names[term.slice(21, -1)]] === undefined;
           const match = /^(#[a-zA-Z]+) (=|>|<=) (:[a-zA-Z]+)$/.exec(term);
           assert.ok(match, `Unsupported condition ${term}`);
           const actual = row?.[names[match[1]]],
@@ -233,7 +235,8 @@ export class CartStore {
         for (const [k, c] of this.rows)
           if (
             k.startsWith('commerce|') &&
-            c.status === 'ACTIVE' &&
+            k.includes('|CART#') &&
+            ownsReserved(c.status) &&
             c.dropId === row.dropId
           )
             held += c.items
