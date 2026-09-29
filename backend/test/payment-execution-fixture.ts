@@ -133,6 +133,7 @@ export async function paymentFixture(
     { now: () => s.now, id: () => pid(++s.sequence) },
     provider,
     scope,
+    true,
   );
   const request = {
     cartId: created.cart.cartId,

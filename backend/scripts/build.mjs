@@ -14,6 +14,8 @@ const result = await build({
   absWorkingDir: root,
   entryPoints: [
     'src/handler.ts',
+    'src/payment-worker-handler.ts',
+    'src/stripe-webhook-handler.ts',
     'src/expiry-worker-handler.ts',
     'src/expiry-reconciler-handler.ts',
   ],

@@ -1,4 +1,5 @@
-// Local coordinator only: no runtime configuration, AWS/Stripe clients, or CDK imports.
+import { monitoringProjection } from './payment-metrics';
+// Dependency-injected coordinator: provider credentials and deployment wiring stay in entrypoints.
 import {
   GetCommand,
   TransactWriteCommand,
@@ -226,6 +227,7 @@ export class PaymentWorkflow {
       next.stage,
       this.now() + delay,
       work.createdAt,
+      monitoringProjection(next, cart),
     );
     const execution = executionSchema.parse({
       ...next,

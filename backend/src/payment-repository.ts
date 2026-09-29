@@ -1,5 +1,9 @@
 import type { PaymentReader } from './payment-provider';
-import { command, executionSchema } from './payment-execution-domain';
+import {
+  command,
+  executionSchema,
+  paymentMessage,
+} from './payment-execution-domain';
 import {
   GetCommand,
   TransactWriteCommand,
@@ -76,6 +80,10 @@ export class PaymentRepository {
       'retrieveConfirmationToken'
     >,
     private readonly providerScope = 'dev:local',
+    private readonly admissionEnabled = false,
+    private readonly dispatch?: (
+      message: import('./payment-execution-domain').PaymentMessage,
+    ) => Promise<void>,
   ) {
     if (!catalog || !commerce || !operations)
       throw new Error('Payment tables required');
@@ -147,6 +155,7 @@ export class PaymentRepository {
     };
     const prior = await replay();
     if (prior) return prior;
+    if (!this.admissionEnabled) throw new CartError('PAYMENTS_DISABLED');
     freshKey(key.issuedAt, this.runtime.now());
     const cart = await this.authorized(request.cartId, request.tokenHash);
     if (cart.paymentGraceUsed) throw new CartError('PAYMENT_ALREADY_STARTED');
@@ -428,6 +437,16 @@ export class PaymentRepository {
         new TransactWriteCommand({ TransactItems: actions }),
         { abortSignal: AbortSignal.timeout(1500) },
       );
+      for (const [row, kind] of [
+        [work.workflow, 'WORKFLOW'],
+        [work.deadline, 'PAYMENT'],
+      ] as const) {
+        try {
+          await this.dispatch?.(paymentMessage({ ...row, revision: 0 }, kind));
+        } catch {
+          /* durable work remains authoritative */
+        }
+      }
       return response;
     } catch (error) {
       const committed = await replay();

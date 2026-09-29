@@ -1,0 +1,312 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { App } from 'aws-cdk-lib';
+import { Template } from 'aws-cdk-lib/assertions';
+import { DevelopmentStack } from '../lib/development-stack';
+const t = Template.fromStack(
+  new DevelopmentStack(new App(), 'PaymentsTest', {
+    environment: 'dev',
+    env: { account: '111111111111', region: 'us-east-2' },
+  }),
+);
+const r = t.toJSON().Resources;
+const find = (prefix: string, type?: string) =>
+  Object.keys(r).find(
+    (id) => id.startsWith(prefix) && (!type || r[id].Type === type),
+  )!;
+const fn = (prefix: string) =>
+  r[find(prefix, 'AWS::Lambda::Function')].Properties;
+const statements = (prefix: string) =>
+  r[find(prefix, 'AWS::IAM::Policy')].Properties.PolicyDocument
+    .Statement as any[];
+const arn = (id: string) => ({ 'Fn::GetAtt': [id, 'Arn'] });
+const parameter = (name: string) => ({
+  'Fn::Join': [
+    '',
+    [
+      'arn:',
+      { Ref: 'AWS::Partition' },
+      `:ssm:us-east-2:111111111111:parameter/batch-and-batter/dev/stripe/${name}`,
+    ],
+  ],
+});
+
+test('admission is literally false; account bootstrap empty; app settings exact', () => {
+  const a = fn('ApplicationApi');
+  assert.equal(a.Timeout, 15);
+  assert.equal(a.MemorySize, 256);
+  assert.equal(a.Environment.Variables.PAYMENT_START_ENABLED, 'false');
+  assert.equal(a.Environment.Variables.STRIPE_ENVIRONMENT, 'dev');
+  assert.equal(t.toJSON().Parameters.StripeSandboxAccountId.Default, '');
+});
+test('payment queues have exact retention visibility SSE and redrive', () => {
+  const q = r[find('PaymentQueue', 'AWS::SQS::Queue')].Properties;
+  const d = r[find('PaymentDeadLetterQueue')].Properties;
+  assert.equal(q.QueueName, 'batch-and-batter-dev-payment');
+  assert.equal(q.VisibilityTimeout, 180);
+  assert.equal(q.MessageRetentionPeriod, 345600);
+  assert.equal(q.SqsManagedSseEnabled, true);
+  assert.equal(q.FifoQueue, undefined);
+  assert.deepEqual(q.RedrivePolicy, {
+    deadLetterTargetArn: arn(find('PaymentDeadLetterQueue')),
+    maxReceiveCount: 5,
+  });
+  assert.equal(d.MessageRetentionPeriod, 1209600);
+  assert.equal(d.SqsManagedSseEnabled, true);
+});
+test('dedicated worker and webhook resource bounds and mapping are exact', () => {
+  for (const [prefix, timeout, handler] of [
+    ['PaymentWorker', 30, 'payment-worker-handler.handler'],
+    ['StripeWebhook', 10, 'stripe-webhook-handler.handler'],
+  ] as const) {
+    const p = fn(prefix);
+    assert.equal(p.Timeout, timeout);
+    assert.equal(p.MemorySize, 256);
+    assert.equal(p.ReservedConcurrentExecutions, 2);
+    assert.equal(p.Runtime, 'nodejs24.x');
+    assert.equal(p.Handler, handler);
+    assert.notDeepEqual(p.Role, fn('CartExpiryWorker').Role);
+    assert.equal(r[find(`${prefix}LogGroup`)].Properties.RetentionInDays, 14);
+  }
+  const { Tags: _tags, ...mapping } = r.PaymentQueueMapping.Properties;
+  assert.deepEqual(mapping, {
+    BatchSize: 1,
+    Enabled: true,
+    EventSourceArn: arn(find('PaymentQueue', 'AWS::SQS::Queue')),
+    FunctionName: { Ref: find('PaymentWorker', 'AWS::Lambda::Function') },
+    FunctionResponseTypes: ['ReportBatchItemFailures'],
+    MaximumBatchingWindowInSeconds: 0,
+    ScalingConfig: { MaximumConcurrency: 2 },
+  });
+});
+test('each payment principal has only its exact parameter and constrained decrypt', () => {
+  for (const [prefix, suffix, envName] of [
+    [
+      'ApplicationRoleDefaultPolicy',
+      'payment-read-key',
+      'STRIPE_READ_KEY_PARAMETER',
+    ],
+    [
+      'PaymentWorkerRoleDefaultPolicy',
+      'payment-worker-key',
+      'STRIPE_WORKER_KEY_PARAMETER',
+    ],
+    [
+      'StripeWebhookRoleDefaultPolicy',
+      'webhook-signing-secret',
+      'STRIPE_WEBHOOK_SECRET_PARAMETER',
+    ],
+  ] as const) {
+    const s = statements(prefix);
+    assert.deepEqual(
+      s.filter((x) => String(x.Action).startsWith('ssm:')),
+      [
+        {
+          Action: 'ssm:GetParameter',
+          Effect: 'Allow',
+          Resource: parameter(suffix),
+        },
+      ],
+    );
+    assert.deepEqual(
+      s.filter((x) => String(x.Action).startsWith('kms:')),
+      [
+        {
+          Action: 'kms:Decrypt',
+          Effect: 'Allow',
+          Resource: arn(find('StripeParameterKey', 'AWS::KMS::Key')),
+          Condition: {
+            StringEquals: {
+              'kms:ViaService': 'ssm.us-east-2.amazonaws.com',
+              'kms:EncryptionContext:PARAMETER_ARN': parameter(suffix),
+            },
+          },
+        },
+      ],
+    );
+    const f = fn(
+      prefix.startsWith('Application')
+        ? 'ApplicationApi'
+        : prefix.split('Role')[0],
+    );
+    assert.equal(
+      f.Environment.Variables[envName],
+      `/batch-and-batter/dev/stripe/${suffix}`,
+    );
+    assert.equal(
+      Object.keys(f.Environment.Variables).filter((k) => /PARAMETER$/.test(k))
+        .length,
+      1,
+    );
+  }
+});
+test('financial worker and webhook business IAM exactly match approved authority', () => {
+  const expected = (table: string, Action: string[]) => ({
+    Effect: 'Allow',
+    Action,
+    Resource: arn(find(table, 'AWS::DynamoDB::Table')),
+  });
+  assert.deepEqual(
+    statements('PaymentWorkerRoleDefaultPolicy').filter((s) =>
+      String(s.Action).includes('dynamodb:'),
+    ),
+    [
+      expected('CatalogTable', ['dynamodb:GetItem', 'dynamodb:PutItem']),
+      expected('CommerceTable', [
+        'dynamodb:GetItem',
+        'dynamodb:PutItem',
+        'dynamodb:ConditionCheckItem',
+      ]),
+      expected('OperationsTable', [
+        'dynamodb:GetItem',
+        'dynamodb:PutItem',
+        'dynamodb:DeleteItem',
+        'dynamodb:ConditionCheckItem',
+      ]),
+    ],
+  );
+  assert.deepEqual(
+    statements('StripeWebhookRoleDefaultPolicy').filter((s) =>
+      String(s.Action).includes('dynamodb:'),
+    ),
+    [expected('OperationsTable', ['dynamodb:GetItem', 'dynamodb:PutItem'])],
+  );
+  assert.deepEqual(
+    statements('PaymentWorkerRoleDefaultPolicy').filter((s) =>
+      String(s.Action).includes('sqs:'),
+    ),
+    [
+      {
+        Action: [
+          'sqs:ReceiveMessage',
+          'sqs:DeleteMessage',
+          'sqs:GetQueueAttributes',
+          'sqs:SendMessage',
+        ],
+        Effect: 'Allow',
+        Resource: arn(find('PaymentQueue', 'AWS::SQS::Queue')),
+      },
+    ],
+  );
+});
+test('shopping worker is isolated; reconciler financial authority is queue-send only', () => {
+  for (const prefix of ['CartExpiryWorker', 'CartExpiryReconciler']) {
+    assert.doesNotMatch(
+      JSON.stringify(statements(`${prefix}RoleDefaultPolicy`)),
+      /ssm:|kms:/,
+    );
+    assert.doesNotMatch(JSON.stringify(fn(prefix).Environment), /STRIPE/);
+  }
+  assert.doesNotMatch(
+    JSON.stringify(statements('CartExpiryWorkerRoleDefaultPolicy')),
+    /PaymentQueue/,
+  );
+  const financial = statements('CartExpiryReconcilerRoleDefaultPolicy').filter(
+    (s) => JSON.stringify(s).includes('PaymentQueue'),
+  );
+  assert.deepEqual(financial, [
+    {
+      Effect: 'Allow',
+      Action: 'sqs:SendMessage',
+      Resource: arn(find('PaymentQueue', 'AWS::SQS::Queue')),
+    },
+  ]);
+});
+test('payment routes have NONE auth and webhook targets only the dedicated Lambda', () => {
+  for (const route of [
+    'POST /webhooks/stripe',
+    'POST /carts/{cartId}/payment/start',
+    'POST /carts/{cartId}/payment/confirm',
+    'GET /carts/{cartId}/payment',
+  ]) {
+    const entry: any = Object.values(r).find(
+      (x: any) =>
+        x.Type === 'AWS::ApiGatewayV2::Route' &&
+        x.Properties.RouteKey === route,
+    );
+    assert.equal(entry.Properties.AuthorizationType, 'NONE');
+    assert.equal(entry.Properties.AuthorizerId, undefined);
+    const integration = entry.Properties.Target['Fn::Join'][1][1].Ref;
+    assert.deepEqual(
+      r[integration].Properties.IntegrationUri,
+      arn(
+        find(
+          route.includes('webhooks') ? 'StripeWebhook' : 'ApplicationApi',
+          'AWS::Lambda::Function',
+        ),
+      ),
+    );
+  }
+});
+test('CMK retained with rotation; no parameters or subscriptions or runtime Scan', () => {
+  const key = r[find('StripeParameterKey', 'AWS::KMS::Key')];
+  assert.equal(key.DeletionPolicy, 'Retain');
+  assert.equal(key.UpdateReplacePolicy, 'Retain');
+  assert.equal(key.Properties.EnableKeyRotation, true);
+  assert.equal(
+    r[find('StripeParameterKeyAlias')].Properties.AliasName,
+    'alias/batch-and-batter-dev-stripe',
+  );
+  t.resourceCountIs('AWS::SSM::Parameter', 0);
+  t.resourceCountIs('AWS::SNS::Subscription', 0);
+  for (const p of Object.values(t.findResources('AWS::IAM::Policy')))
+    assert.doesNotMatch(
+      JSON.stringify(p),
+      /dynamodb:(Scan|UpdateItem|BatchWriteItem|\*)|ssm:GetParametersByPath|kms:\*/,
+    );
+  assert.doesNotMatch(
+    JSON.stringify(t.toJSON()),
+    /rk_test_|sk_live_|whsec_|client_secret/,
+  );
+});
+test('all 17 financial alarms publish to unsubscribed topic with bounded dimensions and heartbeat semantics', () => {
+  const alarms = Object.entries(r).filter(
+    ([id, x]: any) =>
+      id.startsWith('Payment') && x.Type === 'AWS::CloudWatch::Alarm',
+  );
+  assert.equal(alarms.length, 17);
+  for (const [, entry] of alarms as any[]) {
+    const p = entry.Properties;
+    assert.deepEqual(p.AlarmActions, [
+      { Ref: find('PaymentAlerts', 'AWS::SNS::Topic') },
+    ]);
+    assert.doesNotMatch(
+      JSON.stringify(p.Dimensions ?? p.Metrics),
+      /cartId|orderId|attemptId/,
+    );
+    assert.equal(
+      p.TreatMissingData,
+      p.AlarmName.endsWith('-Heartbeat') ? 'breaching' : 'notBreaching',
+    );
+  }
+  assert.equal(
+    r[find('PaymentHeartbeatAlarm')].Properties.EvaluationPeriods,
+    3,
+  );
+  assert.equal(
+    r[find('PaymentWorkflowOverdueAlarm')].Properties.Threshold,
+    60000,
+  );
+  assert.equal(
+    r[find('PaymentWorkflowOverdueAlarm')].Properties.EvaluationPeriods,
+    2,
+  );
+});
+
+test('SNS delivery policy limits CloudWatch to the account and payment alarm prefix', () => {
+  const policy: any = Object.values(
+    t.findResources('AWS::SNS::TopicPolicy'),
+  )[0];
+  const statement = policy.Properties.PolicyDocument.Statement.find(
+    (s: any) => s.Principal.Service === 'cloudwatch.amazonaws.com',
+  );
+  assert.equal(statement.Action, 'sns:Publish');
+  assert.equal(
+    statement.Condition.StringEquals['aws:SourceAccount'],
+    '111111111111',
+  );
+  assert.match(
+    JSON.stringify(statement.Condition.ArnLike['aws:SourceArn']),
+    /:alarm:batch-and-batter-dev-payment-\*/,
+  );
+});

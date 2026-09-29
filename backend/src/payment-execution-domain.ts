@@ -1,3 +1,4 @@
+import { monitoringSchema } from './payment-metrics';
 import { z } from 'zod';
 import { hash } from './cart-domain';
 import { idSchema } from './domain';
@@ -197,6 +198,7 @@ export const executionSchema = z
 export type Execution = z.infer<typeof executionSchema>;
 export type Command = z.infer<typeof commandSchema>;
 export const workflowSchema = z.strictObject({
+  monitoring: monitoringSchema.optional(),
   schemaVersion: z.literal(3),
   deadlineType: z.literal('PAYMENT_WORKFLOW'),
   cartId: idSchema,
@@ -272,10 +274,12 @@ export const nextWorkflow = (
   step: z.infer<typeof stages>,
   now: number,
   createdAt: string,
+  monitoring?: z.infer<typeof monitoringSchema>,
 ) => {
   const deadline = new Date(now).toISOString();
   return {
     ...workflowSchema.parse({
+      ...(monitoring ? { monitoring } : {}),
       schemaVersion: 3,
       deadlineType: 'PAYMENT_WORKFLOW',
       cartId,

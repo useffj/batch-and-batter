@@ -89,8 +89,8 @@ test('three on-demand tables have only the approved string PK/SK foundation', ()
   }
 });
 
-test('application Node 24 Lambda preserves its identity and serves exactly the twenty-four approved routes', () => {
-  template.resourceCountIs('AWS::Lambda::Function', 3);
+test('application Node 24 Lambda preserves its identity and serves exactly the twenty-eight approved routes', () => {
+  template.resourceCountIs('AWS::Lambda::Function', 5);
   template.hasResourceProperties('AWS::Lambda::Function', {
     Runtime: 'nodejs24.x',
     Handler: 'handler.handler',
@@ -99,7 +99,7 @@ test('application Node 24 Lambda preserves its identity and serves exactly the t
   template.hasResourceProperties('AWS::ApiGatewayV2::Api', {
     ProtocolType: 'HTTP',
   });
-  template.resourceCountIs('AWS::ApiGatewayV2::Route', 24);
+  template.resourceCountIs('AWS::ApiGatewayV2::Route', 28);
   const functionId = Object.keys(
     template.findResources('AWS::Lambda::Function'),
   )[0];
@@ -111,6 +111,10 @@ test('application Node 24 Lambda preserves its identity and serves exactly the t
     routes.map((route) => route.Properties.RouteKey).sort(),
     [
       ...compositionRoutes,
+      'POST /webhooks/stripe',
+      'POST /carts/{cartId}/payment/start',
+      'POST /carts/{cartId}/payment/confirm',
+      'GET /carts/{cartId}/payment',
       'POST /carts',
       'GET /carts/{cartId}',
       'PUT /carts/{cartId}/items',
@@ -222,15 +226,15 @@ test('media is private, encrypted, owner controlled and denies insecure transpor
 });
 
 test('Lambda has only scoped logging and the exact Catalog composition permissions', () => {
-  template.resourceCountIs('AWS::Logs::LogGroup', 4);
+  template.resourceCountIs('AWS::Logs::LogGroup', 6);
   template.hasResourceProperties('AWS::Logs::LogGroup', {
     RetentionInDays: 14,
   });
-  template.resourceCountIs('AWS::IAM::Role', 5);
+  template.resourceCountIs('AWS::IAM::Role', 7);
   template.hasResourceProperties('AWS::IAM::Role', {
     ManagedPolicyArns: Match.absent(),
   });
-  template.resourceCountIs('AWS::IAM::Policy', 5);
+  template.resourceCountIs('AWS::IAM::Policy', 7);
   const policies = template.findResources('AWS::IAM::Policy');
   const statements = Object.values(policies)
     .find((p) =>
@@ -316,8 +320,8 @@ test('stateful development resources carry project/environment tags and removal 
       );
     }
   }
-  template.resourceCountIs('AWS::SQS::Queue', 4);
-  template.resourceCountIs('AWS::Lambda::EventSourceMapping', 1);
+  template.resourceCountIs('AWS::SQS::Queue', 6);
+  template.resourceCountIs('AWS::Lambda::EventSourceMapping', 2);
   template.resourceCountIs('AWS::Scheduler::Schedule', 1);
 });
 
@@ -460,13 +464,20 @@ test('tables, pool including MFA, client and JWT authorizer exactly preserve the
 });
 
 test('every route integration invokes only the existing Lambda through route-scoped API Gateway permissions', () => {
-  template.resourceCountIs('AWS::ApiGatewayV2::Integration', 24);
-  template.resourceCountIs('AWS::Lambda::Permission', 24);
+  template.resourceCountIs('AWS::ApiGatewayV2::Integration', 28);
+  template.resourceCountIs('AWS::Lambda::Permission', 28);
   for (const resource of Object.values(
     template.findResources('AWS::ApiGatewayV2::Integration'),
   )) {
     assert.deepEqual(resource.Properties.IntegrationUri, {
-      'Fn::GetAtt': ['ApplicationApi5D63FF39', 'Arn'],
+      'Fn::GetAtt': [
+        JSON.stringify(resource).includes('StripeWebhook')
+          ? Object.keys(template.findResources('AWS::Lambda::Function')).find(
+              (id) => id.startsWith('StripeWebhook'),
+            )!
+          : 'ApplicationApi5D63FF39',
+        'Arn',
+      ],
     });
     assert.equal(resource.Properties.IntegrationType, 'AWS_PROXY');
   }
@@ -496,7 +507,16 @@ test('every route integration invokes only the existing Lambda through route-sco
     assert.equal(resource.Properties.Principal, 'apigateway.amazonaws.com');
     assert.equal(resource.Properties.Action, 'lambda:InvokeFunction');
     assert.deepEqual(resource.Properties.FunctionName, {
-      'Fn::GetAtt': ['ApplicationApi5D63FF39', 'Arn'],
+      'Fn::GetAtt': [
+        JSON.stringify(resource.Properties.FunctionName).includes(
+          'StripeWebhook',
+        )
+          ? Object.keys(template.findResources('AWS::Lambda::Function')).find(
+              (id) => id.startsWith('StripeWebhook'),
+            )!
+          : 'ApplicationApi5D63FF39',
+        'Arn',
+      ],
     });
   }
 });
@@ -533,6 +553,28 @@ test('Phase 5A2 changes only approved properties of Phase 5A1 resources', () => 
       );
     } else if (id === 'ReservationQueue43323CC1')
       expected.Properties.VisibilityTimeout = 60;
+    if (id === 'ApplicationApi5D63FF39') {
+      expected.Properties.MemorySize = 256;
+      expected.Properties.Timeout = 15;
+      for (const name of [
+        'PAYMENT_START_ENABLED',
+        'STRIPE_ENVIRONMENT',
+        'STRIPE_ACCOUNT_ID',
+        'STRIPE_READ_KEY_PARAMETER',
+        'PAYMENT_QUEUE_URL',
+      ])
+        expected.Properties.Environment.Variables[name] =
+          actual.Properties.Environment.Variables[name];
+    }
+    if (id.startsWith('ApplicationRoleDefaultPolicy')) {
+      assert.equal(
+        actual.Properties.PolicyDocument.Statement.length,
+        expected.Properties.PolicyDocument.Statement.length + 4,
+      );
+      expected.Properties.PolicyDocument.Statement.push(
+        ...actual.Properties.PolicyDocument.Statement.slice(-4),
+      );
+    }
     assert.deepEqual(actual, expected, `Unapproved resource change: ${id}`);
   }
   const added = Object.entries(current)
@@ -542,13 +584,21 @@ test('Phase 5A2 changes only approved properties of Phase 5A1 resources', () => 
   assert.deepEqual(
     added,
     [
-      ...Array(14).fill('AWS::CloudWatch::Alarm'),
-      ...Array(3).fill('AWS::IAM::Policy'),
-      ...Array(3).fill('AWS::IAM::Role'),
+      ...Array(31).fill('AWS::CloudWatch::Alarm'),
+      ...Array(4).fill('AWS::ApiGatewayV2::Route'),
+      ...Array(4).fill('AWS::ApiGatewayV2::Integration'),
+      ...Array(4).fill('AWS::Lambda::Permission'),
+      ...Array(2).fill('AWS::SQS::Queue'),
+      'AWS::KMS::Key',
+      'AWS::KMS::Alias',
+      'AWS::SNS::Topic',
+      'AWS::SNS::TopicPolicy',
+      ...Array(5).fill('AWS::IAM::Policy'),
+      ...Array(5).fill('AWS::IAM::Role'),
       'AWS::Lambda::EventInvokeConfig',
-      'AWS::Lambda::EventSourceMapping',
-      ...Array(2).fill('AWS::Lambda::Function'),
-      ...Array(2).fill('AWS::Logs::LogGroup'),
+      ...Array(2).fill('AWS::Lambda::EventSourceMapping'),
+      ...Array(4).fill('AWS::Lambda::Function'),
+      ...Array(4).fill('AWS::Logs::LogGroup'),
       'AWS::Scheduler::Schedule',
       'AWS::Scheduler::ScheduleGroup',
     ].sort(),
@@ -617,7 +667,7 @@ test('automatic opening has exact group trust, minimal policies and bounded asyn
   });
   const applicationPolicy = policies.find((p) => p !== schedulerPolicy)!;
   const statements = applicationPolicy.Properties.PolicyDocument.Statement;
-  assert.equal(statements.length, 8);
+  assert.equal(statements.length, 12);
   assert.deepEqual(statements.slice(0, 2), [
     {
       Action: ['scheduler:CreateSchedule', 'scheduler:GetSchedule'],
@@ -752,6 +802,7 @@ test('expiry worker, recovery, IAM and notification-free alarms are narrowly bou
       ],
       [['sqs:SendMessage'], 'ReservationQueue43323CC1'],
       [['sqs:SendMessage'], find('ReservationDeadLetterQueue')],
+      [['sqs:SendMessage'], find('PaymentQueue')],
     ],
     CartExpiryRecoveryRoleDefaultPolicy: [
       [['lambda:InvokeFunction'], reconcilerId],
@@ -781,9 +832,10 @@ test('expiry worker, recovery, IAM and notification-free alarms are narrowly bou
   for (const alarm of Object.values(
     template.findResources('AWS::CloudWatch::Alarm'),
   )) {
-    assert.equal(alarm.Properties.AlarmActions, undefined);
+    if (alarm.Properties.AlarmName.includes('-cart-expiry-'))
+      assert.equal(alarm.Properties.AlarmActions, undefined);
     assert.equal(alarm.Properties.OKActions, undefined);
   }
-  template.resourceCountIs('AWS::SNS::Topic', 0);
+  template.resourceCountIs('AWS::SNS::Topic', 1);
   template.resourceCountIs('AWS::SNS::Subscription', 0);
 });

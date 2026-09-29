@@ -1,5 +1,5 @@
 import type { PaymentCustomer } from './payment-workflow';
-// LOCAL ONLY: deliberately not imported by api.ts/handler.ts and has no CDK route.
+// Shared HTTP contract; production construction keeps new admission disabled by default.
 import { z } from 'zod';
 import { CartError, secretHash } from './cart-domain';
 import { idSchema } from './domain';
