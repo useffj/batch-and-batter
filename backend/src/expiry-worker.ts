@@ -1,3 +1,4 @@
+import { paymentWakeupSchema } from './payment-domain';
 import { z } from 'zod';
 import {
   expiryDelay,
@@ -49,7 +50,10 @@ export function createExpiryWorker(
     const r = record.data;
     let safe: { cartId?: string; deadline?: string } = {};
     try {
-      const message = expiryMessageSchema.parse(JSON.parse(r.body));
+      const body: unknown = JSON.parse(r.body);
+      if (paymentWakeupSchema.safeParse(body).success)
+        throw new ExpiryFailure('PAYMENT_NOT_ENABLED');
+      const message = expiryMessageSchema.parse(body);
       safe = { cartId: message.cartId, deadline: message.deadline };
       const result = await repository.expire(
         message,

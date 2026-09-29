@@ -31,7 +31,11 @@ export type ExpiryResult = {
 export class ExpiryFailure extends Error {
   constructor(
     public readonly code:
-      'INVALID_STATE' | 'MISSING_CART' | 'RETRY_EXHAUSTED' | 'INVALID_WORK',
+      | 'INVALID_STATE'
+      | 'MISSING_CART'
+      | 'RETRY_EXHAUSTED'
+      | 'INVALID_WORK'
+      | 'PAYMENT_NOT_ENABLED',
   ) {
     super(code);
   }
@@ -225,11 +229,14 @@ export class ExpiryRepository {
         }
         return {
           outcome:
-            cart.status !== 'ACTIVE'
-              ? 'terminal'
-              : !sameDeadline
-                ? 'obsolete'
-                : 'expired',
+            cart.status === 'PAYMENT_PENDING' ||
+            cart.status === 'PAYMENT_COMMITTING'
+              ? 'obsolete'
+              : cart.status !== 'ACTIVE'
+                ? 'terminal'
+                : !sameDeadline
+                  ? 'obsolete'
+                  : 'expired',
           attempts: attempt + 1,
           lateness,
         };

@@ -1,3 +1,8 @@
+import {
+  paymentWorkSchema,
+  workflowWorkSchema,
+  paymentWorkKey,
+} from './payment-domain';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import {
@@ -48,6 +53,7 @@ export class ExpiryReconciler {
         ),
       };
     };
+    let deferredPayment = 0;
     let examined = 0,
       sent = 0,
       failures = 0,
@@ -141,8 +147,18 @@ export class ExpiryReconciler {
             const { PK, SK, ...data } = row;
             const actualKey = keySchema.parse({ PK, SK });
             if (PK !== pk) throw new Error('Invalid query key');
+            const payment = paymentWorkSchema
+              .or(workflowWorkSchema)
+              .safeParse(data);
             const work = expiryWorkSchema.safeParse(data);
             if (
+              payment.success &&
+              JSON.stringify(paymentWorkKey(payment.data)) ===
+                JSON.stringify(actualKey)
+            ) {
+              // Foundation only: retain recognizable work, never pretend financial processing succeeded.
+              deferredPayment++;
+            } else if (
               !work.success ||
               JSON.stringify(
                 expiryKey(work.data.cartId, work.data.deadline),
@@ -206,6 +222,7 @@ export class ExpiryReconciler {
       failures ? 'partial_failure' : 'complete',
       {
         ReconcileHeartbeat: 1,
+        PaymentWorkDeferred: deferredPayment,
         ReconcileFailure: failures,
         InvalidWork: invalid,
         Examined: examined,
