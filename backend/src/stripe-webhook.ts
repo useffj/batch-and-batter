@@ -231,6 +231,8 @@ export class StripeInbox {
       receipt.work.SK !== message.SK
     )
       throw new Error('INBOX_CONFLICT');
+    const financial = await workflow.processFinancialInbox?.(receipt, message);
+    if (financial !== undefined) return financial;
     const p = await workflow.provider.retrieveIntent(receipt.intentId);
     const attempt = await workflow.attempt(p.metadata.paymentAttemptId);
     if (!attempt?.execution || attempt.execution.scope !== this.scope)

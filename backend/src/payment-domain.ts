@@ -2,6 +2,7 @@ import { z } from 'zod';
 import {
   confirmationTokenId,
   executionSchema,
+  settlementSchema,
 } from './payment-execution-domain';
 import {
   cartSchema,
@@ -38,6 +39,7 @@ export const startPaymentSchema = z.strictObject({
 export type CheckoutInput = z.infer<typeof startPaymentSchema>;
 export const paymentAttemptSchema = z.strictObject({
   execution: executionSchema.optional(),
+  settlement: settlementSchema.optional(),
   paymentAttemptId: idSchema,
   cartId: idSchema,
   orderId: idSchema,
@@ -53,8 +55,21 @@ export const orderSchema = z
     orderId: idSchema,
     cartId: idSchema,
     dropId: idSchema,
-    status: z.literal('PAYMENT_PENDING'),
-    paymentStatus: z.literal('CREATED'),
+    status: z.enum([
+      'PAYMENT_PENDING',
+      'PAID',
+      'EXPIRED',
+      'FAILED',
+      'CANCELLED',
+    ]),
+    settlement: settlementSchema.optional(),
+    paymentStatus: z.enum([
+      'CREATED',
+      'CAPTURED',
+      'EXPIRED',
+      'FAILED',
+      'CANCELLED',
+    ]),
     paymentAttemptId: idSchema,
     items: z
       .array(

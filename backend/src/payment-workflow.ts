@@ -89,6 +89,10 @@ export function validIntent(e: Execution, p: IntentSnapshot) {
   );
 }
 export class PaymentWorkflow {
+  processFinancialInbox?: (
+    receipt: z.infer<typeof import('./stripe-webhook').eventReceiptSchema>,
+    message: PaymentMessage,
+  ) => Promise<string | undefined>;
   constructor(
     readonly client: PaymentClient,
     readonly commerce: string,
@@ -150,13 +154,26 @@ export class PaymentWorkflow {
     if (
       !cart ||
       !order ||
-      cart.status !== 'PAYMENT_PENDING' ||
+      !['PAYMENT_PENDING', 'PAYMENT_COMMITTING'].includes(cart.status) ||
+      order.status !== 'PAYMENT_PENDING' ||
+      order.paymentStatus !== 'CREATED' ||
       cart.paymentAttemptId !== a.paymentAttemptId ||
       cart.orderId !== a.orderId ||
       cart.dropId !== a.dropId ||
       order.dropId !== a.dropId ||
       order.paymentAttemptId !== a.paymentAttemptId ||
       order.cartId !== a.cartId ||
+      order.items.length !== cart.items.length ||
+      cart.items.some(
+        (line) =>
+          !order.items.some(
+            (item) =>
+              item.productId === line.productId &&
+              item.quantity === line.quantity &&
+              item.unitPriceCents === line.priceCents &&
+              item.cookieUnits === line.cookieUnits,
+          ),
+      ) ||
       order.totalCents !== a.amountCents ||
       order.currency !== a.currency ||
       e.parameters.amountCents !== a.amountCents ||
@@ -167,7 +184,7 @@ export class PaymentWorkflow {
       e.parameters.metadata.paymentAttemptId !== a.paymentAttemptId
     )
       throw new WorkflowError('INVALID_AUTHORITY');
-    return { a, e, cart, work, message };
+    return { a, e, cart, order, work, message };
   }
   async advance(
     state: NonNullable<Awaited<ReturnType<PaymentWorkflow['load']>>>,
@@ -182,6 +199,7 @@ export class PaymentWorkflow {
       kind: c.kind,
       generation: c.generation,
       createdAt: c.createdAt,
+      preparedAt: c.preparedAt,
       retryUntil: c.retryUntil,
       intentId: c.intentId,
     });
@@ -269,7 +287,7 @@ export class PaymentWorkflow {
           },
           ExpressionAttributeValues: {
             ':updated': cart.updatedAt,
-            ':status': 'PAYMENT_PENDING',
+            ':status': cart.status,
           },
         },
       },
@@ -353,7 +371,12 @@ export class PaymentWorkflow {
     const next = {
       ...state.e,
       intentId: p.id,
-      create: { ...state.e.create, state: 'OBSERVED' as const },
+      create: {
+        ...state.e.create,
+        state: 'OBSERVED' as const,
+        observedAt: new Date(this.now()).toISOString(),
+        outcome: p.status,
+      },
       stage: 'CONFIRM' as const,
       confirmations: [
         command('CONFIRM', state.a.paymentAttemptId, 0, this.now(), p.id),
@@ -582,7 +605,12 @@ export class PaymentCustomer {
     const a = cart.paymentAttemptId
       ? await w.attempt(cart.paymentAttemptId)
       : undefined;
-    if (!a?.execution || a.cartId !== cartId || a.orderId !== cart.orderId)
+    if (
+      !a?.execution ||
+      a.execution.scope !== w.scope ||
+      a.cartId !== cartId ||
+      a.orderId !== cart.orderId
+    )
       throw new CartError('CART_CONFLICT');
     return { cart, a, e: a.execution };
   }
@@ -590,6 +618,9 @@ export class PaymentCustomer {
     const { cart, a, e } = await this.authorized(cartId, tokenHash);
     let clientSecret: string | null = null;
     const canAct =
+      cart.status === 'PAYMENT_PENDING' &&
+      !e.admissionClosedAt &&
+      !e.recoveryRequired &&
       this.workflow.now() < Date.parse(cart.paymentDeadline!) &&
       e.stage === 'WAIT_FOR_CUSTOMER_ACTION';
     if (canAct && e.intentId) {
@@ -603,11 +634,20 @@ export class PaymentCustomer {
       payment: {
         orderId: a.orderId,
         paymentAttemptId: a.paymentAttemptId,
-        status: canAct
-          ? 'action_required'
-          : e.stage === 'CREATE_INTENT' || e.stage === 'BIND_INTENT'
-            ? 'payment_pending'
-            : 'processing',
+        status:
+          cart.status === 'CONVERTED' && a.status === 'CAPTURED'
+            ? 'paid'
+            : cart.status === 'EXPIRED'
+              ? 'expired'
+              : cart.status === 'CANCELLED'
+                ? a.status === 'FAILED'
+                  ? 'failed'
+                  : 'cancelled'
+                : canAct
+                  ? 'action_required'
+                  : e.stage === 'CREATE_INTENT' || e.stage === 'BIND_INTENT'
+                    ? 'payment_pending'
+                    : 'processing',
         paymentDeadline: cart.paymentDeadline!,
         continuationGeneration: e.confirmations.length,
         ...(clientSecret ? { clientSecret } : {}),
@@ -658,6 +698,9 @@ export class PaymentCustomer {
     )
       throw new CartError('CART_CONFLICT');
     if (
+      cart.status !== 'PAYMENT_PENDING' ||
+      !!e.admissionClosedAt ||
+      !!e.recoveryRequired ||
       w.now() >= Date.parse(cart.paymentDeadline!) ||
       request.continuationGeneration !== e.confirmations.length ||
       request.continuationGeneration >= 8 ||

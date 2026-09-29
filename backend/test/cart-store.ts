@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { isDeepStrictEqual } from 'node:util';
 import {
   GetCommand,
   QueryCommand,
@@ -201,7 +202,7 @@ export class CartStore {
           const actual = row?.[names[match[1]]],
             expected = values[match[3]];
           return match[2] === '='
-            ? actual === expected
+            ? isDeepStrictEqual(actual, expected)
             : actual !== undefined &&
                 (match[2] === '>' ? actual > expected : actual <= expected);
         });

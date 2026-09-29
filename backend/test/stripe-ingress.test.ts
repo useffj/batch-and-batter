@@ -335,12 +335,32 @@ test('SDK timeout makes exactly one transport attempt and strips raw error', asy
   });
   assert.equal(t.requests.length, 1);
 });
-test('restricted read adapter has no financial commands; capture/cancel adapter disabled', async () => {
+test('restricted read adapter has no financial commands; invalid financial commands never reach transport', async () => {
   const t = transportFixture();
   assert.equal('createIntent' in t.reader, false);
   assert.equal('confirmIntent' in t.reader, false);
-  await assert.rejects(t.provider.captureIntent(), /PHASE_DISABLED/);
-  await assert.rejects(t.provider.cancelIntent(), /PHASE_DISABLED/);
+  await assert.rejects(
+    t.provider.captureIntent({
+      intentId: 'pi_Invalid',
+      paymentAttemptId: 'invalid',
+      orderId: 'invalid',
+      amountCents: 0,
+      currency: 'usd',
+      idempotencyKey: 'invalid',
+    }),
+    /PROVIDER_INVALID/,
+  );
+  await assert.rejects(
+    t.provider.cancelIntent({
+      intentId: 'pi_Invalid',
+      paymentAttemptId: 'invalid',
+      orderId: 'invalid',
+      amountCents: 0,
+      currency: 'usd',
+      idempotencyKey: 'invalid',
+    }),
+    /PROVIDER_INVALID/,
+  );
   assert.equal(t.requests.length, 0);
   assert.throws(() => stripeClient('sk_test_' + 'SyntheticFixture'));
   assert.throws(() => stripeClient('rk_live_' + 'SyntheticFixture'));
@@ -430,4 +450,51 @@ test('inbox cannot complete if canonical workflow obligation disappears concurre
     'RECEIVED',
   );
   assert.ok(f.s.row('operations', work));
+});
+
+test('financial SDK capture uses full explicit amount, final capture and immutable key', async () => {
+  const f = await paymentFixture();
+  const t = transportFixture();
+  t.respond({
+    ...rawIntent(f.attempt().execution.parameters, 'succeeded'),
+    amount_received: 900,
+  });
+  await t.provider.captureIntent({
+    paymentAttemptId: f.cart().paymentAttemptId,
+    orderId: f.cart().orderId,
+    amountCents: 900,
+    currency: 'usd',
+    intentId: 'pi_AdapterFixture',
+    idempotencyKey: `payment-capture:${f.cart().paymentAttemptId}`,
+  });
+  assert.ok(t.requests[0].url.endsWith('/pi_AdapterFixture/capture'));
+  const body = new URLSearchParams(t.requests[0].body);
+  assert.equal(body.get('amount_to_capture'), '900');
+  assert.equal(body.get('final_capture'), 'true');
+  assert.equal(
+    t.requests[0].headers.get('Idempotency-Key'),
+    `payment-capture:${f.cart().paymentAttemptId}`,
+  );
+});
+test('financial SDK cancellation uses deterministic command and sanitized failure', async () => {
+  const f = await paymentFixture();
+  const t = transportFixture();
+  t.respond(rawIntent(f.attempt().execution.parameters, 'canceled'));
+  const c = {
+    paymentAttemptId: f.cart().paymentAttemptId,
+    orderId: f.cart().orderId,
+    amountCents: 900,
+    currency: 'usd',
+    intentId: 'pi_AdapterFixture',
+    idempotencyKey: `payment-cancel:${f.cart().paymentAttemptId}`,
+  };
+  await t.provider.cancelIntent(c);
+  assert.ok(t.requests[0].url.endsWith('/pi_AdapterFixture/cancel'));
+  assert.equal(
+    new URLSearchParams(t.requests[0].body).get('cancellation_reason'),
+    'abandoned',
+  );
+  t.fail();
+  await assert.rejects(t.provider.cancelIntent(c), /PROVIDER_UNKNOWN/);
+  assert.equal(t.requests.length, 2);
 });
