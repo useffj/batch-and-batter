@@ -1,3 +1,4 @@
+import type { PaymentCustomer } from './payment-workflow';
 // LOCAL ONLY: deliberately not imported by api.ts/handler.ts and has no CDK route.
 import { z } from 'zod';
 import { CartError, secretHash } from './cart-domain';
@@ -8,8 +9,10 @@ import type { ApiEvent, ApiResponse } from './api';
 export async function localPaymentApi(
   event: ApiEvent,
   repository: Pick<PaymentRepository, 'start' | 'get'>,
+  payment?: PaymentCustomer,
 ): Promise<ApiResponse> {
   const start = event.routeKey === 'POST /carts/{cartId}/payment/start';
+  const confirm = event.routeKey === 'POST /carts/{cartId}/payment/confirm';
   const get = event.routeKey === 'GET /carts/{cartId}/payment';
   let code: string | undefined;
   let response: ApiResponse;
@@ -26,7 +29,7 @@ export async function localPaymentApi(
   };
   try {
     if (
-      (!start && !get) ||
+      (!start && !get && !confirm) ||
       event.routeKey.split(' ')[0] !== event.requestContext.http.method
     )
       return {
@@ -36,7 +39,14 @@ export async function localPaymentApi(
       };
     const tokenHash = secretHash(header('x-cart-token'));
     const cartId = idSchema.parse(event.pathParameters?.cartId);
-    if (get)
+    if (get && payment) {
+      const result = await payment.get(cartId, tokenHash);
+      response = {
+        statusCode: 200,
+        headers: { ...headers, etag: result.etag },
+        body: JSON.stringify({ payment: result.payment }),
+      };
+    } else if (get)
       response = {
         statusCode: 200,
         headers,
@@ -57,6 +67,32 @@ export async function localPaymentApi(
         );
       } catch {
         throw new CartError('VALIDATION_ERROR');
+      }
+      if (confirm) {
+        if (!payment) throw new CartError('INTERNAL_ERROR');
+        const input = z
+          .strictObject({
+            continuationGeneration: z.number().int().min(1).max(7),
+          })
+          .parse(parsed);
+        const result = await payment.confirm({
+          ...input,
+          cartId,
+          tokenHash,
+          ifMatch,
+          key: header('idempotency-key') ?? '',
+        });
+        console.info(
+          JSON.stringify({
+            operation: 'confirmPayment',
+            statusCode: result.status,
+          }),
+        );
+        return {
+          statusCode: result.status,
+          headers,
+          body: JSON.stringify({ accepted: true }),
+        };
       }
       const input = startPaymentSchema.parse(parsed);
       const result = await repository.start({
@@ -92,7 +128,11 @@ export async function localPaymentApi(
   }
   console.info(
     JSON.stringify({
-      operation: start ? 'beginPayment' : 'getPayment',
+      operation: start
+        ? 'beginPayment'
+        : confirm
+          ? 'confirmPayment'
+          : 'getPayment',
       statusCode: response.statusCode,
       ...(code ? { code } : {}),
     }),

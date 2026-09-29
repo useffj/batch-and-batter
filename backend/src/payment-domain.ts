@@ -1,5 +1,9 @@
 import { z } from 'zod';
 import {
+  confirmationTokenId,
+  executionSchema,
+} from './payment-execution-domain';
+import {
   cartSchema,
   CartError,
   checkedTotal,
@@ -27,11 +31,13 @@ export const customerSchema = z.strictObject({
   smsTransactionalConsent: z.boolean(),
 });
 export const startPaymentSchema = z.strictObject({
+  confirmationTokenId,
   pickupDate: dateSchema,
   customer: customerSchema,
 });
 export type CheckoutInput = z.infer<typeof startPaymentSchema>;
 export const paymentAttemptSchema = z.strictObject({
+  execution: executionSchema.optional(),
   paymentAttemptId: idSchema,
   cartId: idSchema,
   orderId: idSchema,
