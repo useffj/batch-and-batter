@@ -31,6 +31,7 @@ export const stages = z.enum([
   'VERIFY_CAPTURE',
   'FINALIZE_ORDER',
   'RESOLVE_FAILURE',
+  'CANCEL',
   'RECOVERY_REQUIRED',
 ]);
 export const metadataSchema = z.strictObject({
@@ -55,9 +56,12 @@ export const commandSchema = z
     kind: z.enum(['CREATE', 'CONFIRM']),
     generation: z.number().int().nonnegative(),
     createdAt: canonicalTime,
+    preparedAt: canonicalTime.optional(),
     retryUntil: canonicalTime,
     state: z.enum(['PREPARED', 'DISPATCHED', 'OBSERVED']),
     dispatchedAt: canonicalTime.optional(),
+    observedAt: canonicalTime.optional(),
+    outcome: providerStatus.optional(),
     intentId: intentId.optional(),
   })
   .refine(
@@ -66,6 +70,44 @@ export const commandSchema = z
       (c.state === 'PREPARED' ? !c.dispatchedAt : !!c.dispatchedAt),
     'Invalid command timing',
   );
+export const financialCommandSchema = z
+  .strictObject({
+    id: z.string().max(200),
+    kind: z.enum(['CAPTURE', 'CANCEL']),
+    intentId,
+    amountCents: z.number().int().positive(),
+    currency: z.literal('usd'),
+    finalCapture: z.literal(true),
+    preparedAt: canonicalTime,
+    retryUntil: canonicalTime,
+    state: z.enum(['PREPARED', 'DISPATCHED', 'OBSERVED']),
+    dispatchedAt: canonicalTime.optional(),
+    observedAt: canonicalTime.optional(),
+    outcome: z.enum(['SUCCEEDED', 'CANCELED', 'UNKNOWN']).optional(),
+  })
+  .refine(
+    (c) =>
+      Date.parse(c.retryUntil) - Date.parse(c.preparedAt) ===
+        RETRY_HORIZON_MS &&
+      (c.state === 'PREPARED' ? !c.dispatchedAt : !!c.dispatchedAt),
+  );
+export const captureEvidenceSchema = z.strictObject({
+  scope: z.string(),
+  intentId,
+  amountCents: z.number().int().positive(),
+  amountReceivedCents: z.number().int().positive(),
+  currency: z.literal('usd'),
+  status: z.literal('succeeded'),
+  verifiedAt: canonicalTime,
+  commandId: z.string(),
+});
+export const settlementSchema = z.strictObject({
+  id: z.string().regex(/^[a-f0-9]{64}$/),
+  lineDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  outcome: z.enum(['PAID', 'EXPIRED', 'FAILED', 'CANCELLED']),
+  intentId: intentId.optional(),
+  amountCents: z.number().int().positive(),
+});
 export const workPointer = z.strictObject({
   PK: z.string(),
   SK: z.string(),
@@ -82,6 +124,21 @@ export const executionSchema = z
     parameters: createParameters,
     create: commandSchema,
     confirmations: z.array(commandSchema).max(8),
+    capture: financialCommandSchema.optional(),
+    cancel: financialCommandSchema.optional(),
+    captureEvidence: captureEvidenceSchema.optional(),
+    releaseEvidence: z.enum(['NEVER_DISPATCHED', 'CANCELED']).optional(),
+    terminalReason: z.enum(['EXPIRED', 'FAILED', 'CANCELLED']).optional(),
+    financialMode: z.enum(['NORMAL', 'CANCEL_ONLY', 'READ_ONLY']).optional(),
+    admissionClosedAt: canonicalTime.optional(),
+    recoveryRequired: z.literal(true).optional(),
+    recoveryStartedAt: canonicalTime.optional(),
+    lastVerifiedProviderStatus: providerStatus.optional(),
+    lastVerifiedAt: canonicalTime.optional(),
+    consecutiveReadFailures: z.number().int().nonnegative().optional(),
+    readClaimId: z.string().uuid().optional(),
+    recoveryPollCount: z.number().int().nonnegative().optional(),
+    nextCheckAt: canonicalTime.optional(),
     intentId: intentId.optional(),
     candidateIntentId: intentId.optional(),
     observedStatus: providerStatus.optional(),
@@ -94,11 +151,32 @@ export const executionSchema = z
         'DEADLINE',
         'PROVIDER_CONFLICT',
         'PROVIDER_UNKNOWN',
+        'SETTLEMENT_INVARIANT',
       ])
       .optional(),
   })
   .refine(
     (e) =>
+      (!e.capture || e.capture.kind === 'CAPTURE') &&
+      (!e.cancel || e.cancel.kind === 'CANCEL') &&
+      [e.capture, e.cancel].every(
+        (c) =>
+          !c ||
+          (c.intentId === e.intentId &&
+            c.id ===
+              `payment-${c.kind.toLowerCase()}:${e.parameters.metadata.paymentAttemptId}` &&
+            c.amountCents === e.parameters.amountCents &&
+            c.currency === e.parameters.currency),
+      ) &&
+      (!e.captureEvidence ||
+        (!!e.capture &&
+          e.capture.state === 'OBSERVED' &&
+          e.captureEvidence.commandId === e.capture.id &&
+          e.captureEvidence.intentId === e.intentId &&
+          e.captureEvidence.scope === e.scope &&
+          e.captureEvidence.amountCents === e.parameters.amountCents &&
+          e.captureEvidence.amountReceivedCents ===
+            e.parameters.amountCents)) &&
       e.create.kind === 'CREATE' &&
       e.create.generation === 0 &&
       e.create.id ===
@@ -144,7 +222,7 @@ export const associationKey = (scope: string, id: string) => ({
 export const paymentMessageSchema = z.strictObject({
   schemaVersion: z.literal(1),
   source: z.literal('batch-and-batter.payment'),
-  kind: z.enum(['WORKFLOW', 'STRIPE_EVENT']),
+  kind: z.enum(['WORKFLOW', 'STRIPE_EVENT', 'PAYMENT']),
   PK: z.string().regex(/^CART_EXPIRY#V1#0[0-9A-F]$/),
   SK: z.string().max(255),
   revision: z.number().int().nonnegative(),
@@ -157,7 +235,9 @@ export const paymentMessage = (
   schemaVersion: 1,
   source: 'batch-and-batter.payment',
   kind,
-  ...work,
+  PK: work.PK,
+  SK: work.SK,
+  revision: work.revision,
 });
 export const paymentEtag = (
   cartUpdatedAt: string,
@@ -179,6 +259,7 @@ export function command(
         ? `payment-create:${attempt}`
         : `payment-confirm:${attempt}:${generation}`,
     createdAt: new Date(now).toISOString(),
+    preparedAt: new Date(now).toISOString(),
     retryUntil: new Date(now + RETRY_HORIZON_MS).toISOString(),
     state: 'PREPARED',
     ...(id ? { intentId: id } : {}),

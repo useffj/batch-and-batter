@@ -32,6 +32,15 @@ const cartRecord = z.strictObject({
     'CANCELLED',
     'EXPIRED',
   ]),
+  settlement: z
+    .strictObject({
+      id: z.string().regex(/^[a-f0-9]{64}$/),
+      lineDigest: z.string().regex(/^[a-f0-9]{64}$/),
+      outcome: z.enum(['PAID', 'EXPIRED', 'FAILED', 'CANCELLED']),
+      intentId: z.string().optional(),
+      amountCents: positive,
+    })
+    .optional(),
   paymentGraceUsed: z.literal(true).optional(),
   paymentStartedAt: z.iso.datetime().optional(),
   paymentDeadline: z.iso.datetime().optional(),
@@ -115,6 +124,7 @@ export const shoppingExpired = (cart: Cart, now: number) =>
 export type DesiredItem = z.infer<typeof desiredItemsSchema>[number];
 export const cartDtoSchema = cartRecord.omit({
   managementTokenHash: true,
+  settlement: true,
   recoveryRequired: true,
   recoveryReason: true,
 });

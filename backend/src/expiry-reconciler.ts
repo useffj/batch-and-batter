@@ -3,6 +3,7 @@ import {
   workflowWorkSchema,
   paymentWorkKey,
 } from './payment-domain';
+import type { PaymentMessage } from './payment-execution-domain';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import {
@@ -32,6 +33,11 @@ export class ExpiryReconciler {
     private readonly operations: string,
     private readonly dispatch: ExpiryDispatch,
     private readonly runtime: ExpiryRuntime = expiryRuntime,
+    // Optional local model port. No deployed entrypoint supplies financial routing.
+    private readonly financial?: {
+      message(row: Record<string, unknown>): PaymentMessage | undefined;
+      send(message: PaymentMessage, timeoutMs: number): Promise<void>;
+    },
   ) {
     if (!operations) throw new Error('Operations table required');
   }
@@ -142,16 +148,49 @@ export class ExpiryReconciler {
           );
           const rows = page.Items ?? [];
           let processed = 0;
-          for (const row of rows) {
+          const done = new Set<string>();
+          const shopping = rows.filter((r) => r.deadlineType === 'SHOPPING');
+          const other = rows.filter((r) => r.deadlineType !== 'SHOPPING');
+          const interleaved = this.financial
+            ? Array.from(
+                { length: Math.max(shopping.length, other.length) },
+                (_, i) => [shopping[i], other[i]],
+              )
+                .flat()
+                .filter(Boolean)
+            : rows;
+          for (const row of interleaved) {
             if (left() < 1000) break;
             const { PK, SK, ...data } = row;
             const actualKey = keySchema.parse({ PK, SK });
             if (PK !== pk) throw new Error('Invalid query key');
+            const financialMessage = this.financial?.message(row);
             const payment = paymentWorkSchema
               .or(workflowWorkSchema)
               .safeParse(data);
             const work = expiryWorkSchema.safeParse(data);
-            if (
+            if (financialMessage) {
+              try {
+                const timeoutMs = Math.max(1, Math.min(400, left()));
+                let timer: ReturnType<typeof setTimeout> | undefined;
+                try {
+                  await Promise.race([
+                    this.financial!.send(financialMessage, timeoutMs),
+                    new Promise<never>((_, reject) => {
+                      timer = setTimeout(
+                        () => reject(new Error('Financial dispatch timeout')),
+                        timeoutMs,
+                      );
+                    }),
+                  ]);
+                } finally {
+                  if (timer) clearTimeout(timer);
+                }
+                sent++;
+              } catch {
+                failures++;
+              }
+            } else if (
               payment.success &&
               JSON.stringify(paymentWorkKey(payment.data)) ===
                 JSON.stringify(actualKey)
@@ -179,10 +218,15 @@ export class ExpiryReconciler {
             }
             // Advance past examined poison/failed records for fairness. Work is
             // NEVER deleted or marked sent; next round revisits every failure.
-            last = actualKey;
+            done.add(`${actualKey.PK}|${actualKey.SK}`);
             count++;
             examined++;
             processed++;
+          }
+          // Advance only the contiguous chronological prefix, even when dispatch was interleaved.
+          for (const row of rows) {
+            if (!done.has(`${row.PK}|${row.SK}`)) break;
+            last = { PK: row.PK, SK: row.SK };
           }
           if (processed < rows.length) break;
           if (!page.LastEvaluatedKey) {

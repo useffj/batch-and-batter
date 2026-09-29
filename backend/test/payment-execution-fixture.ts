@@ -105,12 +105,19 @@ export class FixtureProvider implements PaymentProvider {
 export async function paymentFixture(
   start = true,
   dispatch?: ConstructorParameters<typeof PaymentWorkflow>[6],
+  products = 1,
 ) {
-  const s = new CartStore().seed(1);
+  const s = new CartStore().seed(products);
   s.put('catalog', { ...pickup, ...catalogKeys.pickup(dropId, pickup.date) });
-  const created = await s
-    .repository()
-    .mutate(s.request([{ productId: pid(2), quantity: 2 }]), { attempts: 0 });
+  const created = await s.repository().mutate(
+    s.request(
+      Array.from({ length: products }, (_, i) => ({
+        productId: pid(i + 2),
+        quantity: 2,
+      })),
+    ),
+    { attempts: 0 },
+  );
   const client = { send: s.send.bind(s) } as unknown as ConstructorParameters<
     typeof PaymentRepository
   >[0];

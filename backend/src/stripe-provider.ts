@@ -13,6 +13,7 @@ import {
   type IntentSnapshot,
   type CreateIntentCommand,
   type ConfirmIntentCommand,
+  type AuthorizedPaymentCommand,
 } from './payment-provider';
 
 // Matches the generated API types in stripe@22.6.2. Never use the account default.
@@ -166,10 +167,44 @@ export class StripePaymentProvider
       );
     });
   }
-  async captureIntent(): Promise<IntentSnapshot> {
-    throw new ProviderError('PHASE_DISABLED');
+  async captureIntent(
+    c: AuthorizedPaymentCommand & { intentId: string },
+  ): Promise<IntentSnapshot> {
+    return safe(async () => {
+      if (
+        c.idempotencyKey !== `payment-capture:${c.paymentAttemptId}` ||
+        !Number.isSafeInteger(c.amountCents) ||
+        c.amountCents < 50 ||
+        c.currency !== 'usd'
+      )
+        throw new ProviderError('PROVIDER_INVALID');
+      return snapshot(
+        await this.stripe.paymentIntents.capture(
+          intentId.parse(c.intentId),
+          { amount_to_capture: c.amountCents, final_capture: true },
+          { idempotencyKey: c.idempotencyKey },
+        ),
+      );
+    });
   }
-  async cancelIntent(): Promise<IntentSnapshot> {
-    throw new ProviderError('PHASE_DISABLED');
+  async cancelIntent(
+    c: AuthorizedPaymentCommand & { intentId: string },
+  ): Promise<IntentSnapshot> {
+    return safe(async () => {
+      if (
+        c.idempotencyKey !== `payment-cancel:${c.paymentAttemptId}` ||
+        !Number.isSafeInteger(c.amountCents) ||
+        c.amountCents < 50 ||
+        c.currency !== 'usd'
+      )
+        throw new ProviderError('PROVIDER_INVALID');
+      return snapshot(
+        await this.stripe.paymentIntents.cancel(
+          intentId.parse(c.intentId),
+          { cancellation_reason: 'abandoned' },
+          { idempotencyKey: c.idempotencyKey },
+        ),
+      );
+    });
   }
 }

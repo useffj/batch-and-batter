@@ -26,7 +26,7 @@ export function createPaymentWorker(
           throw new Error('INVALID_MESSAGE');
         const message = paymentMessageSchema.parse(JSON.parse(record.body));
         const outcome =
-          message.kind === 'WORKFLOW'
+          message.kind !== 'STRIPE_EVENT'
             ? await workflow.run(message)
             : await inbox.process(message, workflow);
         console.info(JSON.stringify({ operation: 'paymentWorkflow', outcome }));
