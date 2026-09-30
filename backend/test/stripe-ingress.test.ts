@@ -229,6 +229,8 @@ function transportFixture() {
   }[] = [];
   let response: unknown;
   let fail = false;
+  let responseStatus = 200;
+  let responseHeaders: Record<string, string> = {};
   const client = stripeClient(
     'rk_test_' + 'SyntheticFixture',
     Stripe.createFetchHttpClient(async (url, init) => {
@@ -243,8 +245,8 @@ function transportFixture() {
           'synthetic transport timeout with private request data',
         );
       return new Response(JSON.stringify(response), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
+        status: responseStatus,
+        headers: { 'content-type': 'application/json', ...responseHeaders },
       });
     }),
   );
@@ -253,8 +255,14 @@ function transportFixture() {
     client,
     provider: new StripePaymentProvider(client),
     reader: new StripePaymentReader(client),
-    respond: (value: unknown) => {
+    respond: (
+      value: unknown,
+      status = 200,
+      headers: Record<string, string> = {},
+    ) => {
       response = value;
+      responseStatus = status;
+      responseHeaders = headers;
     },
     fail: () => {
       fail = true;
@@ -464,7 +472,7 @@ test('inbox cannot complete if canonical workflow obligation disappears concurre
   assert.ok(f.s.row('operations', work));
 });
 
-test('financial SDK capture uses full explicit amount, final capture and immutable key', async () => {
+test('financial SDK single capture omits final_capture and uses explicit amount and immutable key', async () => {
   const f = await paymentFixture();
   const t = transportFixture();
   t.respond({
@@ -482,7 +490,7 @@ test('financial SDK capture uses full explicit amount, final capture and immutab
   assert.ok(t.requests[0].url.endsWith('/pi_AdapterFixture/capture'));
   const body = new URLSearchParams(t.requests[0].body);
   assert.equal(body.get('amount_to_capture'), '900');
-  assert.equal(body.get('final_capture'), 'true');
+  assert.equal(body.has('final_capture'), false);
   assert.equal(
     t.requests[0].headers.get('Idempotency-Key'),
     `payment-capture:${f.cart().paymentAttemptId}`,
@@ -519,4 +527,73 @@ test('adapter rejects manual confirmation snapshots from Elements flow', async (
     confirmation_method: 'manual',
   });
   await assert.rejects(t.reader.retrieveIntent('pi_AdapterFixture'));
+});
+
+for (const status of [400, 500]) {
+  test(`capture HTTP ${status} preserves allowlisted diagnostics without raw error data`, async () => {
+    const f = await paymentFixture();
+    const t = transportFixture();
+    t.respond(
+      {
+        error: {
+          type: 'invalid_request_error',
+          message:
+            'private@example.test ctoken_private client_secret confidential',
+          param: 'final_capture',
+        },
+      },
+      status,
+      { 'request-id': 'req_SafeFixture', 'stripe-should-retry': 'false' },
+    );
+    await assert.rejects(
+      t.provider.captureIntent({
+        paymentAttemptId: f.cart().paymentAttemptId,
+        orderId: f.cart().orderId,
+        amountCents: 900,
+        currency: 'usd',
+        intentId: 'pi_AdapterFixture',
+        idempotencyKey: `payment-capture:${f.cart().paymentAttemptId}`,
+      }),
+      (error: any) => {
+        assert.equal(
+          error.code,
+          status === 400 ? 'PROVIDER_REQUEST_REJECTED' : 'PROVIDER_UNKNOWN',
+        );
+        assert.equal(error.diagnostic.requestId, 'req_SafeFixture');
+        assert.equal(error.diagnostic.httpStatus, status);
+        assert.equal(error.diagnostic.param, 'final_capture');
+        assert.equal(error.diagnostic.shouldRetry, false);
+        assert.ok(!JSON.stringify(error).includes('private'));
+        return true;
+      },
+    );
+    assert.equal(t.requests.length, 1);
+  });
+}
+
+test('capture network failure retains unknown classification and omits raw diagnostics', async () => {
+  const f = await paymentFixture();
+  const t = transportFixture();
+  t.fail();
+  await assert.rejects(
+    t.provider.captureIntent({
+      paymentAttemptId: f.cart().paymentAttemptId,
+      orderId: f.cart().orderId,
+      amountCents: 900,
+      currency: 'usd',
+      intentId: 'pi_AdapterFixture',
+      idempotencyKey: `payment-capture:${f.cart().paymentAttemptId}:2`,
+    }),
+    (e: any) => {
+      assert.equal(e.code, 'PROVIDER_UNKNOWN');
+      assert.equal(e.diagnostic.boundary, 'network_or_sdk');
+      assert.ok(!JSON.stringify(e).includes('private'));
+      return true;
+    },
+  );
+  assert.equal(t.requests.length, 1);
+  assert.equal(
+    new URLSearchParams(t.requests[0].body).has('final_capture'),
+    false,
+  );
 });

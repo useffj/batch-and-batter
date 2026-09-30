@@ -117,14 +117,17 @@ export async function paymentFixture(
   start = true,
   dispatch?: ConstructorParameters<typeof PaymentWorkflow>[6],
   products = 1,
+  captureFixture = false,
 ) {
-  const s = new CartStore().seed(products);
+  const s = new CartStore().seed(products, captureFixture ? 20 : 100);
+  if (captureFixture)
+    s.row('catalog', catalogKeys.dropProduct(dropId, pid(2)))!.priceCents = 525;
   s.put('catalog', { ...pickup, ...catalogKeys.pickup(dropId, pickup.date) });
   const created = await s.repository().mutate(
     s.request(
       Array.from({ length: products }, (_, i) => ({
         productId: pid(i + 2),
-        quantity: 2,
+        quantity: captureFixture ? 5 : 2,
       })),
     ),
     { attempts: 0 },

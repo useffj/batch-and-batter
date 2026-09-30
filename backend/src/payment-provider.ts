@@ -1,6 +1,7 @@
 import type { z } from 'zod';
 import type {
   createParameters,
+  providerDiagnosticSchema,
   metadataSchema,
 } from './payment-execution-domain';
 export type ProviderStatus =
@@ -66,7 +67,12 @@ export interface PaymentProvider extends PaymentReader {
 }
 export class ProviderError extends Error {
   constructor(
-    readonly code: 'PROVIDER_UNKNOWN' | 'PROVIDER_INVALID' | 'PHASE_DISABLED',
+    readonly code:
+      | 'PROVIDER_UNKNOWN'
+      | 'PROVIDER_INVALID'
+      | 'PHASE_DISABLED'
+      | 'PROVIDER_REQUEST_REJECTED',
+    readonly diagnostic?: z.infer<typeof providerDiagnosticSchema>,
   ) {
     super(code);
   }
