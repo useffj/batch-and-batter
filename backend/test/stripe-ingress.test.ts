@@ -270,7 +270,7 @@ function rawIntent(parameters: any, status = 'requires_payment_method') {
     amount_capturable: 0,
     currency: parameters.currency,
     capture_method: 'manual',
-    confirmation_method: 'manual',
+    confirmation_method: 'automatic',
     payment_method_types: ['card'],
     metadata: parameters.metadata,
     livemode: false,
@@ -296,35 +296,47 @@ test('official SDK transport uses pinned version, frozen create params and confi
   assert.equal(req.headers.get('idempotency-key'), e.create.id);
   assert.equal(body.get('confirm'), 'false');
   assert.equal(body.get('capture_method'), 'manual');
-  assert.equal(body.get('confirmation_method'), 'manual');
+  assert.equal(body.get('confirmation_method'), 'automatic');
   assert.ok(!req.body.includes('ctoken'));
   assert.ok(!req.body.includes('customer'));
 });
-test('official SDK initial confirmation uses token; continuation omits consumed token', async () => {
+test('official SDK initial confirmation uses token; automatic continuation cannot reconfirm', async () => {
   const f = await paymentFixture();
   const t = transportFixture();
   t.respond(rawIntent(f.attempt().execution.parameters, 'requires_action'));
-  for (const generation of [0, 1])
-    await t.provider.confirmIntent({
-      paymentAttemptId: f.cart().paymentAttemptId,
-      orderId: f.cart().orderId,
-      amountCents: 900,
-      currency: 'usd',
-      intentId: 'pi_AdapterFixture',
-      confirmationSequence: generation,
-      idempotencyKey: `payment-confirm:${f.cart().paymentAttemptId}:${generation}`,
-      ...(generation === 0
-        ? { confirmationTokenId: f.request.confirmationTokenId }
-        : {}),
-    });
+  const generation = 0;
+  await t.provider.confirmIntent({
+    paymentAttemptId: f.cart().paymentAttemptId,
+    orderId: f.cart().orderId,
+    amountCents: 900,
+    currency: 'usd',
+    intentId: 'pi_AdapterFixture',
+    confirmationSequence: generation,
+    idempotencyKey: `payment-confirm:${f.cart().paymentAttemptId}:${generation}`,
+    ...(generation === 0
+      ? { confirmationTokenId: f.request.confirmationTokenId }
+      : {}),
+  });
   assert.equal(
     new URLSearchParams(t.requests[0].body).get('confirmation_token'),
     f.request.confirmationTokenId,
   );
   assert.equal(
-    new URLSearchParams(t.requests[1].body).has('confirmation_token'),
+    new URLSearchParams(t.requests[0].body).has('confirmation_method'),
     false,
   );
+  await assert.rejects(
+    t.provider.confirmIntent({
+      paymentAttemptId: f.cart().paymentAttemptId,
+      orderId: f.cart().orderId,
+      amountCents: 900,
+      currency: 'usd',
+      intentId: 'pi_AdapterFixture',
+      confirmationSequence: 1,
+      idempotencyKey: `payment-confirm:${f.cart().paymentAttemptId}:1`,
+    }),
+  );
+  assert.equal(t.requests.length, 1);
 });
 test('SDK timeout makes exactly one transport attempt and strips raw error', async () => {
   const t = transportFixture();
@@ -497,4 +509,14 @@ test('financial SDK cancellation uses deterministic command and sanitized failur
   t.fail();
   await assert.rejects(t.provider.cancelIntent(c), /PROVIDER_UNKNOWN/);
   assert.equal(t.requests.length, 2);
+});
+
+test('adapter rejects manual confirmation snapshots from Elements flow', async () => {
+  const f = await paymentFixture();
+  const t = transportFixture();
+  t.respond({
+    ...rawIntent(f.attempt().execution.parameters, 'requires_capture'),
+    confirmation_method: 'manual',
+  });
+  await assert.rejects(t.reader.retrieveIntent('pi_AdapterFixture'));
 });

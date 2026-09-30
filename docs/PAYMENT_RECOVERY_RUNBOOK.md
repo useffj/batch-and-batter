@@ -21,7 +21,7 @@ financial metrics and monitoring coverage heartbeat. No runtime Scan is granted.
 
 Using the separately approved READ-ONLY sandbox operator process, retrieve the canonical
 PaymentIntent. Verify account/environment (livemode=false), association, metadata, amount,
-USD currency, manual capture/confirmation, and received/capturable amounts. A webhook
+USD currency, manual capture/automatic confirmation (C3A2 corrected contract), and received/capturable amounts. A webhook
 snapshot or timeout is not proof of capture or cancellation.
 
 ## UNKNOWN FINANCIAL OUTCOME
@@ -106,3 +106,11 @@ unresolved and requires pre-production investigation. Queue separation corrects 
 operational/observability boundary; it does not fix EventAgeExceeded. Preserve sanitized
 request-ID/timestamp evidence and investigate delivery/deployment timing without assuming
 that an infrastructure envelope represents unfinished business work.
+
+### C3A2A historical reads and rollout gate
+
+Historical records preserve their original confirmationMethod. Structurally valid manual and automatic records remain readable; only automatic confirmation with manual capture is executable. No migration or normalization occurs. Terminal legacy EXPIRED, FAILED, CANCELLED, and CAPTURED history remains customer-readable without provider access or new work. Unresolved legacy GET returns non-actionable processing without a client secret.
+
+LEGACY_PAYMENT_CONTRACT blocks unresolved legacy workflow execution and customer continuation before provider dispatch or inventory mutation. Queue processing records this fixed classification and reports the message as failed, preserving durable work for operator review and existing retry/DLQ handling. This is escalation, not automated recovery or inventory release. Terminal work is inert. For a terminal legacy webhook, consistent local settlement and linkage are required before acknowledging the inbox; only the receipt/work acknowledgment changes, with no Stripe retrieval or financial resurrection.
+
+Before any separately authorized deployment, prove zero unresolved legacy PAYMENT_PENDING/PAYMENT_COMMITTING responsibility, zero unresolved PAYMENT/PAYMENT_WORKFLOW work, zero unresolved Stripe-event responsibility, and no old-contract Attempt requiring continuation. Historical terminal manual-confirmation records may remain. PAYMENT_START_ENABLED must stay false during rollout.

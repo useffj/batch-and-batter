@@ -64,13 +64,13 @@ The local SDK factory rejects unrestricted `sk_*` and live keys. It accepts only
 Authority is embedded in Commerce `PAYMENT_ATTEMPT#<attemptId> / META`, under `execution`:
 
 - scope, immutable token reference, revision and stage;
-- frozen amount/currency, manual capture/confirmation, card-only methods;
+- frozen amount/currency, manual capture/automatic confirmation, card-only methods;
 - metadata exactly `environment`, `cartId`, `orderId`, `paymentAttemptId`, `dropId`;
 - create command and bounded confirmation command history;
 - candidate/bound Intent ID and sanitized observed status;
 - exact workflow pointer/revision and optional recovery reason.
 
-Each command records deterministic ID, kind, generation, createdAt, retryUntil, PREPARED/DISPATCHED/OBSERVED state, dispatch timestamp and, for confirmation, bound Intent ID. Initial confirmation references the immutable token on the Attempt; continuation commands do not resubmit a consumed token. No command stores client_secret, raw token contents, customer details, or raw provider errors.
+Each command records deterministic ID, kind, generation, createdAt, retryUntil, PREPARED/DISPATCHED/OBSERVED state, dispatch timestamp and, for confirmation, bound Intent ID. Initial confirmation references the immutable token on the Attempt; customer-action wake-ups do not append confirmation commands or resubmit a consumed token. No command stores client_secret, raw token contents, customer details, or raw provider errors.
 
 Identities:
 
@@ -79,7 +79,7 @@ Identities:
 
 `retryUntil = createdAt + 23 hours` is a **LOCAL SAFETY CUTOFF**, conservative relative to Stripe's documented minimum idempotency retention. It is not a claim that Stripe guarantees exactly 23 hours. Commands cannot change identities, frozen parameters, scope, submission, generation history or retry horizon during a workflow transition. Past the cutoff, work moves to RECOVERY_REQUIRED; no replacement create/confirmation is issued. The four-minute customer deadline can stop dispatch earlier.
 
-CREATE_INTENT first commits DISPATCHED authority and successor work, then rereads exact authority before provider dispatch. The adapter creates an unconfirmed Intent with `confirm=false`, `capture_method=manual`, `confirmation_method=manual`, explicit `['card']`, server amounts and approved metadata. The initial token is used at confirmation, not creation.
+CREATE_INTENT first commits DISPATCHED authority and successor work, then rereads exact authority before provider dispatch. The adapter creates an unconfirmed Intent with `confirm=false`, `capture_method=manual`, `confirmation_method=automatic`, explicit `['card']`, server amounts and approved metadata. The initial token is used at confirmation, not creation.
 
 On success, the workflow stores the candidate ID and BIND_INTENT stage. A timeout/lost response leaves the original command and work intact; a retry uses the identical command/key/parameters. No replacement Intent is allocated. A crash after remote success but before persisting the candidate is recovered the same way.
 
@@ -115,7 +115,7 @@ Confirmation executes only after binding, reverse association validation and dur
 
 Neither a succeeded snapshot nor authorization makes the Order PAID. Cart remains PAYMENT_PENDING and owns RESERVED throughout 5B2A. No inventory or Order settlement writer exists here.
 
-Local `/payment/confirm` requires capability, payment-specific If-Match, Idempotency-Key and expected `continuationGeneration`. It checks current provider state requires_confirmation, prior observed action/confirmation state, exact local revision, same Attempt and an open customer deadline. It conditionally appends one next command and receipt; a replay resolves the receipt. At most eight confirmation generations are modeled, failing closed at the bound. No new Attempt, Order, submission, Intent or grace is created.
+`/payment/confirm` retains capability, payment-specific If-Match, Idempotency-Key and expected `continuationGeneration` checks. After canonical Intent configuration/association validation, it atomically wakes VERIFY_AUTHORIZATION with a receipt. It never appends a confirmation command. The generation field remains an optimistic identity check against the existing initial command count. Replay resolves the same receipt. No Attempt, Order, Intent or grace is created. Customer action continues at Stripe automatically; canonical worker retrieval determines authorization or failure, never the browser acknowledgment.
 
 Payment ETag is quoted SHA-256 of the JSON array `[cart.updatedAt, attempt.updatedAt, execution.revision]`. Every workflow/Attempt transition advances revision and monotonic Attempt updatedAt. No secrets enter the ETag. Stale continuation requests fail.
 
@@ -171,4 +171,20 @@ Tests use in-memory transactional fixtures and fake official-SDK HTTP transport.
 
 Required validation: backend typecheck/build/full functional/artifact tests and audit; infrastructure regression/synth/audit; formatting and git diff --check; read-only CDK diff. There must be no new route, queue, Lambda wiring, SSM parameter, Stripe IAM, table/GSI/TTL or Scheduler change. Shared existing backend code assets may differ from live Phase 5A2. Test totals and live-diff authentication status are reported with the implementation review rather than inferred from mocks.
 
-Sources: [Stripe ConfirmationTokens](https://docs.stripe.com/api/confirmation_tokens/retrieve), [server-finalized Payment Element](https://docs.stripe.com/payments/finalize-payments-on-the-server), [restricted keys](https://docs.stripe.com/keys/restricted-api-keys), [idempotency](https://docs.stripe.com/api/idempotent_requests), [manual confirmation](https://docs.stripe.com/api/payment_intents/confirm), [webhook verification](https://docs.stripe.com/webhooks).
+Sources: [Stripe ConfirmationTokens](https://docs.stripe.com/api/confirmation_tokens/retrieve), [server-finalized Payment Element](https://docs.stripe.com/payments/finalize-payments-on-the-server), [restricted keys](https://docs.stripe.com/keys/restricted-api-keys), [idempotency](https://docs.stripe.com/api/idempotent_requests), [confirmation semantics](https://docs.stripe.com/api/payment_intents/confirm), [webhook verification](https://docs.stripe.com/webhooks).
+
+## C3A2 compatibility correction
+
+The original 5B2A implementation and historical validation used manual confirmation. Live C3A accepted payment/start once and dispatched a confirm containing the ConfirmationToken, but Stripe rejected it with HTTP 400 on confirmation_method: Elements-collected details cannot use manual confirmation. This was not a decline, missing token, serialization failure, or absent dispatch. C3A2 corrects the contract to automatic confirmation + manual capture. Historical test totals above describe the earlier implementation.
+
+Stripe.js handleNextAction completes customer authentication on the same Intent; the server does not reconfirm it. See [Stripe server-finalized payments](https://docs.stripe.com/payments/finalize-payments-on-the-server) and [confirmation semantics](https://docs.stripe.com/api/payment_intents/confirm).
+
+Existing pre-C3A2 Attempts retain their historical manual-confirmation evidence. The persisted read schema accepts manual or automatic confirmation without normalization. A separate execution guard requires automatic confirmation and blocks outstanding legacy manual-confirmation workflows. Before a separately authorized deployment, recheck that legacy financial responsibility is settled; do not migrate or replay historical records as part of this local fix.
+
+### C3A2A historical reads and rollout gate
+
+Historical records preserve their original confirmationMethod. Structurally valid manual and automatic records remain readable; only automatic confirmation with manual capture is executable. No migration or normalization occurs. Terminal legacy EXPIRED, FAILED, CANCELLED, and CAPTURED history remains customer-readable without provider access or new work. Unresolved legacy GET returns non-actionable processing without a client secret.
+
+LEGACY_PAYMENT_CONTRACT blocks unresolved legacy workflow execution and customer continuation before provider dispatch or inventory mutation. Queue processing records this fixed classification and reports the message as failed, preserving durable work for operator review and existing retry/DLQ handling. This is escalation, not automated recovery or inventory release. Terminal work is inert. For a terminal legacy webhook, consistent local settlement and linkage are required before acknowledging the inbox; only the receipt/work acknowledgment changes, with no Stripe retrieval or financial resurrection.
+
+Before any separately authorized deployment, prove zero unresolved legacy PAYMENT_PENDING/PAYMENT_COMMITTING responsibility, zero unresolved PAYMENT/PAYMENT_WORKFLOW work, zero unresolved Stripe-event responsibility, and no old-contract Attempt requiring continuation. Historical terminal manual-confirmation records may remain. PAYMENT_START_ENABLED must stay false during rollout.

@@ -11,6 +11,8 @@ import {
   readPayment,
   validIntent,
   WorkflowError,
+  requireExecutable,
+  legacyTerminal,
   type PaymentClient,
 } from './payment-workflow';
 import { cartKey, cartSchema, hash, type Cart } from './cart-domain';
@@ -237,6 +239,8 @@ export class FinancialWorkflow extends PaymentWorkflow {
       claim?: boolean;
     } = {},
   ) {
+    requireExecutable(s.e);
+    requireExecutable(next);
     if (
       s.cart.committingStartedAt &&
       opts.cart &&
@@ -443,6 +447,7 @@ export class FinancialWorkflow extends PaymentWorkflow {
     });
   }
   async claimCapture(s: State) {
+    requireExecutable(s.e);
     if (
       s.e.capture ||
       s.e.cancel ||
@@ -555,6 +560,7 @@ export class FinancialWorkflow extends PaymentWorkflow {
     );
   }
   async selectCancel(s: State, reason: 'EXPIRED' | 'FAILED' | 'CANCELLED') {
+    requireExecutable(s.e);
     if (s.e.captureEvidence) throw new WorkflowError('INVALID_AUTHORITY');
     if (
       s.e.financialMode === 'READ_ONLY' ||
@@ -578,6 +584,7 @@ export class FinancialWorkflow extends PaymentWorkflow {
     return this.reconcile(s);
   }
   async reconcile(s: State) {
+    requireExecutable(s.e);
     if (s.e.releaseEvidence)
       return this.transition(s, { ...s.e, stage: 'RESOLVE_FAILURE' });
     if (s.e.captureEvidence)
@@ -734,6 +741,8 @@ export class FinancialWorkflow extends PaymentWorkflow {
     if (!work) return 'STALE_WORK';
     const a = await this.attempt(work.paymentAttemptId);
     if (!a?.execution) throw new WorkflowError('INVALID_AUTHORITY');
+    if (legacyTerminal(a)) return 'LEGACY_TERMINAL';
+    requireExecutable(a.execution);
     const s = await this.load(paymentMessage(a.execution.workflow));
     if (!s)
       return (await this.completed(a.paymentAttemptId))
@@ -754,6 +763,7 @@ export class FinancialWorkflow extends PaymentWorkflow {
     return this.atDeadline(s);
   }
   private async atDeadline(s: State): Promise<string> {
+    requireExecutable(s.e);
     if (!s.e.admissionClosedAt) {
       const ptr = await this.transition(s, {
         ...s.e,
@@ -785,6 +795,7 @@ export class FinancialWorkflow extends PaymentWorkflow {
     return 'RECONCILED';
   }
   private async execute(s: State, kind: 'capture' | 'cancel'): Promise<string> {
+    requireExecutable(s.e);
     const c = s.e[kind];
     if (
       !c ||
@@ -947,6 +958,9 @@ export class FinancialWorkflow extends PaymentWorkflow {
       association.orderId !== a.orderId
     )
       throw new WorkflowError('INVALID_AUTHORITY');
+    const legacy = a.execution.parameters.confirmationMethod === 'manual';
+    if (legacy && !(await this.completed(a.paymentAttemptId)))
+      throw new WorkflowError('LEGACY_PAYMENT_CONTRACT');
     const eventActions: Actions = [
       {
         Put: {
@@ -970,16 +984,18 @@ export class FinancialWorkflow extends PaymentWorkflow {
       },
     ];
     if (await this.completed(a.paymentAttemptId)) {
-      const p = await this.provider.retrieveIntent(receipt.intentId);
-      if (
-        !validIntent(a.execution, p) ||
-        (a.settlement!.outcome === 'PAID'
-          ? p.status !== 'succeeded' ||
-            p.amountReceivedCents !== a.amountCents ||
-            p.amountCapturableCents !== 0
-          : p.status !== 'canceled' || p.amountReceivedCents !== 0)
-      )
-        throw new WorkflowError('INVALID_AUTHORITY');
+      if (!legacy) {
+        const p = await this.provider.retrieveIntent(receipt.intentId);
+        if (
+          !validIntent(a.execution, p) ||
+          (a.settlement!.outcome === 'PAID'
+            ? p.status !== 'succeeded' ||
+              p.amountReceivedCents !== a.amountCents ||
+              p.amountCapturableCents !== 0
+            : p.status !== 'canceled' || p.amountReceivedCents !== 0)
+        )
+          throw new WorkflowError('INVALID_AUTHORITY');
+      }
       await this.client.send(
         new TransactWriteCommand({
           TransactItems: [
@@ -1113,6 +1129,7 @@ export class FinancialWorkflow extends PaymentWorkflow {
     return true;
   }
   async settle(s: State, eventActions: Actions = []): Promise<string> {
+    requireExecutable(s.e);
     if (eventActions.length !== 0 && eventActions.length !== 2)
       throw new WorkflowError('INVALID_AUTHORITY');
     const paid = !!s.e.captureEvidence;

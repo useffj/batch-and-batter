@@ -90,7 +90,8 @@ of AWS's `PAYMENT_START_ENABLED=false`. No token is created on page load/setup.
 The human must supply the matching sandbox publishable key, an authorized fresh dev
 Cart ID/capability, an approved contact fixture, and an available pickup selection.
 Obtain these through the separately reviewed live acceptance procedure. Do not use a
-historical terminal Cart or put capabilities in shell commands, files or URLs.
+historical terminal Cart or put capabilities in shell commands, logs, repository files,
+or URLs. The sole file exception is the explicitly authorized temporary handoff below.
 
 Only after C3A authorization and its admission/preflight gates, restart this local
 process with `STRIPE_ACCEPTANCE_ALLOW_START=true`. This local switch does not enable
@@ -111,7 +112,9 @@ must be settled by the real backend recovery flow. Release unstarted test Carts 
 through the separately authorized normal DELETE procedure, never manual data edits.
 
 For cleanup after a settled outcome: close the tab, stop Node, and unset both local
-Stripe acceptance environment variables. No persisted capability file is created.
+Stripe acceptance environment variables. Remove the temporary capability handoff file
+as soon as the human confirms successful loading into the harness; never retain it
+as acceptance evidence.
 
 ## Validation
 
@@ -220,3 +223,51 @@ acceptance procedure. No real Stripe objects are created by mock validation.
 This change is local tooling only. It does not enable payment admission or change
 production routes, backend code, infrastructure, or deployed bundles. Do not restart
 an existing acceptance session merely to load new diagnostics; review its state first.
+
+## Revised C3A capability handoff — human-approved temporary file
+
+This procedure supersedes clipboard-only handoff. It does not authorize a new Cart
+or admission enablement by itself. Keep admission false until the next acceptance
+attempt is explicitly authorized.
+
+Before creating a Cart, verify the localhost harness is already running with the
+sandbox publishable key loaded locally, and obtain human confirmation that the
+Payment Element is visible. Never display or request the key. Validate admin auth,
+verify live admission false, and complete the queue/alarm/recovery and business-state
+safety gate. Review the narrowly scoped true-enable diff, deploy the approved true
+override, and verify live true BEFORE creating the single fresh Cart.
+
+For that authorized Cart, retain the existing generated capability using this exact
+handoff contract:
+
+- Set `umask 077` before creating the file.
+- Write only the capability bytes, without JSON, metadata, or a trailing newline, to
+  `/tmp/batch-and-batter-acceptance-cart-capability` with mode `0600`.
+- Create exclusively without following symlinks; if the path already exists, stop
+  and review it without displaying its contents. Verify owner and mode before handoff.
+- Never print/log the capability, interpolate it into a shell command, or add it to
+  the repository. Clipboard copying is optional; this file is the reliable temporary
+  copy until the human confirms loading it.
+- Report only Cart ID, expiry, pickup, amount, and remaining time. Require at least
+  six minutes remaining and stop for human checkout; never ask the human to rush.
+- The human transfers the capability locally into the harness without sending it
+  through chat. After the human confirms it was successfully loaded, immediately run:
+
+```sh
+rm -f /tmp/batch-and-batter-acceptance-cart-capability
+```
+
+Confirm removal without reading or displaying contents. Do not persist the file in
+logs, evidence, backups, or repository files. If the attempt is abandoned or the Cart
+expires before loading, remove the obsolete handoff file as part of cleanup and
+verify normal expiry; do not reuse its capability or create a replacement Cart
+without authorization. Explicitly relock admission false after the attempt, including
+failed or abandoned attempts. Recovery infrastructure remains active.
+
+## C3A2 confirmation compatibility
+
+Historical C3A exposed an incompatibility between Elements ConfirmationTokens and the originally selected manual confirmation. The corrected contract is **automatic confirmation + manual capture**. Initial server confirmation still sends the accepted ConfirmationToken after binding, with deterministic durable command identity. Stripe.js handleNextAction continues authentication; /payment/confirm only wakes canonical reconciliation, without a second confirmation generation.
+
+The immutable four-minute payment deadline still closes customer action admission. In-flight activity remains subject to canonical financial reconciliation; absence of a browser acknowledgment never proves absence of provider activity. Only exact canonical requires_capture establishes authorization. Capture requires durable claim and DISPATCHED authority; succeeded alone never means customer paid. Local atomic RESERVED-to-SOLD, CONVERTED, PAID and CAPTURED settlement remains required. Client secrets remain capability-protected, no-store, ephemeral, and absent from logs/work/receipts/URLs.
+
+This local correction does not enable payments or authorize deployment. A new C3A attempt requires review and a separately authorized deployment of the corrected code; payment admission remains false.

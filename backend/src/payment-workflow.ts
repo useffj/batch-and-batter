@@ -49,10 +49,28 @@ type Actions = NonNullable<TransactWriteCommandInput['TransactItems']>;
 export type PaymentClient = Pick<DynamoDBDocumentClient, 'send'>;
 export class WorkflowError extends Error {
   constructor(
-    readonly code: 'STALE_WORK' | 'INVALID_AUTHORITY' | 'PAYMENT_BUSY',
+    readonly code:
+      | 'STALE_WORK'
+      | 'INVALID_AUTHORITY'
+      | 'PAYMENT_BUSY'
+      | 'LEGACY_PAYMENT_CONTRACT',
   ) {
     super(code);
   }
+}
+export function requireExecutable(e: Execution): asserts e is Execution & {
+  parameters: Execution['parameters'] & { confirmationMethod: 'automatic' };
+} {
+  if (e.parameters.confirmationMethod !== 'automatic')
+    throw new WorkflowError('LEGACY_PAYMENT_CONTRACT');
+  if (e.parameters.captureMethod !== 'manual')
+    throw new WorkflowError('INVALID_AUTHORITY');
+}
+export function legacyTerminal(a: Attempt) {
+  return (
+    a.execution?.parameters.confirmationMethod === 'manual' &&
+    ['EXPIRED', 'FAILED', 'CANCELLED', 'CAPTURED'].includes(a.status)
+  );
 }
 export async function readPayment<T>(
   client: PaymentClient,
@@ -79,7 +97,7 @@ export function validIntent(e: Execution, p: IntentSnapshot) {
   return (
     p.livemode === false &&
     p.captureMethod === 'manual' &&
-    p.confirmationMethod === 'manual' &&
+    p.confirmationMethod === 'automatic' &&
     p.amountCents === e.parameters.amountCents &&
     p.currency === e.parameters.currency &&
     Object.entries(e.parameters.metadata).every(
@@ -131,6 +149,8 @@ export class PaymentWorkflow {
     const e = a?.execution;
     if (!a || !e || e.scope !== this.scope || a.cartId !== work.cartId)
       throw new WorkflowError('INVALID_AUTHORITY');
+    if (legacyTerminal(a)) return;
+    requireExecutable(e);
     if (
       e.workflow.PK !== message.PK ||
       e.workflow.SK !== message.SK ||
@@ -194,6 +214,8 @@ export class PaymentWorkflow {
     extra: Actions = [],
     delay = 0,
   ) {
+    requireExecutable(state.e);
+    requireExecutable(next);
     const { a, cart, message, work } = state;
     const immutableCommand = (c: Execution['create']) => ({
       id: c.id,
@@ -346,6 +368,7 @@ export class PaymentWorkflow {
     state: NonNullable<Awaited<ReturnType<PaymentWorkflow['load']>>>,
     p: IntentSnapshot,
   ) {
+    requireExecutable(state.e);
     if (
       !validIntent(state.e, p) ||
       p.status !== 'requires_payment_method' ||
@@ -399,6 +422,7 @@ export class PaymentWorkflow {
     state: NonNullable<Awaited<ReturnType<PaymentWorkflow['load']>>>,
     p: IntentSnapshot,
   ) {
+    requireExecutable(state.e);
     if (!validIntent(state.e, p))
       return this.recover(state, 'PROVIDER_CONFLICT');
     const e = structuredClone(state.e);
@@ -438,6 +462,7 @@ export class PaymentWorkflow {
     const state = await this.load(message);
     if (!state) return 'STALE_WORK';
     const { e, a, cart, work } = state;
+    requireExecutable(e);
     if (Date.parse(work.deadline) > this.now()) return 'NOT_DUE';
     if (
       ![
@@ -620,6 +645,7 @@ export class PaymentCustomer {
     const { cart, a, e } = await this.authorized(cartId, tokenHash);
     let clientSecret: string | null = null;
     const canAct =
+      e.parameters.confirmationMethod === 'automatic' &&
       cart.status === 'PAYMENT_PENDING' &&
       !e.admissionClosedAt &&
       !e.recoveryRequired &&
@@ -647,9 +673,11 @@ export class PaymentCustomer {
                   : 'cancelled'
                 : canAct
                   ? 'action_required'
-                  : e.stage === 'CREATE_INTENT' || e.stage === 'BIND_INTENT'
-                    ? 'payment_pending'
-                    : 'processing',
+                  : e.parameters.confirmationMethod === 'manual'
+                    ? 'processing'
+                    : e.stage === 'CREATE_INTENT' || e.stage === 'BIND_INTENT'
+                      ? 'payment_pending'
+                      : 'processing',
         paymentDeadline: cart.paymentDeadline!,
         continuationGeneration: e.confirmations.length,
         ...(clientSecret ? { clientSecret } : {}),
@@ -668,6 +696,7 @@ export class PaymentCustomer {
       request.cartId,
       request.tokenHash,
     );
+    requireExecutable(e);
     const key = parseKey(request.key);
     const scope = `cart:v1:confirmPayment:${cart.cartId}:${a.paymentAttemptId}`;
     const receiptKey = {
@@ -716,8 +745,7 @@ export class PaymentCustomer {
     )
       throw new CartError('CART_CONFLICT');
     const p = await this.reader.retrieveIntent(e.intentId);
-    if (!validIntent(e, p) || p.status !== 'requires_confirmation')
-      throw new CartError('CART_CONFLICT');
+    if (!validIntent(e, p)) throw new CartError('CART_CONFLICT');
     const state = await w.load(paymentMessage(e.workflow));
     if (
       !state ||
@@ -730,17 +758,8 @@ export class PaymentCustomer {
         state,
         {
           ...e,
-          stage: 'CONFIRM',
-          confirmations: [
-            ...e.confirmations,
-            command(
-              'CONFIRM',
-              a.paymentAttemptId,
-              request.continuationGeneration,
-              w.now(),
-              e.intentId,
-            ),
-          ],
+          // Stripe owns continuation after customer action; wake canonical reconciliation.
+          stage: 'VERIFY_AUTHORIZATION',
         },
         'AUTHENTICATING',
         [
