@@ -63,3 +63,46 @@ restricted logs, not metric dimensions or notification configuration.
 
 A failed/missing recovery heartbeat also means bounded monitoring coverage may be incomplete;
 do not interpret missing age gauges as evidence that there are no outstanding obligations.
+
+## Recovery infrastructure separation (Phase 5B2C2A; pending deployment)
+
+PAYMENT_START_ENABLED remains false. This local change does not authorize deployment
+or payment admission. C2's confirmed subscription and successful human-confirmed
+synthetic email delivery are historical acceptance evidence; the C1 readiness notes
+above describe the earlier checkpoint.
+
+After the separately approved deployment:
+
+- `batch-and-batter-dev-reservation-dlq` receives business messages whose processing
+  on `batch-and-batter-dev-reservation` exhausted retries. Its existing alarm stays
+  unchanged. Triage the SHOPPING work identity, Cart ownership, inventory and durable
+  work before proposing recovery. A dead letter does not authorize inventory release.
+- `batch-and-batter-dev-recovery-infrastructure-dlq` receives expiry reconciler Lambda
+  asynchronous OnFailure records and expiry recovery Scheduler delivery failures only.
+  It has no consumer or redrive policy. Inspect envelope type, failure condition,
+  timestamps, exact request ID and corresponding successful/failed invocation logs.
+  These infrastructure envelopes are not reservation work and must not be blindly
+  replayed into the reservation queue. Check durable-work progress independently.
+- Payment-worker business dead letters remain on the separate payment DLQ and retain
+  the financial recovery rules above.
+
+Neither queue may be automatically purged. Envelope-specific investigation and separate
+human authorization are required for targeted cleanup. The old reservation DLQ can
+still contain legacy infrastructure records: changing destinations does not move them.
+In particular, message `071e449a-f9bc-428f-9e99-fe5344117cbc` remains untouched pending
+separately authorized cleanup/deployment.
+
+The new `batch-and-batter-dev-payment-RecoveryInfrastructureDlqNonEmpty` alarm triggers
+on one visible message (Maximum, one minute, one datapoint) and uses the existing
+payment-alerts SNS topic. Its physical name matches the existing account-scoped
+`batch-and-batter-dev-payment-*` SourceArn condition; no topic-policy expansion is needed.
+
+### Unresolved EventAgeExceeded follow-up
+
+Three known recurring reconciler OnFailure records carried `EventAgeExceeded` with
+`approximateInvokeCount=0`. Each exact request ID correlated with an earlier successful
+invocation. Duplicate asynchronous delivery is a hypothesis only: root cause remains
+unresolved and requires pre-production investigation. Queue separation corrects the
+operational/observability boundary; it does not fix EventAgeExceeded. Preserve sanitized
+request-ID/timestamp evidence and investigate delivery/deployment timing without assuming
+that an infrastructure envelope represents unfinished business work.

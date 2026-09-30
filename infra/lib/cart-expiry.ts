@@ -109,6 +109,13 @@ export function addCartExpiry(
     },
   );
   mapping.node.addDependency(worker.role.node.findChild('DefaultPolicy'));
+  const infrastructureDlq = new sqs.Queue(stack, 'RecoveryInfrastructureDlq', {
+    queueName: `${prefix}-recovery-infrastructure-dlq`,
+    fifo: false,
+    encryption: sqs.QueueEncryption.SQS_MANAGED,
+    retentionPeriod: Duration.days(14),
+    removalPolicy: RemovalPolicy.DESTROY,
+  });
   const recovery = create(
     'CartExpiryReconciler',
     'expiry-reconciler',
@@ -122,13 +129,15 @@ export function addCartExpiry(
     operations.tableArn,
   );
   policy(recovery.role, ['sqs:SendMessage'], queue.queueArn);
-  policy(recovery.role, ['sqs:SendMessage'], dlq.queueArn);
+  policy(recovery.role, ['sqs:SendMessage'], infrastructureDlq.queueArn);
   new lambda.CfnEventInvokeConfig(stack, 'CartExpiryReconcilerAsync', {
     functionName: recovery.fn.functionName,
     qualifier: '$LATEST',
     maximumRetryAttempts: 2,
     maximumEventAgeInSeconds: 120,
-    destinationConfig: { onFailure: { destination: dlq.queueArn } },
+    destinationConfig: {
+      onFailure: { destination: infrastructureDlq.queueArn },
+    },
   });
   const group = new scheduler.CfnScheduleGroup(
     stack,
@@ -146,7 +155,7 @@ export function addCartExpiry(
     }),
   });
   policy(scheduleRole, ['lambda:InvokeFunction'], recovery.fn.functionArn);
-  policy(scheduleRole, ['sqs:SendMessage'], dlq.queueArn);
+  policy(scheduleRole, ['sqs:SendMessage'], infrastructureDlq.queueArn);
   const schedule = new scheduler.CfnSchedule(
     stack,
     'CartExpiryRecoverySchedule',
@@ -165,7 +174,7 @@ export function addCartExpiry(
           schemaVersion: 1,
         }),
         retryPolicy: { maximumRetryAttempts: 2, maximumEventAgeInSeconds: 120 },
-        deadLetterConfig: { arn: dlq.queueArn },
+        deadLetterConfig: { arn: infrastructureDlq.queueArn },
       },
     },
   );
@@ -261,5 +270,5 @@ export function addCartExpiry(
       period: Duration.minutes(1),
     }),
   );
-  return recovery;
+  return { ...recovery, infrastructureDlq };
 }

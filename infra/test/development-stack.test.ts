@@ -320,7 +320,7 @@ test('stateful development resources carry project/environment tags and removal 
       );
     }
   }
-  template.resourceCountIs('AWS::SQS::Queue', 6);
+  template.resourceCountIs('AWS::SQS::Queue', 7);
   template.resourceCountIs('AWS::Lambda::EventSourceMapping', 2);
   template.resourceCountIs('AWS::Scheduler::Schedule', 1);
 });
@@ -584,11 +584,11 @@ test('Phase 5A2 changes only approved properties of Phase 5A1 resources', () => 
   assert.deepEqual(
     added,
     [
-      ...Array(31).fill('AWS::CloudWatch::Alarm'),
+      ...Array(32).fill('AWS::CloudWatch::Alarm'),
       ...Array(4).fill('AWS::ApiGatewayV2::Route'),
       ...Array(4).fill('AWS::ApiGatewayV2::Integration'),
       ...Array(4).fill('AWS::Lambda::Permission'),
-      ...Array(2).fill('AWS::SQS::Queue'),
+      ...Array(3).fill('AWS::SQS::Queue'),
       'AWS::KMS::Key',
       'AWS::KMS::Alias',
       'AWS::SNS::Topic',
@@ -755,7 +755,7 @@ test('expiry worker, recovery, IAM and notification-free alarms are narrowly bou
     DestinationConfig: {
       OnFailure: {
         Destination: {
-          'Fn::GetAtt': [find('ReservationDeadLetterQueue'), 'Arn'],
+          'Fn::GetAtt': [find('RecoveryInfrastructureDlq'), 'Arn'],
         },
       },
     },
@@ -801,12 +801,12 @@ test('expiry worker, recovery, IAM and notification-free alarms are narrowly bou
         'OperationsTable90528792',
       ],
       [['sqs:SendMessage'], 'ReservationQueue43323CC1'],
-      [['sqs:SendMessage'], find('ReservationDeadLetterQueue')],
+      [['sqs:SendMessage'], find('RecoveryInfrastructureDlq')],
       [['sqs:SendMessage'], find('PaymentQueue')],
     ],
     CartExpiryRecoveryRoleDefaultPolicy: [
       [['lambda:InvokeFunction'], reconcilerId],
-      [['sqs:SendMessage'], find('ReservationDeadLetterQueue')],
+      [['sqs:SendMessage'], find('RecoveryInfrastructureDlq')],
     ],
   };
   for (const [prefix, statements] of Object.entries(expected)) {
