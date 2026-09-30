@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width" />
+    <title>Local Stripe acceptance</title>
+    <script src="https://js.stripe.com/dahlia/stripe.js"></script>
+    <script type="module" src="/browser.mjs"></script>
+  </head>
+  <body>
+    <h1>DEV / STRIPE SANDBOX ACCEPTANCE ONLY</h1>
+    <p>
+      This tool must not be deployed. Use only approved sandbox fixtures. No
+      live card details.
+    </p>
+    <form id="setup" autocomplete="off">
+      <label>Cart ID <input id="cart" required maxlength="26" /></label>
+      <label
+        >Cart capability
+        <input
+          id="capability"
+          type="password"
+          autocomplete="off"
+          required
+          maxlength="43"
+      /></label>
+      <button>Load authoritative Cart</button>
+    </form>
+    <pre id="summary"></pre>
+    <form id="checkout" autocomplete="off" hidden>
+      <label
+        >Pickup
+        <select id="pickup" required></select
+      ></label>
+      <label
+        >Approved fixture name <input id="name" required maxlength="200"
+      /></label>
+      <label
+        >Approved fixture email
+        <input id="email" type="email" required maxlength="254"
+      /></label>
+      <label
+        >Approved fixture phone (E.164)
+        <input id="phone" required maxlength="16"
+      /></label>
+      <label
+        ><input id="consent" type="checkbox" /> Transactional SMS consent
+        (fixture)</label
+      >
+      <div id="payment-element"></div>
+      <button id="pay" disabled>Pay test / retry identical submission</button>
+    </form>
+    <p id="status" role="status">Loading local configuration.</p>
+    <p>
+      Keep this tab open after an unknown outcome. Never retry by creating
+      another token or Cart.
+    </p>
+  </body>
+</html>
