@@ -190,3 +190,33 @@ Each enable/relock still requires its reviewed read-only diff and live pre/post 
 Configuration deployment is not an instantaneous global barrier: account for in-flight
 requests and verify Lambda update completion and the live environment. Disabling NEW
 admission must never stop recovery of payments already accepted.
+
+## Phase 5B2C3A0B — safe local diagnostics
+
+The localhost harness reports fixed stage codes and `payment/start sent: no`,
+`yes`, or `ambiguous`. It never renders or logs raw Stripe/browser/backend errors,
+contact values, card data, capabilities, token IDs, keys, or request headers.
+
+| Boundary                                                           | Diagnostic                        | Start sent |
+| ------------------------------------------------------------------ | --------------------------------- | ---------- |
+| Setup / initialization                                             | HARNESS_SETUP_INVALID             | no         |
+| Contact fixture validation                                         | HARNESS_CONTACT_INVALID           | no         |
+| Pickup selection                                                   | HARNESS_PICKUP_INVALID            | no         |
+| Expired or invalid Cart deadline                                   | HARNESS_CART_EXPIRED              | no         |
+| Elements submission (returned error or throw)                      | HARNESS_ELEMENTS_SUBMIT_FAILED    | no         |
+| ConfirmationToken preparation (returned error or throw)            | HARNESS_CONFIRMATION_TOKEN_FAILED | no         |
+| Request construction or relay rejection before dispatch            | HARNESS_START_REQUEST_REJECTED    | no         |
+| Backend HTTP rejection                                             | HARNESS_START_REQUEST_REJECTED    | yes        |
+| Transport failure after dispatch or lost/unreadable relay response | HARNESS_START_REQUEST_AMBIGUOUS   | ambiguous  |
+| Backend HTTP 5xx                                                   | HARNESS_START_REQUEST_AMBIGUOUS   | yes        |
+
+`yes` confirms dispatch, not financial success. A 5xx response may follow committed
+work, so it preserves ambiguous-outcome semantics. A `no` result does not prove
+that no ConfirmationToken exists: request construction follows token preparation.
+The immutable pending request remains available for identical replay; diagnostics
+never authorize retries, another token, or another Cart. Follow the human-reviewed
+acceptance procedure. No real Stripe objects are created by mock validation.
+
+This change is local tooling only. It does not enable payment admission or change
+production routes, backend code, infrastructure, or deployed bundles. Do not restart
+an existing acceptance session merely to load new diagnostics; review its state first.
