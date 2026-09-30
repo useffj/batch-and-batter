@@ -271,3 +271,69 @@ Historical C3A exposed an incompatibility between Elements ConfirmationTokens an
 The immutable four-minute payment deadline still closes customer action admission. In-flight activity remains subject to canonical financial reconciliation; absence of a browser acknowledgment never proves absence of provider activity. Only exact canonical requires_capture establishes authorization. Capture requires durable claim and DISPATCHED authority; succeeded alone never means customer paid. Local atomic RESERVED-to-SOLD, CONVERTED, PAID and CAPTURED settlement remains required. Client secrets remain capability-protected, no-store, ephemeral, and absent from logs/work/receipts/URLs.
 
 This local correction does not enable payments or authorize deployment. A new C3A attempt requires review and a separately authorized deployment of the corrected code; payment admission remains false.
+
+## Final C3A successful-payment acceptance — human approved
+
+**PHASE 5B2C3A SUCCESSFUL-PAYMENT ACCEPTANCE: PASSED**, with the two non-blocking verification limitations below. Human approval records the completed DEV acceptance on 2026-09-30; it does not authorize payment enablement, another payment test, or production rollout. Final live admission was verified as `PAYMENT_START_ENABLED=false`.
+
+### Historical progression
+
+The earlier failures remain part of the acceptance history:
+
+1. Initial C3A exposed the incompatibility of Elements-collected payment details with `confirmation_method=manual`.
+2. The contract was corrected to automatic confirmation plus manual capture.
+3. Historical-read compatibility was corrected without rewriting historical payment contracts.
+4. The existing payment successfully reached `requires_capture` authorization.
+5. Its initial capture request was rejected because `final_capture` was unsupported.
+6. Deterministic provider-rejection classification and explicit capture-generation recovery were added.
+7. Recovery inventory checks were corrected to use Cart-owned reservations while permitting unrelated RESERVED and SOLD quantities.
+8. Reviewed generation-2 recovery successfully captured the existing authorization.
+9. Local atomic paid settlement completed.
+10. Operational cleanup completed, including normal Drop closure and queue drain.
+
+The C3A6 deployment used merged main `98290cb851b269d39368878abc5b07862891dbb9`. Only the five existing shared backend Lambda code assets changed; the downloaded deployed bundles matched main byte-for-byte. Admission remained false throughout recovery.
+
+### Accepted business outcome
+
+| Record         | Identifier                    | Final state |
+| -------------- | ----------------------------- | ----------- |
+| Cart           | `01M3SG458J6KZX8XXEKX66CZMK`  | CONVERTED   |
+| Order          | `01M3SG7XS0RWTC731258PXVQQF`  | PAID        |
+| PaymentAttempt | `01M3SG7XS0Z8CAQ35D48RZJH0P`  | CAPTURED    |
+| PaymentIntent  | `pi_3ULPnZDz3QSwRsAl2cj9rK9p` | succeeded   |
+| Drop           | `01M3RQJ2EHMWMB7CV8D028Z05G`  | CLOSED      |
+
+Canonical Stripe retrieval verified sandbox (`livemode=false`), automatic confirmation, manual capture, **2625 cents received and 0 capturable**. Final inventory is **20 total / 0 reserved / 5 sold / 15 available**. Closing the Drop through the normal admin API returned HTTP 200 and did not change settled inventory.
+
+### Recovery and settlement evidence
+
+Generation 1 remains historical rejected-command evidence: HTTP 400 `invalid_request_error`, unsupported `final_capture`, and no successful financial effect. The approved original Stripe request ID is `req_4Gi6DNTC69VCiw`; six subsequent requests were previously Dashboard-confirmed replayed rejections. Classification preserved the original command identity and preparation/dispatch timestamps.
+
+Generation 2 was explicitly prepared through the reviewed recovery method. Its corrected request omitted `final_capture`. PREPARED persisted at `2026-09-30T17:08:28.787Z`, DISPATCHED persisted at `17:08:31.137Z`, and canonical full capture was verified at `17:08:33.333Z`. The command remains OBSERVED, with generation 1 retained in history. One application capture dispatch was observed.
+
+Exactly one PAID settlement marker is shared by the Cart, Order, and Attempt; exactly one PAID outbox exists. This Cart's five RESERVED units became SOLD once. No duplicate capture evidence, PAID conversion, or SOLD movement was observed. Concurrent processing produced one RETRY, then terminal COMPLETED / STALE_WORK outcomes rather than another financial mutation. The genuine `payment_intent.succeeded` webhook was durably accepted and its receipt reached PROCESSED.
+
+### Operational and security cleanup
+
+Final counts are visible / not-visible / delayed:
+
+| Queue                       | Final counts |
+| --------------------------- | ------------ |
+| Reservation                 | 0 / 0 / 0    |
+| Reservation DLQ             | 0 / 0 / 0    |
+| Recovery-infrastructure DLQ | 0 / 0 / 0    |
+| Payment                     | 0 / 0 / 0    |
+| Payment DLQ                 | 0 / 0 / 0    |
+
+All messages drained normally; no manual queue deletion was used. All 32 alarms were OK, including WorkerBatchFailures and RecoveryAge returning naturally to OK. Reconciler completion and recovery heartbeat were healthy. No unresolved PAYMENT, PAYMENT_WORKFLOW, relevant STRIPE_EVENT, captured-but-unfinalized, or stale generation-2 durable responsibility remained. Historical command records remain audit evidence, not outstanding work.
+
+No sensitive-data matches were found in reviewed AWS logs. The temporary admin token and capability files were removed and their absence verified. A prior local diagnostic output inadvertently included a deterministic command identity; its output filter was corrected, and no value is reproduced here. This local reporting incident is distinct from the AWS-log review.
+
+No new Cart, PaymentIntent, or PaymentAttempt was created during recovery. No refund, cancellation, restock, or SOLD reset occurred. Final `PAYMENT_START_ENABLED=false` was verified.
+
+### Non-blocking verification limitations
+
+1. **Customer payment GET was not exercised after settlement** because the original Cart capability was unavailable. No replacement capability was manufactured to satisfy the test. Domain/provider evidence established the terminal paid state; the customer HTTP check is not recorded as passed.
+2. **Exact generation-2 Stripe capture request count and HTTP request-ID verification were not independently confirmed through the Stripe Dashboard.** Application evidence showed one capture dispatch and no duplicate financial effect. The independent Dashboard check is not recorded as passed.
+
+Human review accepted both limitations as non-blocking. The successful path now has DEV evidence for ConfirmationToken ingestion → automatic confirmation → requires_capture authorization → durable manual capture → deterministic rejection recovery → canonical succeeded verification → atomic RESERVED-to-SOLD settlement → Cart CONVERTED → Order PAID → Attempt CAPTURED → durable webhook processing → queue/recovery cleanup.
