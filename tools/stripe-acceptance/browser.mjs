@@ -1,5 +1,5 @@
 import { setup, elementsOptions } from './contract.mjs';
-import { createFlow, diagnostic } from './flow.mjs';
+import { createFlow, createContinuation, diagnostic } from './flow.mjs';
 const el = (id) => document.getElementById(id);
 const status = (text) => {
   el('status').textContent = text;
@@ -15,7 +15,7 @@ async function post(path, body) {
     cache: 'no-store',
     credentials: 'omit',
   });
-  if (path === '/start' && !response.ok) {
+  if (['/start', '/confirm'].includes(path) && !response.ok) {
     // Only fixed relay protocol fields are consumed; never render raw bodies.
     const result = await response.json();
     return { accepted: false, sent: result.sent === 'no' ? 'no' : 'ambiguous' };
@@ -58,6 +58,14 @@ el('setup').addEventListener('submit', async (event) => {
       cart,
       capability: input.capability,
       send: (body) => post('/start', body),
+      continuePayment: createContinuation({
+        stripe,
+        cartId: cart.cartId,
+        capability: input.capability,
+        getStatus: (body) => post('/payment', body),
+        sendConfirm: (body) => post('/confirm', body),
+        onStatus: status,
+      }),
     });
     el('capability').value = '';
     el('setup').hidden = true;

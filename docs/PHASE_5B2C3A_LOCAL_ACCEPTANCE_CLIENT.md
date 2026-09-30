@@ -337,3 +337,47 @@ No new Cart, PaymentIntent, or PaymentAttempt was created during recovery. No re
 2. **Exact generation-2 Stripe capture request count and HTTP request-ID verification were not independently confirmed through the Stripe Dashboard.** Application evidence showed one capture dispatch and no duplicate financial effect. The independent Dashboard check is not recorded as passed.
 
 Human review accepted both limitations as non-blocking. The successful path now has DEV evidence for ConfirmationToken ingestion → automatic confirmation → requires_capture authorization → durable manual capture → deterministic rejection recovery → canonical succeeded verification → atomic RESERVED-to-SOLD settlement → Cart CONVERTED → Order PAID → Attempt CAPTURED → durable webhook processing → queue/recovery cleanup.
+
+## C3B1 — requires_action / 3DS readiness (local only)
+
+This prepares a later, separately authorized single sandbox authentication-success attempt. It does not authorize deployment, admission enablement, Cart creation, or Stripe object creation. `PAYMENT_START_ENABLED` remains false. C3A's accepted evidence and limitations above remain unchanged.
+
+### Existing backend contract and local correction
+
+`POST /carts/{cartId}/payment/start` is asynchronous: HTTP 201/200 accepts the durable handoff and returns the safe Cart DTO; it does not synchronously promise a requires_action result or client secret. The localhost relay preserves that acceptance contract. After acceptance, the harness makes capability-authorized `GET /carts/{cartId}/payment` calls through a new local-only `/payment` relay. It polls at most 30 times with one second between reads; individual upstream requests retain the existing 15-second timeout. Poll exhaustion reports processing and requires human review, never another token or start.
+
+The backend GET returns `payment.status=action_required`, an ephemeral `clientSecret` when canonical Stripe still requires action, the immutable `paymentDeadline`, `continuationGeneration`, and the payment-specific ETag. Capability authorization precedes retrieval. Both API and local relay responses remain no-store. The relay explicitly projects these fields and does not forward raw upstream errors or other provider fields.
+
+The harness calls exactly `stripe.handleNextAction({ clientSecret })`, supported by the hosted Dahlia Stripe.js used here. See [Stripe handleNextAction](https://docs.stripe.com/js/payment_intents/handle_next_action) and [server-finalized payments](https://docs.stripe.com/payments/finalize-payments-on-the-server?platform=web&type=payment). Submission stays locked while the call is pending. Browser-returned Intent state is not financial authority. The secret is used only in memory, removed from the local status object after the call, and never placed in application navigation, storage, logs, request URLs, or continuation bodies. This readiness scope is the embedded card authentication flow; redirects/reloads do not reconstruct a payment session automatically.
+
+After successful authentication, the harness rereads backend status for a fresh ETag. If it remains actionable and before deadline, it sends one local `/confirm` request relayed to `POST /carts/{cartId}/payment/confirm`, with the existing capability, fresh payment ETag, one new continuation idempotency identity, and only `continuationGeneration` in the API body. If a webhook has already advanced the payment, the harness reports the backend state instead of submitting an unnecessary stale continuation.
+
+**Automatic confirmation means no second server confirmation after next_action.** The existing backend continuation verifies capability, ETag, generation, deadline, and canonical association; it atomically records its receipt and wakes VERIFY_AUTHORIZATION. It does not append another CONFIRM command, call provider confirm, extend the deadline, or create another Intent. The harness never automatically replays an ambiguous continuation, repeats authentication, or creates another token/Cart. The backend retains its existing identical-request replay semantics.
+
+### Canonical state and deadline behavior
+
+| Canonical state after action                   | Existing backend behavior                                                                                                                         |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| requires_capture with exact amount             | AUTHORIZED / CLAIM_CAPTURE; existing durable manual capture path                                                                                  |
+| processing                                     | VERIFY_AUTHORIZATION and reconciliation; no capture without authorization proof                                                                   |
+| requires_payment_method with confirmed failure | Select safe cancellation/failure resolution; no SOLD movement                                                                                     |
+| canceled                                       | Canonical cancellation proof permits failure settlement                                                                                           |
+| requires_action                                | WAIT_FOR_CUSTOMER_ACTION; actionable only while admission/deadline permits; harness stops for review rather than repeating action                 |
+| succeeded                                      | Existing capture-evidence/settlement rules apply; without matching dispatched capture authority, recovery is required, never browser-derived PAID |
+
+The original four-minute paymentDeadline is immutable. Before it, successful browser action may wake verification. At or after it, new customer continuation is rejected and no action secret is returned. The harness checks the deadline before authentication and again before continuation. If authentication remains open or returns late, backend canonical reconciliation still owns the outcome. Provider processing/unknown financial state retains RESERVED responsibility; missing browser acknowledgment is never release proof. Existing canonical authorization, capture claim, cancellation verification, and bounded recovery rules remain authoritative.
+
+### Safe diagnostics
+
+New fixed codes are HARNESS_NEXT_ACTION_UNAVAILABLE, HARNESS_AUTHENTICATION_FAILED, HARNESS_CONFIRM_REQUEST_REJECTED, HARNESS_CONFIRM_REQUEST_AMBIGUOUS, HARNESS_PAYMENT_DEADLINE_ELAPSED, HARNESS_PAYMENT_PROCESSING, HARNESS_PAYMENT_STATUS_UNAVAILABLE, HARNESS_ACTION_INCOMPLETE, and HARNESS_PAYMENT_TERMINAL_FAILURE. All post-start diagnostics explicitly say start was already accepted and warn against creating another Cart/token after ambiguity. Raw Stripe exceptions, contact values, card data, capabilities, client secrets, and request identities are not rendered or logged. An ambiguous continuation does not imply an ambiguous initial start: start remains accepted.
+
+### Later human acceptance procedure — not authorized by C3B1
+
+1. Obtain separate live C3B approval. Stage the localhost harness, sandbox publishable key, local submission, Payment Element, approved contact fixture, and valid admin authentication before creating a Cart. Complete the live responsibility/queue/alarm gate with admission false.
+2. Through the separately reviewed sequence, temporarily enable admission and create exactly one fresh Cart on a valid OPEN test Drop. Use the approved mode-0600 temporary capability handoff and require at least six minutes remaining. Remove the handoff file once loaded.
+3. The human types Stripe's documented authentication-required sandbox card (obtain its number directly from the linked Stripe testing guidance), a future expiration, valid CVC, and any postal code directly into Stripe Payment Element. These values belong only in the human procedure, never application code, fixtures, logs, or automated requests. See [Stripe testing guidance](https://docs.stripe.com/testing).
+4. Click Pay once. After payment/start acceptance, the harness polls for action_required and opens Stripe authentication UI. Complete successful authentication in that UI.
+5. The harness refreshes status and calls the continuation endpoint once if still necessary. The same Intent continues automatically to requires_capture; no second server confirmation is issued.
+6. Observe canonical authorization, the existing durable capture path, canonical full success, and atomic PAID settlement. A browser completion or accepted continuation is not proof of payment.
+7. Verify Cart CONVERTED, Order PAID, Attempt CAPTURED, exact RESERVED-to-SOLD movement, one PAID outbox, genuine webhook processing, and cleared durable work. Close the test Drop normally only after settlement, without resetting SOLD.
+8. Explicitly relock admission false and verify it, regardless of outcome. Perform the reviewed token/capability/harness cleanup and queue/alarm checks. Any diagnostic, ambiguity, additional action, or deadline issue stops the human attempt for review; no automatic new Cart/token/payment is allowed.

@@ -105,3 +105,59 @@ export function elementsOptions(cart) {
     paymentMethodCreation: 'manual',
   };
 }
+
+export function confirmRequest(value) {
+  exact(value, ['cartId', 'capability', 'etag', 'key', 'body']);
+  setup({ cartId: value.cartId, capability: value.capability });
+  requireValue(/^"[a-f0-9]{64}"$/.test(value.etag));
+  requireValue(
+    /^v1\.\d{13}\.[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/.test(value.key),
+  );
+  exact(value.body, ['continuationGeneration']);
+  requireValue(
+    Number.isInteger(value.body.continuationGeneration) &&
+      value.body.continuationGeneration >= 1 &&
+      value.body.continuationGeneration <= 7,
+  );
+  return value;
+}
+export function paymentView(body, etag) {
+  const p = body?.payment;
+  requireValue(
+    p &&
+      [
+        'payment_pending',
+        'processing',
+        'action_required',
+        'paid',
+        'failed',
+        'expired',
+        'cancelled',
+      ].includes(p.status),
+  );
+  requireValue(/^"[a-f0-9]{64}"$/.test(etag));
+  requireValue(
+    typeof p.paymentDeadline === 'string' &&
+      Number.isFinite(Date.parse(p.paymentDeadline)),
+  );
+  requireValue(
+    Number.isInteger(p.continuationGeneration) &&
+      p.continuationGeneration >= 0 &&
+      p.continuationGeneration <= 7,
+  );
+  const result = {
+    etag,
+    status: p.status,
+    paymentDeadline: p.paymentDeadline,
+    continuationGeneration: p.continuationGeneration,
+  };
+  if (p.status === 'action_required' && p.clientSecret != null) {
+    requireValue(
+      typeof p.clientSecret === 'string' &&
+        p.clientSecret.length > 0 &&
+        p.clientSecret.length <= 512,
+    );
+    result.clientSecret = p.clientSecret;
+  }
+  return result;
+}
