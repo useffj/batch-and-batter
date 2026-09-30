@@ -15,10 +15,11 @@ import { catalogKeys } from '../src/keys';
 import { dropId } from './fixtures';
 import { pid, tokenHash } from './cart-store';
 import { PaymentCustomer } from '../src/payment-workflow';
+import { ProviderError } from '../src/payment-provider';
 import { createPaymentWorker } from '../src/payment-worker';
 
-async function fixture(products = 1) {
-  const f = await paymentFixture(true, undefined, products);
+async function fixture(products = 1, captureFixture = false) {
+  const f = await paymentFixture(true, undefined, products, captureFixture);
   const logs: unknown[] = [];
   const w = new FinancialWorkflow(
     f.client,
@@ -1064,4 +1065,344 @@ test('legacy committing state blocks direct financial operations without releasi
   assert.equal(f.inventory().reserved, 2);
   assert.equal(f.provider.calls.length, calls);
   assert.deepEqual(f.s.rows, before);
+});
+
+const rejectionDiagnostic = {
+  boundary: 'provider_response' as const,
+  httpStatus: 400,
+  errorType: 'invalid_request_error' as const,
+  requestId: 'req_RejectedFixture',
+  param: 'final_capture' as const,
+  shouldRetry: false,
+};
+async function rejectedFixture() {
+  const f = await fixture(1, true);
+  await f.authorize();
+  await f.run();
+  f.provider.captureIntent = async () => {
+    f.provider.calls.push({ kind: 'capture' });
+    throw new ProviderError('PROVIDER_REQUEST_REJECTED', rejectionDiagnostic);
+  };
+  assert.equal(await f.run(), 'PROVIDER_REQUEST_REJECTED');
+  assert.equal(f.attempt().execution.capture.state, 'PROVIDER_REJECTED');
+  return f;
+}
+test('definitive rejection stops automatic capture replay and retains responsibility', async () => {
+  const f = await rejectedFixture();
+  for (let i = 0; i < 5; i++) await f.run();
+  assert.equal(f.provider.calls.filter((c) => c.kind === 'capture').length, 1);
+  assert.equal(f.cart().status, 'PAYMENT_COMMITTING');
+  assert.equal(f.inventory().reserved, 5);
+  assert.equal(f.inventory().sold, 0);
+  assert.equal(
+    (await f.customer.get(f.cart().cartId, tokenHash)).payment.status,
+    'processing',
+  );
+  assert.equal(
+    f.attempt().execution.capture.rejection.diagnostic.requestId,
+    'req_RejectedFixture',
+  );
+});
+test('generation two is atomically unique, preserves rejected history and settles once', async () => {
+  const f = await rejectedFixture();
+  const old = structuredClone(f.attempt().execution.capture);
+  const state = (await f.current())!;
+  await assert.rejects(f.w.prepareReplacementCapture(state, false));
+  const results = await Promise.allSettled([
+    f.w.prepareReplacementCapture(state, true),
+    f.w.prepareReplacementCapture(state, true),
+  ]);
+  assert.ok(results.some((r) => r.status === 'fulfilled'));
+  assert.equal(f.attempt().execution.capture.generation, 2);
+  assert.notEqual(f.attempt().execution.capture.id, old.id);
+  assert.deepEqual(f.attempt().execution.captureHistory, [old]);
+  const identity = f.attempt().execution.capture.id;
+  const prepared = f.attempt().execution.capture.preparedAt;
+  let count = 0;
+  f.provider.captureIntent = async (c?: any) => {
+    count++;
+    assert.equal(c.idempotencyKey, identity);
+    assert.equal(f.attempt().execution.capture.state, 'DISPATCHED');
+    assert.equal(f.attempt().execution.capture.preparedAt, prepared);
+    if (count === 1) throw new ProviderError('PROVIDER_UNKNOWN');
+    const p = f.provider.intents.get(c.intentId)!;
+    p.status = 'succeeded';
+    p.amountReceivedCents = 2625;
+    p.amountCapturableCents = 0;
+    return structuredClone(p);
+  };
+  await f.run();
+  await f.run();
+  await f.run();
+  assert.equal(count, 2);
+  assert.equal(f.cart().status, 'CONVERTED');
+  assert.equal(f.attempt().status, 'CAPTURED');
+  assert.equal(f.inventory().reserved, 0);
+  assert.equal(f.inventory().sold, 5);
+  assert.deepEqual(f.attempt().execution.captureHistory, [old]);
+  await f.run();
+  assert.equal(f.inventory().sold, 5);
+  await assert.rejects(f.w.prepareReplacementCapture(state, true));
+});
+for (const invalid of [
+  'received',
+  'status',
+  'association',
+  'reserved',
+  'aggregate',
+  'ownership',
+  'cart',
+  'order',
+  'unproven',
+] as const) {
+  test(`replacement capture rejects unsafe ${invalid}`, async () => {
+    const f = await rejectedFixture();
+    if (invalid === 'received')
+      f.provider.intents.get('pi_Test1')!.amountReceivedCents = 1;
+    if (invalid === 'status')
+      f.provider.intents.get('pi_Test1')!.status = 'processing';
+    if (invalid === 'association')
+      f.provider.intents.get('pi_Test1')!.metadata.cartId = pid(999);
+    if (invalid === 'reserved') f.inventory().reserved = 4;
+    if (invalid === 'aggregate') f.inventory().sold = 16;
+    if (invalid === 'ownership') f.cart().items[0].quantity = 4;
+    if (invalid === 'cart') f.cart().status = 'EXPIRED';
+    if (invalid === 'order')
+      f.s.row('commerce', orderKey(f.cart().orderId))!.status = 'PAID';
+    if (invalid === 'unproven') {
+      f.attempt().execution.capture.state = 'DISPATCHED';
+      delete f.attempt().execution.capture.rejection;
+    }
+    const before = structuredClone(f.s.rows);
+    await assert.rejects(async () => {
+      const s = await f.current();
+      if (!s) throw Error('blocked');
+      await f.w.prepareReplacementCapture(s, true);
+    });
+    assert.deepEqual(f.s.rows, before);
+    assert.equal(
+      f.provider.calls.filter((c) => c.kind === 'capture').length,
+      1,
+    );
+  });
+}
+test('current live-shaped unknown generation one can be classified but never replayed with changed parameters', async () => {
+  const f = await fixture(1, true);
+  await f.authorize();
+  await f.run();
+  const c = f.attempt().execution.capture;
+  c.state = 'DISPATCHED';
+  c.dispatchedAt = new Date(f.s.now).toISOString();
+  delete c.requestShape;
+  f.s.now += 200000;
+  await f.w.unknown((await f.current())!);
+  const old = structuredClone(f.attempt().execution.capture);
+  assert.equal(f.attempt().amountCents, 2625);
+  assert.equal(await f.run(), 'RECONCILED');
+  assert.equal(f.provider.calls.filter((c) => c.kind === 'capture').length, 0);
+  const s = (await f.current())!;
+  const { param: omittedParameter, ...actualDiagnostic } = rejectionDiagnostic;
+  assert.equal(omittedParameter, 'final_capture');
+  await f.w.classifyRejectedCapture(
+    s,
+    {
+      diagnostic: actualDiagnostic,
+      source: 'OPERATOR',
+      recordedAt: new Date(f.s.now).toISOString(),
+      requestAt: old.dispatchedAt,
+    },
+    true,
+  );
+  const rejected = structuredClone(f.attempt().execution.capture);
+  assert.equal(rejected.dispatchedAt, old.dispatchedAt);
+  await f.w.prepareReplacementCapture((await f.current())!, true);
+  assert.deepEqual(f.attempt().execution.captureHistory, [rejected]);
+  assert.equal(f.attempt().execution.capture.state, 'PREPARED');
+  assert.equal(f.provider.calls.filter((c) => c.kind === 'capture').length, 0);
+});
+for (const invalid of ['received', 'status', 'reserved'] as const) {
+  test(`generation two dispatch rechecks ${invalid}`, async () => {
+    const f = await rejectedFixture();
+    await f.w.prepareReplacementCapture((await f.current())!, true);
+    if (invalid === 'received')
+      f.provider.intents.get('pi_Test1')!.amountReceivedCents = 1;
+    if (invalid === 'status')
+      f.provider.intents.get('pi_Test1')!.status = 'processing';
+    if (invalid === 'reserved') f.inventory().reserved = 4;
+    await f.run().catch(() => {});
+    assert.equal(
+      f.provider.calls.filter((c) => c.kind === 'capture').length,
+      1,
+    );
+    assert.equal(f.inventory().sold, 0);
+  });
+}
+
+test('replacement inventory condition defeats a race after canonical proof', async () => {
+  const f = await rejectedFixture();
+  const s = (await f.current())!;
+  f.s.before = () => {
+    f.s.before = undefined;
+    f.inventory().reserved = 4;
+  };
+  await assert.rejects(f.w.prepareReplacementCapture(s, true));
+  assert.equal(f.attempt().execution.capture.state, 'PROVIDER_REJECTED');
+  assert.equal(f.attempt().execution.captureHistory, undefined);
+});
+test('replacement authorization window expiry preserves ownership without cancellation', async () => {
+  const f = await rejectedFixture();
+  await f.w.prepareReplacementCapture((await f.current())!, true);
+  f.s.now = Date.parse(f.attempt().execution.capture.dispatchUntil);
+  await f.run();
+  assert.equal(f.attempt().execution.financialMode, 'READ_ONLY');
+  assert.equal(f.attempt().execution.cancel, undefined);
+  assert.equal(f.inventory().reserved, 5);
+});
+
+async function addOtherReservation(
+  f: Awaited<ReturnType<typeof rejectedFixture>>,
+  quantity: number,
+) {
+  return f.s
+    .repository()
+    .mutate(f.s.request([{ productId: pid(2), quantity }]), { attempts: 0 });
+}
+function successfulReplacement(f: Awaited<ReturnType<typeof rejectedFixture>>) {
+  let captures = 0;
+  f.provider.captureIntent = async (c?: any) => {
+    captures++;
+    assert.equal(f.attempt().execution.capture.state, 'DISPATCHED');
+    const p = f.provider.intents.get(c.intentId)!;
+    p.status = 'succeeded';
+    p.amountReceivedCents = 2625;
+    p.amountCapturableCents = 0;
+    return structuredClone(p);
+  };
+  return () => captures;
+}
+for (const shared of [false, true]) {
+  test(`replacement accepts prior SOLD stock with ${shared ? 'shared' : 'exclusive'} reservations and settles once`, async () => {
+    const f = await rejectedFixture();
+    f.inventory().sold = 2;
+    const other = shared ? await addOtherReservation(f, 3) : undefined;
+    const captures = successfulReplacement(f);
+    await f.w.prepareReplacementCapture((await f.current())!, true);
+    await f.run();
+    const finalization = (await f.current())!;
+    assert.equal(await f.w.settle(finalization), 'SETTLED');
+    assert.equal(await f.w.run(finalization.message), 'STALE_WORK');
+    assert.equal(captures(), 1);
+    assert.equal(f.cart().status, 'CONVERTED');
+    assert.equal(f.attempt().status, 'CAPTURED');
+    assert.equal(
+      f.s.row('commerce', orderKey(f.cart().orderId))!.status,
+      'PAID',
+    );
+    assert.equal(f.inventory().reserved, shared ? 3 : 0);
+    assert.equal(f.inventory().sold, 7);
+    assert.equal(
+      f.inventory().total - f.inventory().reserved - f.inventory().sold,
+      shared ? 10 : 13,
+    );
+    if (other) assert.equal(other.cart.items[0].quantity, 3);
+    assert.equal(
+      [...f.s.rows.values()].filter((r) => r.eventType === 'PAID').length,
+      1,
+    );
+  });
+}
+test('reservation after replacement preparation survives captured finalization contention', async () => {
+  const f = await rejectedFixture();
+  f.inventory().sold = 2;
+  const captures = successfulReplacement(f);
+  await f.w.prepareReplacementCapture((await f.current())!, true);
+  await f.run();
+  assert.equal(f.attempt().execution.stage, 'FINALIZE_ORDER');
+  f.s.before = async (actions) => {
+    if (actions[0]?.Put?.TableName !== 'catalog') return;
+    f.s.before = undefined;
+    await addOtherReservation(f, 3);
+  };
+  assert.equal(await f.run(), 'SETTLED');
+  assert.equal(f.inventory().reserved, 3);
+  assert.equal(f.inventory().sold, 7);
+  assert.equal(captures(), 1);
+});
+test('another owner SOLD transition after capture is preserved on inventory reread', async () => {
+  const f = await rejectedFixture();
+  f.inventory().sold = 2;
+  const other = await addOtherReservation(f, 3);
+  const captures = successfulReplacement(f);
+  await f.w.prepareReplacementCapture((await f.current())!, true);
+  await f.run();
+  f.s.before = (actions) => {
+    if (actions[0]?.Put?.TableName !== 'catalog') return;
+    f.s.before = undefined;
+    // Model the atomic outcome of the other owner's settlement between our read and CAS.
+    const owner = [...f.s.rows.values()].find(
+      (r) => r.cartId === other.cart.cartId && r.SK === 'META',
+    )!;
+    owner.status = 'CONVERTED';
+    f.inventory().reserved -= 3;
+    f.inventory().sold += 3;
+  };
+  assert.equal(await f.run(), 'SETTLED');
+  assert.equal(f.inventory().reserved, 0);
+  assert.equal(f.inventory().sold, 10);
+  assert.equal(
+    f.inventory().total - f.inventory().reserved - f.inventory().sold,
+    10,
+  );
+  assert.equal(captures(), 1);
+});
+test('captured replacement survives exhausted inventory retries without another capture', async () => {
+  const f = await rejectedFixture();
+  const captures = successfulReplacement(f);
+  await f.w.prepareReplacementCapture((await f.current())!, true);
+  await f.run();
+  let conflicts = 0;
+  f.s.before = async (actions) => {
+    if (actions[0]?.Put?.TableName !== 'catalog') return;
+    f.s.before = undefined;
+    await addOtherReservation(f, 1);
+    conflicts++;
+    f.s.before = race;
+  };
+  const race = f.s.before;
+  assert.equal(await f.run(), 'RESCHEDULED');
+  assert.equal(conflicts, 3);
+  assert.equal(f.cart().status, 'PAYMENT_COMMITTING');
+  assert.equal(
+    (await f.customer.get(f.cart().cartId, tokenHash)).payment.status,
+    'processing',
+  );
+  f.s.before = undefined;
+  assert.equal(await f.run(), 'SETTLED');
+  assert.equal(f.inventory().reserved, 3);
+  assert.equal(f.inventory().sold, 5);
+  assert.equal(captures(), 1);
+});
+test('ownership line race blocks replacement even with sufficient aggregate reservations', async () => {
+  const f = await rejectedFixture();
+  await addOtherReservation(f, 3);
+  const state = (await f.current())!;
+  f.s.before = () => {
+    f.s.before = undefined;
+    f.cart().items[0].quantity = 4;
+  };
+  await assert.rejects(f.w.prepareReplacementCapture(state, true));
+  assert.equal(f.attempt().execution.capture.generation, undefined);
+  assert.equal(f.attempt().execution.captureHistory, undefined);
+});
+test('legitimate preparation inventory contention permits fresh recovery proof', async () => {
+  const f = await rejectedFixture();
+  const state = (await f.current())!;
+  f.s.before = async () => {
+    f.s.before = undefined;
+    await addOtherReservation(f, 3);
+  };
+  await assert.rejects(f.w.prepareReplacementCapture(state, true));
+  await f.w.prepareReplacementCapture((await f.current())!, true);
+  assert.equal(f.attempt().execution.capture.generation, 2);
+  assert.equal(f.inventory().reserved, 8);
 });

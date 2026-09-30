@@ -36,11 +36,17 @@ import {
   paymentMessage,
   paymentMessageSchema,
   RETRY_HORIZON_MS,
+  captureRejectionSchema,
   type Execution,
   type PaymentMessage,
 } from './payment-execution-domain';
-import type { IntentSnapshot, PaymentProvider } from './payment-provider';
+import {
+  ProviderError,
+  type IntentSnapshot,
+  type PaymentProvider,
+} from './payment-provider';
 
+const replacementPermit = Symbol('operator capture replacement');
 type State = NonNullable<Awaited<ReturnType<PaymentWorkflow['load']>>>;
 type Actions = NonNullable<TransactWriteCommandInput['TransactItems']>;
 type Outcome = 'PAID' | 'EXPIRED' | 'FAILED' | 'CANCELLED';
@@ -171,8 +177,21 @@ export class FinancialWorkflow extends PaymentWorkflow {
       ...(s.e.recoveryReason ? { errorCategory: s.e.recoveryReason } : {}),
     });
   }
+  private unsettledGuard(fields: Record<string, unknown>) {
+    const condition = guard(fields);
+    return {
+      ...condition,
+      ConditionExpression: `${condition.ConditionExpression} AND attribute_not_exists(#settlement)`,
+      ExpressionAttributeNames: {
+        ...condition.ExpressionAttributeNames,
+        '#settlement': 'settlement',
+      },
+    };
+  }
   private cartGuard(s: State) {
-    return guard({
+    return this.unsettledGuard({
+      dropId: s.cart.dropId,
+      items: s.cart.items,
       updatedAt: s.cart.updatedAt,
       status: s.cart.status,
       paymentAttemptId: s.a.paymentAttemptId,
@@ -181,14 +200,16 @@ export class FinancialWorkflow extends PaymentWorkflow {
     });
   }
   private attemptGuard(s: State) {
-    return guard({
+    return this.unsettledGuard({
       updatedAt: s.a.updatedAt,
       status: s.a.status,
       execution: s.e,
     });
   }
   private orderGuard(s: State) {
-    return guard({
+    return this.unsettledGuard({
+      dropId: s.order.dropId,
+      items: s.order.items,
       updatedAt: s.order.updatedAt,
       status: 'PAYMENT_PENDING',
       paymentStatus: 'CREATED',
@@ -237,6 +258,8 @@ export class FinancialWorkflow extends PaymentWorkflow {
       status?: State['a']['status'];
       due?: number;
       claim?: boolean;
+      replacement?: symbol;
+      checks?: Actions;
     } = {},
   ) {
     requireExecutable(s.e);
@@ -272,7 +295,24 @@ export class FinancialWorkflow extends PaymentWorkflow {
         )
     )
       throw new WorkflowError('INVALID_AUTHORITY');
+    const replacing = opts.replacement === replacementPermit;
+    if (replacing) {
+      if (
+        s.e.capture?.state !== 'PROVIDER_REJECTED' ||
+        !s.e.capture.rejection ||
+        (s.e.capture.generation ?? 1) !== 1 ||
+        next.capture?.generation !== 2 ||
+        next.capture.state !== 'PREPARED' ||
+        JSON.stringify(next.captureHistory) !== JSON.stringify([s.e.capture])
+      )
+        throw new WorkflowError('INVALID_AUTHORITY');
+    } else if (
+      JSON.stringify(next.captureHistory) !== JSON.stringify(s.e.captureHistory)
+    ) {
+      throw new WorkflowError('INVALID_AUTHORITY');
+    }
     for (const kind of ['capture', 'cancel'] as const) {
+      if (kind === 'capture' && replacing) continue;
       const old = s.e[kind],
         n = next[kind];
       if (
@@ -286,13 +326,22 @@ export class FinancialWorkflow extends PaymentWorkflow {
             'preparedAt',
             'retryUntil',
             'finalCapture',
+            'generation',
+            'requestShape',
+            'dispatchUntil',
           ].some(
             (k) => old[k as keyof typeof old] !== n[k as keyof typeof n],
           ) ||
           (!!old.dispatchedAt && old.dispatchedAt !== n.dispatchedAt) ||
           (!!old.observedAt && old.observedAt !== n.observedAt) ||
-          ['PREPARED', 'DISPATCHED', 'OBSERVED'].indexOf(n.state) <
-            ['PREPARED', 'DISPATCHED', 'OBSERVED'].indexOf(old.state))
+          (!!old.rejection &&
+            JSON.stringify(old.rejection) !== JSON.stringify(n.rejection)) ||
+          ['PREPARED', 'DISPATCHED', 'OBSERVED', 'PROVIDER_REJECTED'].indexOf(
+            n.state,
+          ) <
+            ['PREPARED', 'DISPATCHED', 'OBSERVED', 'PROVIDER_REJECTED'].indexOf(
+              old.state,
+            ))
       )
         throw new WorkflowError('INVALID_AUTHORITY');
     }
@@ -347,6 +396,7 @@ export class FinancialWorkflow extends PaymentWorkflow {
         },
       },
     ];
+    actions.push(...(opts.checks ?? []));
     if (opts.claim)
       actions.push(
         {
@@ -441,10 +491,132 @@ export class FinancialWorkflow extends PaymentWorkflow {
       amountCents: s.a.amountCents,
       currency: s.a.currency,
       finalCapture: true,
+      ...(kind === 'CAPTURE' ? { requestShape: 'SINGLE_CAPTURE' } : {}),
       preparedAt: iso(this.now()),
       retryUntil: iso(this.now() + RETRY_HORIZON_MS),
       state: 'PREPARED',
     });
+  }
+  private async recoveryProof(s: State) {
+    requireExecutable(s.e);
+    if (
+      s.cart.status !== 'PAYMENT_COMMITTING' ||
+      s.a.status !== 'CAPTURE_IN_PROGRESS' ||
+      s.order.status !== 'PAYMENT_PENDING' ||
+      s.a.settlement ||
+      s.cart.settlement ||
+      s.order.settlement ||
+      s.e.captureEvidence ||
+      s.e.releaseEvidence ||
+      s.e.cancel ||
+      !s.e.intentId
+    )
+      throw new WorkflowError('INVALID_AUTHORITY');
+    const p = await this.provider.retrieveIntent(s.e.intentId);
+    if (
+      !(await this.association(s, p)) ||
+      p.status !== 'requires_capture' ||
+      p.amountReceivedCents !== 0 ||
+      p.amountCapturableCents !== s.a.amountCents
+    )
+      throw new WorkflowError('INVALID_AUTHORITY');
+    const checks: Actions = [
+      {
+        ConditionCheck: {
+          TableName: this.commerce,
+          Key: orderKey(s.a.orderId),
+          ...this.orderGuard(s),
+        },
+      },
+    ];
+    for (const line of s.cart.items) {
+      const key = catalogKeys.inventory(s.a.dropId, line.productId);
+      const inventory = await readPayment(
+        this.client,
+        this.catalog,
+        key,
+        inventorySchema,
+      );
+      // load() proves Cart-owned lines against the pending Order and Attempt.
+      // PAYMENT_COMMITTING retains those embedded reservations. Aggregate stock
+      // may also include other owners and earlier sales; it is not ownership proof.
+      if (
+        !inventory ||
+        inventory.dropId !== s.cart.dropId ||
+        inventory.productId !== line.productId ||
+        inventory.reserved < line.quantity
+      )
+        throw new WorkflowError('INVALID_AUTHORITY');
+      checks.push({
+        ConditionCheck: {
+          TableName: this.catalog,
+          Key: key,
+          ...guard(inventory),
+        },
+      });
+    }
+    return checks;
+  }
+  // Local operator boundary only; never called by queue, webhook, HTTP or reconciler.
+  async classifyRejectedCapture(
+    s: State,
+    evidence: z.infer<typeof captureRejectionSchema>,
+    approved: boolean,
+  ) {
+    if (
+      approved !== true ||
+      s.e.capture?.state !== 'DISPATCHED' ||
+      (s.e.capture.generation ?? 1) !== 1
+    )
+      throw new WorkflowError('INVALID_AUTHORITY');
+    const rejection = captureRejectionSchema.parse(evidence);
+    if (
+      rejection.source !== 'OPERATOR' ||
+      !rejection.diagnostic.requestId ||
+      !rejection.requestAt ||
+      Date.parse(rejection.requestAt) < Date.parse(s.e.capture.dispatchedAt!) ||
+      Date.parse(rejection.requestAt) > this.now()
+    )
+      throw new WorkflowError('INVALID_AUTHORITY');
+    const checks = await this.recoveryProof(s);
+    return this.transition(
+      s,
+      {
+        ...s.e,
+        capture: { ...s.e.capture, state: 'PROVIDER_REJECTED', rejection },
+        stage: 'RECOVERY_REQUIRED',
+        financialMode: 'READ_ONLY',
+        recoveryRequired: true,
+        recoveryReason: 'PROVIDER_REQUEST_REJECTED',
+      },
+      { checks },
+    );
+  }
+  async prepareReplacementCapture(s: State, approved: boolean) {
+    if (
+      approved !== true ||
+      s.e.capture?.state !== 'PROVIDER_REJECTED' ||
+      !s.e.capture.rejection ||
+      (s.e.capture.generation ?? 1) !== 1 ||
+      s.e.captureHistory?.length
+    )
+      throw new WorkflowError('INVALID_AUTHORITY');
+    const checks = await this.recoveryProof(s);
+    const next = {
+      ...s.e,
+      captureHistory: [structuredClone(s.e.capture)],
+      capture: {
+        ...this.financialCommand(s, 'CAPTURE'),
+        id: `payment-capture:${s.a.paymentAttemptId}:2`,
+        generation: 2,
+        dispatchUntil: iso(this.now() + 120000),
+      },
+      stage: 'CAPTURE' as const,
+      financialMode: 'NORMAL' as const,
+    };
+    delete next.nextCheckAt;
+    // Preserve original Cart/payment timers and all generation-1 evidence.
+    return this.transition(s, next, { replacement: replacementPermit, checks });
   }
   async claimCapture(s: State) {
     requireExecutable(s.e);
@@ -692,6 +864,7 @@ export class FinancialWorkflow extends PaymentWorkflow {
     if (s.e.financialMode === 'READ_ONLY')
       return this.unknown(s, s.e.recoveryReason, false, p);
     const deadline =
+      s.e.capture?.dispatchUntil ??
       s.cart.committingDeadline ??
       iso(Date.parse(s.cart.paymentDeadline!) + 120000);
     if (
@@ -804,10 +977,19 @@ export class FinancialWorkflow extends PaymentWorkflow {
         (s.e.cancel || s.e.financialMode === 'CANCEL_ONLY'))
     )
       throw new WorkflowError('INVALID_AUTHORITY');
+    if (c.generation === 2 && this.now() >= Date.parse(c.dispatchUntil!)) {
+      await this.unknown(s);
+      return 'RECOVERY_REQUIRED';
+    }
+    if (kind === 'capture' && !c.requestShape) {
+      await this.unknown(s);
+      return 'RECOVERY_REQUIRED';
+    }
     if (
       this.now() >= Date.parse(c.retryUntil) ||
-      (s.cart.committingDeadline &&
-        this.now() >= Date.parse(s.cart.committingDeadline) &&
+      ((c.dispatchUntil ?? s.cart.committingDeadline) &&
+        this.now() >=
+          Date.parse((c.dispatchUntil ?? s.cart.committingDeadline)!) &&
         c.state !== 'PREPARED')
     ) {
       await this.unknown(s);
@@ -815,7 +997,7 @@ export class FinancialWorkflow extends PaymentWorkflow {
     }
     if (
       kind === 'capture' &&
-      this.now() >= Date.parse(s.cart.committingDeadline!)
+      this.now() >= Date.parse((c.dispatchUntil ?? s.cart.committingDeadline)!)
     ) {
       await this.selectCancel(s, 'EXPIRED');
       return 'CANCEL';
@@ -860,11 +1042,13 @@ export class FinancialWorkflow extends PaymentWorkflow {
       await this.reconcile(s);
       return 'RECONCILED';
     }
+    if (c.generation === 2) await this.recoveryProof(s);
     const fresh = await this.load(s.message);
     if (!fresh) return 'STALE_WORK';
     if (
-      (fresh.cart.committingDeadline &&
-        this.now() >= Date.parse(fresh.cart.committingDeadline)) ||
+      ((c.dispatchUntil ?? fresh.cart.committingDeadline) &&
+        this.now() >=
+          Date.parse((c.dispatchUntil ?? fresh.cart.committingDeadline)!)) ||
       this.now() >= Date.parse(c.retryUntil)
     ) {
       await this.unknown(fresh);
@@ -886,8 +1070,41 @@ export class FinancialWorkflow extends PaymentWorkflow {
     try {
       if (kind === 'capture') await this.provider.captureIntent(input);
       else await this.provider.cancelIntent(input);
-    } catch {
-      /* Any potentially dispatched result is reconciled, never presumed failure. */
+    } catch (error) {
+      if (
+        error instanceof ProviderError &&
+        error.code === 'PROVIDER_REQUEST_REJECTED' &&
+        error.diagnostic
+      ) {
+        const rejection = captureRejectionSchema.parse({
+          diagnostic: error.diagnostic,
+          recordedAt: iso(this.now()),
+          source: 'SDK',
+        });
+        await this.transition(s, {
+          ...s.e,
+          [kind]: { ...c, state: 'PROVIDER_REJECTED', rejection },
+          stage: 'RECOVERY_REQUIRED',
+          financialMode: 'READ_ONLY',
+          recoveryRequired: true,
+          recoveryReason: 'PROVIDER_REQUEST_REJECTED',
+        });
+        this.event(s, 'providerRequestRejected', 'PROVIDER_REQUEST_REJECTED');
+        return 'PROVIDER_REQUEST_REJECTED';
+      }
+      if (error instanceof ProviderError && error.diagnostic) {
+        await this.transition(s, {
+          ...s.e,
+          [kind]: { ...c, lastProviderDiagnostic: error.diagnostic },
+        });
+        const latest = await this.attempt(s.a.paymentAttemptId);
+        const current =
+          latest?.execution &&
+          (await this.load(paymentMessage(latest.execution.workflow)));
+        if (current) await this.reconcile(current);
+        return 'RECONCILED';
+      }
+      /* Unknown results retain canonical reconciliation and original identity. */
     }
     const after = await this.load(s.message);
     if (after) await this.reconcile(after);

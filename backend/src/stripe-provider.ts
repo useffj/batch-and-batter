@@ -5,6 +5,7 @@ import {
   createParameters,
   metadataSchema,
   providerStatus,
+  providerDiagnosticSchema,
 } from './payment-execution-domain';
 import {
   ProviderError,
@@ -59,9 +60,50 @@ async function safe<T>(fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();
   } catch (e) {
-    // Never retain/copy raw SDK errors: request bodies can contain submission secrets.
+    if (e instanceof ProviderError) throw e;
+    // Copy only bounded, allowlisted diagnostics, never message/raw/request/response.
+    const error = e as {
+      statusCode?: number;
+      requestId?: string;
+      rawType?: string;
+      type?: string;
+      code?: string;
+      param?: string;
+      headers?: Record<string, string>;
+    };
+    const diagnostic: Record<string, unknown> = {
+      boundary: Number.isInteger(error?.statusCode)
+        ? 'provider_response'
+        : 'network_or_sdk',
+    };
+    const values = {
+      httpStatus: error?.statusCode,
+      requestId: error?.requestId,
+      errorType: error?.rawType ?? error?.type,
+      code: error?.code,
+      param: error?.param,
+      shouldRetry:
+        error?.headers?.['stripe-should-retry'] === 'true'
+          ? true
+          : error?.headers?.['stripe-should-retry'] === 'false'
+            ? false
+            : undefined,
+    };
+    for (const [key, value] of Object.entries(values)) {
+      const field =
+        providerDiagnosticSchema.shape[
+          key as keyof typeof providerDiagnosticSchema.shape
+        ];
+      if (value !== undefined && field.safeParse(value).success)
+        diagnostic[key] = value;
+    }
+    const safeDiagnostic = providerDiagnosticSchema.parse(diagnostic);
     throw new ProviderError(
-      e instanceof ProviderError ? e.code : 'PROVIDER_UNKNOWN',
+      safeDiagnostic.httpStatus === 400 &&
+        safeDiagnostic.errorType === 'invalid_request_error'
+        ? 'PROVIDER_REQUEST_REJECTED'
+        : 'PROVIDER_UNKNOWN',
+      safeDiagnostic,
     );
   }
 }
@@ -172,7 +214,10 @@ export class StripePaymentProvider
   ): Promise<IntentSnapshot> {
     return safe(async () => {
       if (
-        c.idempotencyKey !== `payment-capture:${c.paymentAttemptId}` ||
+        ![
+          `payment-capture:${c.paymentAttemptId}`,
+          `payment-capture:${c.paymentAttemptId}:2`,
+        ].includes(c.idempotencyKey) ||
         !Number.isSafeInteger(c.amountCents) ||
         c.amountCents < 50 ||
         c.currency !== 'usd'
@@ -181,7 +226,7 @@ export class StripePaymentProvider
       return snapshot(
         await this.stripe.paymentIntents.capture(
           intentId.parse(c.intentId),
-          { amount_to_capture: c.amountCents, final_capture: true },
+          { amount_to_capture: c.amountCents },
           { idempotencyKey: c.idempotencyKey },
         ),
       );

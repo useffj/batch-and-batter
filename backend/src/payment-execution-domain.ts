@@ -71,6 +71,48 @@ export const commandSchema = z
       (c.state === 'PREPARED' ? !c.dispatchedAt : !!c.dispatchedAt),
     'Invalid command timing',
   );
+export const providerDiagnosticSchema = z.strictObject({
+  boundary: z.enum(['provider_response', 'network_or_sdk']),
+  httpStatus: z.number().int().min(100).max(599).optional(),
+  requestId: z
+    .string()
+    .regex(/^req_[A-Za-z0-9]{1,64}$/)
+    .optional(),
+  errorType: z
+    .enum([
+      'invalid_request_error',
+      'api_error',
+      'card_error',
+      'idempotency_error',
+      'rate_limit_error',
+    ])
+    .optional(),
+  code: z
+    .enum([
+      'parameter_unknown',
+      'parameter_invalid_integer',
+      'parameter_invalid_empty',
+      'idempotency_key_in_use',
+    ])
+    .optional(),
+  param: z
+    .enum(['final_capture', 'amount_to_capture', 'payment_intent'])
+    .optional(),
+  shouldRetry: z.boolean().optional(),
+});
+export const captureRejectionSchema = z
+  .strictObject({
+    diagnostic: providerDiagnosticSchema,
+    recordedAt: canonicalTime,
+    source: z.enum(['SDK', 'OPERATOR']),
+    requestAt: canonicalTime.optional(),
+  })
+  .refine(
+    (r) =>
+      r.diagnostic.boundary === 'provider_response' &&
+      r.diagnostic.httpStatus === 400 &&
+      r.diagnostic.errorType === 'invalid_request_error',
+  );
 export const financialCommandSchema = z
   .strictObject({
     id: z.string().max(200),
@@ -78,10 +120,15 @@ export const financialCommandSchema = z
     intentId,
     amountCents: z.number().int().positive(),
     currency: z.literal('usd'),
-    finalCapture: z.literal(true),
+    finalCapture: z.literal(true), // Historical local full-settlement intent, never a Stripe parameter.
+    generation: z.number().int().min(1).max(2).optional(),
+    requestShape: z.literal('SINGLE_CAPTURE').optional(),
+    dispatchUntil: canonicalTime.optional(),
+    rejection: captureRejectionSchema.optional(),
+    lastProviderDiagnostic: providerDiagnosticSchema.optional(),
     preparedAt: canonicalTime,
     retryUntil: canonicalTime,
-    state: z.enum(['PREPARED', 'DISPATCHED', 'OBSERVED']),
+    state: z.enum(['PREPARED', 'DISPATCHED', 'OBSERVED', 'PROVIDER_REJECTED']),
     dispatchedAt: canonicalTime.optional(),
     observedAt: canonicalTime.optional(),
     outcome: z.enum(['SUCCEEDED', 'CANCELED', 'UNKNOWN']).optional(),
@@ -129,6 +176,7 @@ export const executionSchema = z
     create: commandSchema,
     confirmations: z.array(commandSchema).max(8),
     capture: financialCommandSchema.optional(),
+    captureHistory: z.array(financialCommandSchema).max(1).optional(),
     cancel: financialCommandSchema.optional(),
     captureEvidence: captureEvidenceSchema.optional(),
     releaseEvidence: z.enum(['NEVER_DISPATCHED', 'CANCELED']).optional(),
@@ -155,6 +203,7 @@ export const executionSchema = z
         'DEADLINE',
         'PROVIDER_CONFLICT',
         'PROVIDER_UNKNOWN',
+        'PROVIDER_REQUEST_REJECTED',
         'SETTLEMENT_INVARIANT',
       ])
       .optional(),
@@ -168,10 +217,24 @@ export const executionSchema = z
           !c ||
           (c.intentId === e.intentId &&
             c.id ===
-              `payment-${c.kind.toLowerCase()}:${e.parameters.metadata.paymentAttemptId}` &&
+              `payment-${c.kind.toLowerCase()}:${e.parameters.metadata.paymentAttemptId}${c.kind === 'CAPTURE' && c.generation === 2 ? ':2' : ''}` &&
             c.amountCents === e.parameters.amountCents &&
             c.currency === e.parameters.currency),
       ) &&
+      ((e.capture?.generation ?? 1) === 2
+        ? !!e.capture?.dispatchUntil &&
+          e.captureHistory?.length === 1 &&
+          e.captureHistory[0].state === 'PROVIDER_REJECTED' &&
+          !!e.captureHistory[0].rejection &&
+          (e.captureHistory[0].generation ?? 1) === 1 &&
+          e.captureHistory[0].id ===
+            `payment-capture:${e.parameters.metadata.paymentAttemptId}` &&
+          e.captureHistory[0].intentId === e.intentId &&
+          e.captureHistory[0].amountCents === e.parameters.amountCents
+        : !e.captureHistory?.length) &&
+      (!e.capture ||
+        e.capture.state !== 'PROVIDER_REJECTED' ||
+        !!e.capture.rejection) &&
       (!e.captureEvidence ||
         (!!e.capture &&
           e.capture.state === 'OBSERVED' &&
