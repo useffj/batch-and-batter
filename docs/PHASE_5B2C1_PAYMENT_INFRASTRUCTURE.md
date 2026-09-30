@@ -171,3 +171,11 @@ atomic local SOLD/CONVERTED/PAID/CAPTURED settlement. No manual capture or inven
 5B2C3 controlled acceptance and 5B2C4 fault injection remain separately reviewed work. Production still
 requires tax/fee policy, production credentials/webhook, operators, security/domain review, notifications,
 Order management, refund/restock and production acceptance. Do not deploy merely because code merges.
+
+## Subsequent recovery infrastructure boundary
+
+The local [Phase 5B2C2A separation](PHASE_5B2C2A_RECOVERY_INFRASTRUCTURE_DLQ.md)
+adds a dedicated reconciler/Scheduler infrastructure-failure DLQ and an alarm using the
+existing payment-alerts topic. This is a later, separately gated change; the C1 results
+above remain historical. Payment admission remains disabled. The recurring
+EventAgeExceeded root cause remains unresolved; destination separation is not a fix.

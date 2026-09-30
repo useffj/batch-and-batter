@@ -310,3 +310,71 @@ test('SNS delivery policy limits CloudWatch to the account and payment alarm pre
     /:alarm:batch-and-batter-dev-payment-\*/,
   );
 });
+
+test('recovery infrastructure envelopes have a separate unconsumed encrypted DLQ and immediate SNS alarm', () => {
+  const id = find('RecoveryInfrastructureDlq', 'AWS::SQS::Queue');
+  const { Tags: _tags, ...queue } = r[id].Properties;
+  assert.deepEqual(queue, {
+    QueueName: 'batch-and-batter-dev-recovery-infrastructure-dlq',
+    MessageRetentionPeriod: 1209600,
+    SqsManagedSseEnabled: true,
+  });
+  for (const mapping of Object.values(
+    t.findResources('AWS::Lambda::EventSourceMapping'),
+  ))
+    assert.notDeepEqual(mapping.Properties.EventSourceArn, arn(id));
+  for (const q of Object.values(t.findResources('AWS::SQS::Queue')))
+    assert.notDeepEqual(
+      q.Properties.RedrivePolicy?.deadLetterTargetArn,
+      arn(id),
+    );
+  assert.deepEqual(r.CartExpiryReconcilerAsync.Properties.DestinationConfig, {
+    OnFailure: { Destination: arn(id) },
+  });
+  const schedule = r.CartExpiryRecoverySchedule.Properties;
+  assert.deepEqual(schedule.Target.DeadLetterConfig, { Arn: arn(id) });
+  assert.equal(schedule.GroupName.Ref, 'CartExpiryRecoveryGroup');
+  assert.equal(
+    schedule.Target.Input,
+    JSON.stringify({
+      source: 'batch-and-batter.cart-expiry',
+      operation: 'reconcileCartExpiry',
+      schemaVersion: 1,
+    }),
+  );
+  for (const prefix of ['CartExpiryWorker', 'PaymentWorker'])
+    assert.ok(
+      !JSON.stringify(statements(`${prefix}RoleDefaultPolicy`)).includes(id),
+    );
+  const alarm = r[find('RecoveryInfrastructureDlqNonEmpty')].Properties;
+  assert.equal(
+    alarm.AlarmName,
+    'batch-and-batter-dev-payment-RecoveryInfrastructureDlqNonEmpty',
+  );
+  assert.equal(alarm.Namespace, 'AWS/SQS');
+  assert.equal(alarm.MetricName, 'ApproximateNumberOfMessagesVisible');
+  assert.equal(alarm.Statistic, 'Maximum');
+  assert.equal(alarm.Period, 60);
+  assert.equal(alarm.Threshold, 1);
+  assert.equal(alarm.EvaluationPeriods, 1);
+  assert.equal(alarm.DatapointsToAlarm, 1);
+  assert.equal(alarm.ComparisonOperator, 'GreaterThanOrEqualToThreshold');
+  assert.equal(alarm.TreatMissingData, 'notBreaching');
+  assert.deepEqual(alarm.Dimensions, [
+    { Name: 'QueueName', Value: { 'Fn::GetAtt': [id, 'QueueName'] } },
+  ]);
+  assert.deepEqual(alarm.AlarmActions, [
+    { Ref: find('PaymentAlerts', 'AWS::SNS::Topic') },
+  ]);
+  const oldAlarm = r[find('CartExpiryDlqAlarm')].Properties;
+  assert.equal(oldAlarm.AlarmName, 'batch-and-batter-dev-cart-expiry-Dlq');
+  assert.deepEqual(oldAlarm.Dimensions, [
+    {
+      Name: 'QueueName',
+      Value: {
+        'Fn::GetAtt': [find('ReservationDeadLetterQueue'), 'QueueName'],
+      },
+    },
+  ]);
+  assert.equal(oldAlarm.AlarmActions, undefined);
+});

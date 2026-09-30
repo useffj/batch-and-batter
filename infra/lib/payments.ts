@@ -27,7 +27,11 @@ export function addPayments(
   catalog: dynamodb.Table,
   commerce: dynamodb.Table,
   operations: dynamodb.Table,
-  reconciler: { fn: lambda.Function; role: iam.Role },
+  reconciler: {
+    fn: lambda.Function;
+    role: iam.Role;
+    infrastructureDlq: sqs.Queue;
+  },
 ) {
   const policy = (
     role: iam.Role,
@@ -243,6 +247,28 @@ export function addPayments(
       },
     }),
   );
+  const infrastructureAlarm = new cw.Alarm(
+    stack,
+    'RecoveryInfrastructureDlqNonEmpty',
+    {
+      // Reuse the existing topic's account-scoped payment alarm ARN restriction.
+      alarmName: `${prefix}-payment-RecoveryInfrastructureDlqNonEmpty`,
+      metric:
+        reconciler.infrastructureDlq.metricApproximateNumberOfMessagesVisible({
+          period: Duration.minutes(1),
+          statistic: 'Maximum',
+        }),
+      threshold: 1,
+      evaluationPeriods: 1,
+      datapointsToAlarm: 1,
+      comparisonOperator:
+        cw.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+      treatMissingData: cw.TreatMissingData.NOT_BREACHING,
+      alarmDescription:
+        'Recovery infrastructure failure envelope; see PAYMENT_RECOVERY_RUNBOOK. Do not purge.',
+    },
+  );
+  infrastructureAlarm.addAlarmAction(new actions.SnsAction(topic));
   const custom = (
     name: string,
     component = 'reconciler',
