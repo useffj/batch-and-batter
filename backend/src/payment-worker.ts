@@ -1,23 +1,24 @@
 import { paymentMessageSchema } from './payment-execution-domain';
-import { WorkflowError, type PaymentWorkflow } from './payment-workflow';
+import type { PaymentWorkflow } from './payment-workflow';
 import type { StripeInbox } from './stripe-webhook';
+import {
+  paymentTransport,
+  type PaymentEvent,
+  type PaymentContext,
+  type TransportLog,
+} from './payment-transport';
 // Queue factory shared by tests and the dedicated financial entrypoint.
 export function createPaymentWorker(
   workflow: PaymentWorkflow,
   inbox: StripeInbox,
   queueArn: string,
+  write?: TransportLog,
 ) {
-  return async (event: {
-    Records: {
-      messageId: string;
-      eventSource: string;
-      eventSourceARN: string;
-      body: string;
-    }[];
-  }) => {
-    const batchItemFailures: { itemIdentifier: string }[] = [];
-    for (const record of event.Records) {
-      try {
+  return async (event: PaymentEvent, context: PaymentContext = {}) =>
+    paymentTransport(
+      event,
+      context,
+      async (record) => {
         if (
           record.eventSource !== 'aws:sqs' ||
           record.eventSourceARN !== queueArn ||
@@ -25,26 +26,10 @@ export function createPaymentWorker(
         )
           throw new Error('INVALID_MESSAGE');
         const message = paymentMessageSchema.parse(JSON.parse(record.body));
-        const outcome =
-          message.kind !== 'STRIPE_EVENT'
-            ? await workflow.run(message)
-            : await inbox.process(message, workflow);
-        console.info(JSON.stringify({ operation: 'paymentWorkflow', outcome }));
-      } catch (error) {
-        // Raw exception objects can contain provider request/response secrets.
-        console.info(
-          JSON.stringify({
-            operation: 'paymentWorkflow',
-            outcome:
-              error instanceof WorkflowError &&
-              error.code === 'LEGACY_PAYMENT_CONTRACT'
-                ? 'LEGACY_PAYMENT_CONTRACT'
-                : 'RETRY',
-          }),
-        );
-        batchItemFailures.push({ itemIdentifier: record.messageId });
-      }
-    }
-    return { batchItemFailures };
-  };
+        return message.kind !== 'STRIPE_EVENT'
+          ? workflow.run(message)
+          : inbox.process(message, workflow);
+      },
+      write,
+    );
 }

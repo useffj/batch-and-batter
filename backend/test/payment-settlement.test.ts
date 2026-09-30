@@ -1044,8 +1044,12 @@ for (const terminal of [false, true]) {
         ],
       });
       assert.equal(result.batchItemFailures.length, terminal ? 0 : 1);
+      const disposition = logs
+        .map((line) => JSON.parse(line))
+        .find((entry) => entry.operation === 'paymentTransportDisposition');
+      assert.equal(disposition.disposition, terminal ? 'ACK' : 'RETRY');
       if (!terminal)
-        assert.equal(JSON.parse(logs[0]).outcome, 'LEGACY_PAYMENT_CONTRACT');
+        assert.equal(disposition.outcome, 'LEGACY_PAYMENT_CONTRACT');
     } finally {
       console.info = original;
     }
