@@ -134,3 +134,62 @@ Generation 2 has its own bounded two-minute dispatch window; original Cart/payme
 ### Proposed later recovery, not authorized here
 
 Keep admission false. First deploy only after separate review and a responsibility-aware rollout approval. Reconfirm the same Stripe request evidence and canonical authorization, inspect the current durable command and inventory, then explicitly classify the rejected original command. Re-read the committed classification; separately authorize and atomically prepare generation 2 through the local operator boundary. Observe its ordinary durable dispatch and canonical settlement. Do not reuse generation 1, manually capture/cancel, alter inventory, or enable customer payment admission. If any predicate fails, retain responsibility and stop.
+
+## C3B2D payment transport telemetry (local implementation; not deployed)
+
+The 2026-09-30 C3B attempt reached requires_action / AUTHENTICATING /
+WAIT_FOR_CUSTOMER_ACTION, but a stale localhost relay prevented customer status
+polling. It did not complete C3B acceptance. Deadline recovery safely ended with
+Cart, Order and Attempt EXPIRED, Stripe canceled with zero received, inventory
+20 total / 0 reserved / 0 sold / 20 available, and no durable financial
+responsibility. There was one initial confirmation and no capture command.
+
+A separately authorized single payment-DLQ receive with visibility zero identified:
+
+- MessageId: `43beb7e7-934b-4b39-8978-a94f2a1d1a7c`.
+- Cart: `01M3SXJXZAKW7H5ZYH744BC04P`.
+- Attempt: `01M3SXVZFPYFDX112ERHP468CF`.
+- Order: `01M3SXVZFP5CG8A3R3Q98N4DNA`.
+- WORKFLOW / PAYMENT_WORKFLOW, revision 18; exact durable work absent.
+- Sent at 19:53:35.408 UTC; first received at 19:53:50.409 UTC.
+- Returned ApproximateReceiveCount 6, including the diagnostic receive and
+  receipts across queues; source maxReceiveCount 5.
+
+Automatic redrive is supported by source metadata and receive-count evidence.
+The exact application failure sequence remains **UNKNOWN**. Attempt-level RETRY
+logs cannot safely be attributed to this MessageId. Successful STALE_WORK
+invocations had zero batch failures; no business-logic or queue-policy change was
+justified. The message was left visible in the DLQ. This telemetry patch does not
+resolve the historical cause or authorize deletion, redrive, deployment, payment
+enablement, or another C3B attempt. PAYMENT_START_ENABLED remains false.
+
+The local patch emits one `paymentTransportDelivery` and one
+`paymentTransportDisposition` JSON record per SQS record. Fields are messageId,
+receiveCount, lambdaRequestId, queueArn, workType, revision, cartId and attemptId;
+the final record adds outcome and ACK/RETRY. Valid SQS MessageIds are retained
+exactly, never hashed. Missing or invalid metadata is null. Only positive safe
+integer receive counts are accepted. Cart/Attempt identifiers are extracted from
+validated work envelopes and strict ULID positions; absent identities are not
+inferred from timing. STRIPE_EVENT bodies do not contain these IDs, so those
+fields remain null. Raw storage keys and Stripe event IDs are not logged.
+
+All successfully returned processing outcomes retain ACK, including STALE_WORK,
+COMPLETED, SETTLED, NOT_DUE and recovery/rescheduling outcomes. Unknown returned
+labels are reported as RETURNED without changing ACK. A processing exception
+retains its MessageId in batchItemFailures and logs RETRY; the existing
+LEGACY_PAYMENT_CONTRACT category remains allowlisted. Initialization failures also
+produce per-record RETRY telemetry. No exception message or object is serialized.
+
+Transport logs and the worker's existing financial-event/metric emissions are
+best-effort: a throwing sink must not turn ACK into RETRY, suppress a required
+RETRY, or repeat processing. If the sink fails, records may be absent; telemetry
+cannot guarantee delivery or prove SQS deletion. Correlate the final disposition
+with Lambda REPORT and queue evidence. MessageId and receiveCount make delivered
+application invocations traceable, but failures before invocation still require
+service-level evidence.
+
+Never log ReceiptHandle, raw Body, arbitrary attributes, capabilities, client
+secrets, ConfirmationTokens, command/idempotency identities, keys, customer
+contact fields, card data, or provider exception payloads. No workflow, retry,
+visibility, redrive, concurrency, batch-size, IAM, admission, capture or
+reconciliation configuration changes are part of this phase.

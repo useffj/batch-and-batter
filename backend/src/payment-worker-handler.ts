@@ -8,8 +8,14 @@ import {
   paymentScope,
 } from './payment-runtime';
 import { paymentMetrics } from './payment-metrics';
+import {
+  bestEffortTelemetry,
+  paymentTransport,
+  type PaymentContext,
+} from './payment-transport';
 export async function handler(
   event: Parameters<ReturnType<typeof createPaymentWorker>>[0],
+  context: PaymentContext = {},
 ) {
   try {
     const scope = paymentScope(),
@@ -28,12 +34,14 @@ export async function handler(
       undefined,
       undefined,
       (entry) => {
-        console.info(JSON.stringify(entry));
+        bestEffortTelemetry(() => console.info(JSON.stringify(entry)));
         if (
           entry.outcome === 'SETTLEMENT_INVARIANT' ||
           entry.errorCategory === 'SETTLEMENT_INVARIANT'
         )
-          paymentMetrics('worker', { SettlementInvariantConflict: 1 });
+          bestEffortTelemetry(() =>
+            paymentMetrics('worker', { SettlementInvariantConflict: 1 }),
+          );
       },
     );
     const run = createPaymentWorker(
@@ -41,17 +49,19 @@ export async function handler(
       new StripeInbox(client, operations, scope, undefined, dispatch),
       process.env.PAYMENT_QUEUE_ARN ?? '',
     );
-    const result = await run(event);
-    paymentMetrics('worker', {
-      WorkerBatchFailure: result.batchItemFailures.length,
-    });
+    const result = await run(event, context);
+    bestEffortTelemetry(() =>
+      paymentMetrics('worker', {
+        WorkerBatchFailure: result.batchItemFailures.length,
+      }),
+    );
     return result;
   } catch {
-    paymentMetrics('worker', { WorkerBatchFailure: event.Records.length });
-    return {
-      batchItemFailures: event.Records.map((r) => ({
-        itemIdentifier: r.messageId,
-      })),
-    };
+    bestEffortTelemetry(() =>
+      paymentMetrics('worker', { WorkerBatchFailure: event.Records.length }),
+    );
+    return paymentTransport(event, context, async () => {
+      throw new Error('WORKER_SETUP_FAILED');
+    });
   }
 }
