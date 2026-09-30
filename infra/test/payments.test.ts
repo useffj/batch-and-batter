@@ -31,11 +31,37 @@ const parameter = (name: string) => ({
   ],
 });
 
-test('admission is literally false; account bootstrap empty; app settings exact', () => {
+test('admission parameter defaults false; account bootstrap empty; app settings exact', () => {
   const a = fn('ApplicationApi');
   assert.equal(a.Timeout, 15);
   assert.equal(a.MemorySize, 256);
-  assert.equal(a.Environment.Variables.PAYMENT_START_ENABLED, 'false');
+  assert.deepEqual(a.Environment.Variables.PAYMENT_START_ENABLED, {
+    Ref: 'PaymentStartEnabled',
+  });
+  const parameter = t.toJSON().Parameters.PaymentStartEnabled;
+  assert.equal(parameter.Type, 'String');
+  assert.equal(parameter.Default, 'false');
+  assert.deepEqual(parameter.AllowedValues, ['false', 'true']);
+  assert.match(parameter.Description, /NEW payment admission/);
+  for (const prefix of [
+    'PaymentWorker',
+    'CartExpiryWorker',
+    'CartExpiryReconciler',
+    'StripeWebhook',
+  ]) {
+    assert.equal(
+      fn(prefix).Environment.Variables.PAYMENT_START_ENABLED,
+      undefined,
+    );
+    assert.ok(!JSON.stringify(fn(prefix)).includes('PaymentStartEnabled'));
+  }
+  const refs = Object.entries(r).filter(([, resource]) =>
+    JSON.stringify(resource).includes('PaymentStartEnabled'),
+  );
+  assert.deepEqual(
+    refs.map(([id]) => id),
+    [find('ApplicationApi', 'AWS::Lambda::Function')],
+  );
   assert.equal(a.Environment.Variables.STRIPE_ENVIRONMENT, 'dev');
   assert.equal(t.toJSON().Parameters.StripeSandboxAccountId.Default, '');
 });
@@ -377,4 +403,33 @@ test('recovery infrastructure envelopes have a separate unconsumed encrypted DLQ
     },
   ]);
   assert.equal(oldAlarm.AlarmActions, undefined);
+});
+
+test('resolving false versus true changes only the application admission environment', () => {
+  const resolveAdmission = (value: string) =>
+    JSON.parse(
+      JSON.stringify(r, (_key, node) =>
+        node &&
+        typeof node === 'object' &&
+        Object.keys(node).length === 1 &&
+        node.Ref === 'PaymentStartEnabled'
+          ? value
+          : node,
+      ),
+    );
+  const disabled = resolveAdmission(
+    t.toJSON().Parameters.PaymentStartEnabled.Default,
+  );
+  const enabled = resolveAdmission('true');
+  const id = find('ApplicationApi', 'AWS::Lambda::Function');
+  assert.equal(
+    disabled[id].Properties.Environment.Variables.PAYMENT_START_ENABLED,
+    'false',
+  );
+  assert.equal(
+    enabled[id].Properties.Environment.Variables.PAYMENT_START_ENABLED,
+    'true',
+  );
+  enabled[id].Properties.Environment.Variables.PAYMENT_START_ENABLED = 'false';
+  assert.deepEqual(enabled, disabled);
 });

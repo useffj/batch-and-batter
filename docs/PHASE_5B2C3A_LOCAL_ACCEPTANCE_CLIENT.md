@@ -146,3 +146,47 @@ acceptance, remains the separately approved C3A live gate.
 - Formatting and git diff --check passed. Existing web/backend/infra/CI files unchanged.
 - No real ConfirmationToken, PaymentIntent, Cart or Drop was created, and no payment
   start was submitted. Live SDK rendering remains part of the later authorized gate.
+
+## Phase 5B2C3A1 — explicit deployment-time admission
+
+Local patch pending review; no deployment or payment enablement is authorized here.
+`PaymentStartEnabled` is a nonsecret CloudFormation String parameter with Default
+`false` and AllowedValues `false` / `true`. Only the Application Lambda's
+`PAYMENT_START_ENABLED` environment references it. Only literal `true` allows NEW
+payment admission; accepted-payment recovery, settlement, webhook and reconciliation
+remain independent of this flag.
+
+CloudFormation normally preserves previous parameter values on updates. The default
+is therefore NOT the relock mechanism. The normal/dev deployment path is the following
+helper, which explicitly supplies false and uses `--previous-parameters true` to
+preserve all other values, including `StripeSandboxAccountId`:
+
+```sh
+cd infra
+npm run deploy:dev
+```
+
+Only during a separately reviewed and authorized acceptance window:
+
+```sh
+npm run deploy:dev -- --payment-start-enabled=true
+```
+
+Post-test relock must explicitly deploy false:
+
+```sh
+npm run deploy:dev -- --payment-start-enabled=false
+```
+
+The helper targets `batch-and-batter-dev`, profile `batch-and-batter-dev`, region
+`us-east-2`. It always supplies `--parameters batch-and-batter-dev:PaymentStartEnabled=VALUE`;
+it never infers true from environment variables or previous stack state. The ordinary
+no-option helper also explicitly relocks false even after a prior true deployment.
+Direct `npx cdk deploy` or CloudFormation console calls bypass this helper and MUST
+likewise explicitly supply the flag; do not use an omitted parameter as a safety gate.
+Do not use `--previous-parameters false`, which could reset unrelated configuration.
+
+Each enable/relock still requires its reviewed read-only diff and live pre/post checks.
+Configuration deployment is not an instantaneous global barrier: account for in-flight
+requests and verify Lambda update completion and the live environment. Disabling NEW
+admission must never stop recovery of payments already accepted.
