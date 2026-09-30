@@ -214,7 +214,14 @@ export function addPayments(
       methods: [method],
       integration: new integrations.HttpLambdaIntegration(id, application),
     });
-  application.addEnvironment('PAYMENT_START_ENABLED', 'false');
+  const admission = new CfnParameter(stack, 'PaymentStartEnabled', {
+    type: 'String',
+    default: 'false',
+    allowedValues: ['false', 'true'],
+    description:
+      'Nonsecret NEW payment admission only; true requires a reviewed acceptance window. Existing payment recovery remains enabled.',
+  });
+  application.addEnvironment('PAYMENT_START_ENABLED', admission.valueAsString);
   application.addEnvironment('STRIPE_ENVIRONMENT', 'dev');
   application.addEnvironment('STRIPE_ACCOUNT_ID', account.valueAsString);
   application.addEnvironment(

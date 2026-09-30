@@ -24,3 +24,15 @@ Default context is `environment=dev`. Other environments fail until protective s
 For an approved read-only AWS comparison, use profile `batch-and-batter-dev`, region `us-east-2`, and `cdk diff --no-change-set` to avoid creating a change set. No deployment or AWS seed is authorized by these instructions.
 
 See [Phase 3 service guide](../docs/PHASE_3_AWS_INFRASTRUCTURE.md) for original resources and [Phase 4A guide](../docs/PHASE_4_CATALOG_AND_DROPS.md) for the current read routes, exact IAM scope, packaging and validation.
+
+## Reviewed DEV deployments and payment admission
+
+After separate deployment approval, the normal path from `infra/` is
+`npm run deploy:dev`. This explicitly supplies `PaymentStartEnabled=false` while
+preserving other existing CloudFormation parameter values. Only during an authorized
+acceptance window use `npm run deploy:dev -- --payment-start-enabled=true`; explicitly
+relock afterward with `npm run deploy:dev -- --payment-start-enabled=false`.
+Do not rely on an omitted CloudFormation parameter to relock a previously enabled
+stack. Direct CDK/console deployments bypass this helper and must explicitly set the
+flag. See [the C3A deployment procedure](../docs/PHASE_5B2C3A_LOCAL_ACCEPTANCE_CLIENT.md#phase-5b2c3a1--explicit-deployment-time-admission).
+No deployment is authorized by this documentation alone.
