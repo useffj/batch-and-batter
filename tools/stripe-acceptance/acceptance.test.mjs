@@ -10,8 +10,10 @@ import {
   preview,
   elementsOptions,
   startRequest,
+  confirmRequest,
+  paymentView,
 } from './contract.mjs';
-import { createFlow, newKey } from './flow.mjs';
+import { createFlow, createContinuation, newKey } from './flow.mjs';
 const cartId = '01K5J100000000000000000001';
 const productId = '01K5J100000000000000000002';
 const capability = Buffer.alloc(32, 1).toString('base64url');
@@ -579,4 +581,286 @@ test('setup diagnostic is fixed and local tooling never logs raw failures', asyn
 test('diagnostic renderer rejects unrecognized code and send-state values', async () => {
   const { diagnostic } = await import('./flow.mjs');
   safeStatus(diagnostic(poison, poison), 'HARNESS_SETUP_INVALID', 'ambiguous');
+});
+
+function continuationFixture(overrides = {}) {
+  const calls = { action: 0, confirm: [], reads: 0, notices: [] };
+  const actionView = {
+    status: 'action_required',
+    clientSecret: 'synthetic-private-action',
+    etag,
+    paymentDeadline: '2099-10-05T18:04:00.000Z',
+    continuationGeneration: 1,
+  };
+  const continuePayment = createContinuation({
+    cartId,
+    capability,
+    stripe: {
+      handleNextAction: async (value) => {
+        calls.action++;
+        assert.deepEqual(value, { clientSecret: 'synthetic-private-action' });
+        return {};
+      },
+    },
+    getStatus: async () => {
+      calls.reads++;
+      return {
+        ...actionView,
+        ...(calls.reads > 2 ? { status: 'processing' } : {}),
+      };
+    },
+    sendConfirm: async (request) => {
+      calls.confirm.push(structuredClone(request));
+      return { accepted: true, sent: 'yes' };
+    },
+    onStatus: (text) => calls.notices.push(text),
+    sleep: async () => {},
+    attempts: 2,
+    ...overrides,
+  });
+  return { calls, continuePayment, actionView };
+}
+test('accepted start enters next action once and continues once with no new token', async () => {
+  const c = continuationFixture();
+  const f = flow({ continuePayment: c.continuePayment });
+  const result = await f.pay(input);
+  await f.pay(input);
+  await c.continuePayment();
+  assert.equal(f.calls.token, 1);
+  assert.equal(f.calls.sent.length, 1);
+  assert.equal(c.calls.action, 1);
+  assert.equal(c.calls.confirm.length, 1);
+  assert.deepEqual(c.calls.confirm[0].body, { continuationGeneration: 1 });
+  assert.equal(c.calls.confirm[0].etag, etag);
+  assert.match(result, /HARNESS_PAYMENT_PROCESSING/);
+  assert.doesNotMatch(
+    [result, ...c.calls.notices].join(' '),
+    /synthetic-private-action|ctoken_|client_secret/,
+  );
+});
+for (const kind of ['missing', 'throw', 'error']) {
+  test(`next action ${kind} stops safely without continuation or repeated action`, async () => {
+    let invocations = 0;
+    const c = continuationFixture({
+      stripe:
+        kind === 'missing'
+          ? {}
+          : {
+              handleNextAction: async () => {
+                invocations++;
+                if (kind === 'throw')
+                  throw Error(
+                    'private@example.invalid client_secret ctoken_private',
+                  );
+                return {
+                  error: {
+                    message:
+                      'private@example.invalid client_secret ctoken_private',
+                  },
+                };
+              },
+            },
+    });
+    const result = await c.continuePayment();
+    await c.continuePayment();
+    assert.match(
+      result,
+      new RegExp(
+        kind === 'error'
+          ? 'HARNESS_AUTHENTICATION_FAILED'
+          : 'HARNESS_NEXT_ACTION_UNAVAILABLE',
+      ),
+    );
+    assert.match(result, /Payment start already accepted/);
+    assert.doesNotMatch(result, /private@|client_secret|ctoken_/);
+    assert.equal(c.calls.confirm.length, 0);
+    assert.ok(invocations <= 1);
+  });
+}
+for (const kind of ['throw', 'ambiguous', 'reject']) {
+  test(`continuation ${kind} never automatically replays or repeats authentication`, async () => {
+    let sent = 0;
+    const c = continuationFixture({
+      sendConfirm: async () => {
+        sent++;
+        if (kind === 'throw') throw Error('secret');
+        return kind === 'ambiguous'
+          ? { sent: 'ambiguous' }
+          : { sent: 'yes', accepted: false };
+      },
+    });
+    const result = await c.continuePayment();
+    await c.continuePayment();
+    assert.match(
+      result,
+      new RegExp(
+        kind === 'reject'
+          ? 'HARNESS_CONFIRM_REQUEST_REJECTED'
+          : 'HARNESS_CONFIRM_REQUEST_AMBIGUOUS',
+      ),
+    );
+    assert.equal(sent, 1);
+    assert.equal(c.calls.action, 1);
+  });
+}
+for (const afterAction of [false, true]) {
+  test(`deadline ${afterAction ? 'after' : 'before'} authentication prevents continuation`, async () => {
+    let clock = 0;
+    const c = continuationFixture({
+      now: () => clock,
+      stripe: {
+        handleNextAction: async () => {
+          clock = Date.parse('2099-10-05T18:04:00.000Z');
+          return {};
+        },
+      },
+    });
+    if (!afterAction) clock = Date.parse('2099-10-05T18:04:00.000Z');
+    assert.match(await c.continuePayment(), /HARNESS_PAYMENT_DEADLINE_ELAPSED/);
+    assert.equal(c.calls.confirm.length, 0);
+  });
+}
+test('bounded polling waits for asynchronous action status and uses fresh payment ETag', async () => {
+  let reads = 0;
+  const fresh = '"' + 'b'.repeat(64) + '"';
+  const c = continuationFixture({
+    getStatus: async () => {
+      reads++;
+      return {
+        ...c.actionView,
+        status:
+          reads === 1
+            ? 'payment_pending'
+            : reads === 4
+              ? 'paid'
+              : 'action_required',
+        etag: reads >= 3 ? fresh : etag,
+      };
+    },
+  });
+  assert.match(await c.continuePayment(), /Backend reports paid/);
+  assert.equal(c.calls.confirm[0].etag, fresh);
+});
+test('webhook advancement after browser action skips unnecessary continuation', async () => {
+  let reads = 0;
+  const c = continuationFixture({
+    getStatus: async () => ({
+      ...c.actionView,
+      status: ++reads === 1 ? 'action_required' : 'processing',
+    }),
+  });
+  assert.match(await c.continuePayment(), /HARNESS_PAYMENT_PROCESSING/);
+  assert.equal(c.calls.confirm.length, 0);
+});
+test('payment relay allows only safe status fields and keeps client secret out of URLs and continuation', async () => {
+  const upstreamCalls = [];
+  await relay(
+    async (call) => {
+      const view = await (
+        await call('/payment', { cartId, capability })
+      ).json();
+      assert.equal(view.clientSecret, 'synthetic-private-action');
+      assert.equal(view.raw, undefined);
+      const result = await (
+        await call('/confirm', {
+          cartId,
+          capability,
+          etag,
+          key: newKey(),
+          body: { continuationGeneration: 1 },
+        })
+      ).json();
+      assert.equal(result.accepted, true);
+    },
+    async (url, options) => {
+      upstreamCalls.push({ url, options });
+      if (url.endsWith('/payment'))
+        return new Response(
+          JSON.stringify({
+            payment: {
+              status: 'action_required',
+              paymentDeadline: '2099-10-05T18:04:00.000Z',
+              continuationGeneration: 1,
+              clientSecret: 'synthetic-private-action',
+              raw: 'private',
+            },
+          }),
+          { headers: { etag } },
+        );
+      return new Response('{}', { status: 202 });
+    },
+    true,
+  );
+  assert.equal(upstreamCalls.length, 2);
+  assert.ok(
+    upstreamCalls.every(
+      (c) => !c.url.includes(capability) && !c.url.includes('secret'),
+    ),
+  );
+  assert.doesNotMatch(upstreamCalls[1].options.body, /secret|ctoken|customer/);
+});
+test('payment view drops secrets outside action state and rejects malformed contracts', () => {
+  const p = {
+    status: 'processing',
+    paymentDeadline: '2099-10-05T18:04:00.000Z',
+    continuationGeneration: 1,
+    clientSecret: 'private',
+  };
+  assert.equal(paymentView({ payment: p }, etag).clientSecret, undefined);
+  assert.throws(() =>
+    paymentView({ payment: { ...p, status: 'raw-private' } }, etag),
+  );
+  assert.throws(() =>
+    confirmRequest({
+      cartId,
+      capability,
+      etag,
+      key: newKey(),
+      body: { continuationGeneration: 1, clientSecret: 'private' },
+    }),
+  );
+});
+
+test('local continuation remains disabled by default and reports a continuation-specific code', async () => {
+  await relay(
+    async (call) => {
+      const response = await call('/confirm', {
+        cartId,
+        capability,
+        etag,
+        key: newKey(),
+        body: { continuationGeneration: 1 },
+      });
+      assert.equal(response.status, 403);
+      assert.equal(
+        (await response.json()).code,
+        'HARNESS_CONFIRM_REQUEST_REJECTED',
+      );
+    },
+    async () => {
+      throw Error('Must not reach upstream');
+    },
+  );
+});
+test('concurrent accepted-flow events cannot duplicate an in-flight authentication', async () => {
+  let finish;
+  const gate = new Promise((resolve) => {
+    finish = resolve;
+  });
+  let actions = 0;
+  const c = continuationFixture({
+    stripe: {
+      handleNextAction: async () => {
+        actions++;
+        await gate;
+        return {};
+      },
+    },
+  });
+  const first = c.continuePayment();
+  await c.continuePayment();
+  finish();
+  await first;
+  assert.equal(actions, 1);
+  assert.equal(c.calls.confirm.length, 1);
 });

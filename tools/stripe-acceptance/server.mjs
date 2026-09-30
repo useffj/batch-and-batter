@@ -6,6 +6,8 @@ import {
   ORIGIN,
   setup,
   startRequest,
+  confirmRequest,
+  paymentView,
   preview,
   requireValue,
 } from './contract.mjs';
@@ -39,9 +41,16 @@ export function handler(config, upstream = fetch) {
         'Content-Security-Policy':
           "default-src 'none'; script-src 'self' https://js.stripe.com; frame-src https://js.stripe.com https://hooks.stripe.com; connect-src 'self' https://*.stripe.com; img-src https://*.stripe.com; style-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
       });
-      if (req.url === '/start' && typeof body === 'object' && !body.sent)
+      if (
+        ['/start', '/confirm'].includes(req.url) &&
+        typeof body === 'object' &&
+        !body.sent
+      )
         body = {
-          code: 'HARNESS_START_REQUEST_REJECTED',
+          code:
+            req.url === '/confirm'
+              ? 'HARNESS_CONFIRM_REQUEST_REJECTED'
+              : 'HARNESS_START_REQUEST_REJECTED',
           sent: 'no',
           accepted: false,
         };
@@ -72,7 +81,10 @@ export function handler(config, upstream = fetch) {
         );
       if (req.method === 'GET' && req.url === '/config')
         return reply(200, config);
-      if (req.method !== 'POST' || !['/cart', '/start'].includes(req.url))
+      if (
+        req.method !== 'POST' ||
+        !['/cart', '/start', '/payment', '/confirm'].includes(req.url)
+      )
         return reply(404, { error: 'Not found.' });
       if (
         req.headers.origin !== ORIGIN ||
@@ -80,7 +92,7 @@ export function handler(config, upstream = fetch) {
         req.headers['content-type'] !== 'application/json'
       )
         return reply(403, { error: 'Local JSON request required.' });
-      if (req.url === '/start' && !config.allowStart)
+      if (['/start', '/confirm'].includes(req.url) && !config.allowStart)
         return reply(403, { error: 'Local payment submission disabled.' });
       const chunks = [];
       let bytes = 0;
@@ -130,22 +142,39 @@ export function handler(config, upstream = fetch) {
         requireValue(cart.pickups.length > 0);
         return reply(200, cart);
       }
-      const request = startRequest(value);
+      if (req.url === '/payment') {
+        const { cartId, capability } = setup(value);
+        const response = await call(`/carts/${cartId}/payment`, {
+          headers: { 'X-Cart-Token': capability },
+        });
+        requireValue(response.ok);
+        return reply(
+          200,
+          paymentView(await response.json(), response.headers.get('etag')),
+        );
+      }
+      const confirming = req.url === '/confirm';
+      const request = confirming ? confirmRequest(value) : startRequest(value);
       // Construct the upstream payload/headers explicitly: no arbitrary forwarding.
       startDispatched = true;
-      const response = await call(`/carts/${request.cartId}/payment/start`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Cart-Token': request.capability,
-          'If-Match': request.etag,
-          'Idempotency-Key': request.key,
+      const response = await call(
+        `/carts/${request.cartId}/payment/${confirming ? 'confirm' : 'start'}`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Cart-Token': request.capability,
+            'If-Match': request.etag,
+            'Idempotency-Key': request.key,
+          },
+          body: JSON.stringify(request.body),
         },
-        body: JSON.stringify(request.body),
-      });
+      );
       // Never forward raw provider/backend error payloads, secrets or customer data.
       return reply(200, {
-        accepted: response.status === 201 || response.status === 200,
+        accepted: confirming
+          ? response.status === 202
+          : response.status === 201 || response.status === 200,
         status: response.status,
         sent: 'yes',
         ...(response.status >= 500 ? { ambiguous: true } : {}),
@@ -153,7 +182,9 @@ export function handler(config, upstream = fetch) {
     } catch {
       return reply(startDispatched ? 502 : 400, {
         code: startDispatched
-          ? 'HARNESS_START_REQUEST_AMBIGUOUS'
+          ? req.url === '/confirm'
+            ? 'HARNESS_CONFIRM_REQUEST_AMBIGUOUS'
+            : 'HARNESS_START_REQUEST_AMBIGUOUS'
           : 'HARNESS_SETUP_INVALID',
         sent: startDispatched ? 'ambiguous' : 'no',
       });

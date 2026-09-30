@@ -824,6 +824,7 @@ for (const outcome of [
   'requires_payment_method',
   'canceled',
   'succeeded',
+  'requires_action',
 ] as const) {
   test(`automatic customer action reconciles ${outcome} without another confirmation`, async () => {
     const f = await fixture();
@@ -864,6 +865,20 @@ for (const outcome of [
     assert.equal(f.cart().paymentDeadline, deadline);
     assert.equal(f.inventory().reserved, 2);
     assert.equal(f.inventory().sold, 0);
+    const expected = {
+      requires_capture: 'CLAIM_CAPTURE',
+      processing: 'VERIFY_AUTHORIZATION',
+      requires_payment_method: 'CANCEL',
+      canceled: 'RESOLVE_FAILURE',
+      requires_action: 'WAIT_FOR_CUSTOMER_ACTION',
+      succeeded: 'RECOVERY_REQUIRED',
+    };
+    assert.equal(f.attempt().execution.stage, expected[outcome]);
+    assert.ok(
+      !JSON.stringify([...f.s.rows.values()]).includes(
+        'synthetic-action-secret',
+      ),
+    );
     if (outcome === 'requires_capture') {
       assert.equal(f.attempt().status, 'AUTHORIZED');
       assert.equal(f.attempt().execution.stage, 'CLAIM_CAPTURE');
