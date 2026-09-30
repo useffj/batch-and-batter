@@ -1,5 +1,5 @@
 import { setup, elementsOptions } from './contract.mjs';
-import { createFlow } from './flow.mjs';
+import { createFlow, diagnostic } from './flow.mjs';
 const el = (id) => document.getElementById(id);
 const status = (text) => {
   el('status').textContent = text;
@@ -15,6 +15,11 @@ async function post(path, body) {
     cache: 'no-store',
     credentials: 'omit',
   });
+  if (path === '/start' && !response.ok) {
+    // Only fixed relay protocol fields are consumed; never render raw bodies.
+    const result = await response.json();
+    return { accepted: false, sent: result.sent === 'no' ? 'no' : 'ambiguous' };
+  }
   if (!response.ok) throw new Error('Local request rejected.');
   return response.json();
 }
@@ -33,7 +38,7 @@ try {
       : 'Local payment submission disabled. No ConfirmationToken will be created.',
   );
 } catch {
-  status('Sandbox Stripe initialization failed. Check local configuration.');
+  status(diagnostic('HARNESS_SETUP_INVALID'));
 }
 el('setup').addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -69,9 +74,7 @@ el('setup').addEventListener('submit', async (event) => {
     loaded = true;
   } catch {
     el('capability').value = '';
-    status(
-      'Cart setup failed. Verify the active Cart, capability, OPEN Drop and pickup availability.',
-    );
+    status(diagnostic('HARNESS_SETUP_INVALID'));
   } finally {
     busy = false;
   }

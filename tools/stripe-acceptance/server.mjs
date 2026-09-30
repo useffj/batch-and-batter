@@ -39,8 +39,15 @@ export function handler(config, upstream = fetch) {
         'Content-Security-Policy':
           "default-src 'none'; script-src 'self' https://js.stripe.com; frame-src https://js.stripe.com https://hooks.stripe.com; connect-src 'self' https://*.stripe.com; img-src https://*.stripe.com; style-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
       });
+      if (req.url === '/start' && typeof body === 'object' && !body.sent)
+        body = {
+          code: 'HARNESS_START_REQUEST_REJECTED',
+          sent: 'no',
+          accepted: false,
+        };
       res.end(typeof body === 'string' ? body : JSON.stringify(body));
     };
+    let startDispatched = false;
     try {
       if (
         req.headers.host !== '127.0.0.1:4242' ||
@@ -125,6 +132,7 @@ export function handler(config, upstream = fetch) {
       }
       const request = startRequest(value);
       // Construct the upstream payload/headers explicitly: no arbitrary forwarding.
+      startDispatched = true;
       const response = await call(`/carts/${request.cartId}/payment/start`, {
         method: 'POST',
         headers: {
@@ -139,9 +147,16 @@ export function handler(config, upstream = fetch) {
       return reply(200, {
         accepted: response.status === 201 || response.status === 200,
         status: response.status,
+        sent: 'yes',
+        ...(response.status >= 500 ? { ambiguous: true } : {}),
       });
     } catch {
-      return reply(400, { error: 'Request could not be completed safely.' });
+      return reply(startDispatched ? 502 : 400, {
+        code: startDispatched
+          ? 'HARNESS_START_REQUEST_AMBIGUOUS'
+          : 'HARNESS_SETUP_INVALID',
+        sent: startDispatched ? 'ambiguous' : 'no',
+      });
     }
   };
 }

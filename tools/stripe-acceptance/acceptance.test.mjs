@@ -283,7 +283,11 @@ test('relay forwards exact real start contract only to fixed dev API; suppresses
   await relay(
     async (post) => {
       const response = await post('/start', r);
-      assert.deepEqual(await response.json(), { accepted: true, status: 201 });
+      assert.deepEqual(await response.json(), {
+        accepted: true,
+        status: 201,
+        sent: 'yes',
+      });
     },
     async (url, options) => {
       call = { url, options };
@@ -390,4 +394,189 @@ test('browser tooling has no persistent storage, logging or restricted-key acces
   assert.doesNotMatch(build, /stripe-acceptance/);
   const files = await readdir(new URL('../../web/src/app/', import.meta.url));
   assert.deepEqual(files.sort(), ['globals.css', 'layout.tsx', 'page.tsx']);
+});
+
+const sensitive = [
+  'ctoken_mockPrivate',
+  'pi_mockPrivate',
+  'pk_test_mockPrivate',
+  'rk_test_mockPrivate',
+  'whsec_mockPrivate',
+  capability,
+  'Idempotency-Key',
+  contact.email,
+  contact.phone,
+  '4242424242424242',
+  'CVC=123',
+  'raw Stripe error',
+];
+const poison = sensitive.join(' ');
+function safeStatus(value, code, sent) {
+  assert.match(value, new RegExp(code));
+  assert.ok(value.includes(`payment/start sent: ${sent}.`));
+  for (const secret of sensitive) assert.ok(!value.includes(secret));
+}
+for (const [name, code, overrides, value] of [
+  [
+    'contact',
+    'HARNESS_CONTACT_INVALID',
+    {},
+    { ...input, customer: { ...contact, phone: poison } },
+  ],
+  ['pickup', 'HARNESS_PICKUP_INVALID', {}, { ...input, pickupDate: poison }],
+  [
+    'expired',
+    'HARNESS_CART_EXPIRED',
+    { cart: { ...cart, shoppingExpiresAt: '2000-01-01T00:00:00Z' } },
+    input,
+  ],
+  [
+    'invalid deadline',
+    'HARNESS_CART_EXPIRED',
+    { cart: { ...cart, shoppingExpiresAt: poison } },
+    input,
+  ],
+  [
+    'elements returned error',
+    'HARNESS_ELEMENTS_SUBMIT_FAILED',
+    { elements: { submit: async () => ({ error: { message: poison } }) } },
+    input,
+  ],
+  [
+    'elements throw',
+    'HARNESS_ELEMENTS_SUBMIT_FAILED',
+    {
+      elements: {
+        submit: async () => {
+          throw new Error(poison);
+        },
+      },
+    },
+    input,
+  ],
+  [
+    'token returned error',
+    'HARNESS_CONFIRMATION_TOKEN_FAILED',
+    {
+      stripe: {
+        createConfirmationToken: async () => ({ error: { message: poison } }),
+      },
+    },
+    input,
+  ],
+  [
+    'token throw',
+    'HARNESS_CONFIRMATION_TOKEN_FAILED',
+    {
+      stripe: {
+        createConfirmationToken: async () => {
+          throw new Error(poison);
+        },
+      },
+    },
+    input,
+  ],
+  [
+    'request construction',
+    'HARNESS_START_REQUEST_REJECTED',
+    { key: () => poison },
+    input,
+  ],
+])
+  test(`sanitized ${name} failure never sends start`, async () => {
+    const { pay, calls } = flow(overrides);
+    safeStatus(await pay(value), code, 'no');
+    assert.equal(calls.sent.length, 0);
+  });
+test('transport exceptions remain ambiguous and preserve identical request', async () => {
+  const sent = [];
+  const { pay } = flow({
+    send: async (r) => {
+      sent.push(structuredClone(r));
+      throw new Error(poison);
+    },
+  });
+  safeStatus(await pay(input), 'HARNESS_START_REQUEST_AMBIGUOUS', 'ambiguous');
+  safeStatus(await pay(input), 'HARNESS_START_REQUEST_AMBIGUOUS', 'ambiguous');
+  assert.deepEqual(sent[0], sent[1]);
+});
+for (const sent of ['yes', 'no', 'ambiguous'])
+  test(`relay outcome ${sent} uses fixed diagnostic`, async () => {
+    const { pay } = flow({
+      send: async () => ({ accepted: false, sent, error: poison }),
+    });
+    safeStatus(
+      await pay(input),
+      sent === 'ambiguous'
+        ? 'HARNESS_START_REQUEST_AMBIGUOUS'
+        : 'HARNESS_START_REQUEST_REJECTED',
+      sent,
+    );
+  });
+for (const failure of ['rejected', 'transport', 'invalid'])
+  test(`relay ${failure} redacts raw data and distinguishes dispatch`, async () => {
+    let calls = 0;
+    await relay(
+      async (post) => {
+        const r = request();
+        if (failure === 'invalid') r.key = poison;
+        const response = await post('/start', r);
+        const output = await response.json();
+        assert.equal(
+          output.sent,
+          failure === 'transport'
+            ? 'ambiguous'
+            : failure === 'invalid'
+              ? 'no'
+              : 'yes',
+        );
+        for (const secret of sensitive)
+          assert.ok(!JSON.stringify(output).includes(secret));
+      },
+      async () => {
+        calls++;
+        if (failure === 'transport') throw new Error(poison);
+        return new Response(poison, { status: 409 });
+      },
+      true,
+    );
+    assert.equal(calls, failure === 'invalid' ? 0 : 1);
+  });
+
+test('upstream 5xx is known sent but financial outcome ambiguous', async () => {
+  await relay(
+    async (post) => {
+      const result = await (await post('/start', request())).json();
+      const { pay } = flow({ send: async () => result });
+      safeStatus(await pay(input), 'HARNESS_START_REQUEST_AMBIGUOUS', 'yes');
+    },
+    async () => new Response(poison, { status: 503 }),
+    true,
+  );
+});
+test('setup diagnostic is fixed and local tooling never logs raw failures', async () => {
+  const { diagnostic } = await import('./flow.mjs');
+  safeStatus(
+    diagnostic('HARNESS_SETUP_INVALID'),
+    'HARNESS_SETUP_INVALID',
+    'no',
+  );
+  for (const name of ['browser.mjs', 'flow.mjs', 'server.mjs']) {
+    const source = await readFile(new URL(name, import.meta.url), 'utf8');
+    assert.doesNotMatch(
+      source,
+      /console\.|error\.message|JSON\.stringify\(error\)/,
+    );
+    const writes =
+      source.match(/process\.(?:stdout|stderr)\.write\([\s\S]*?\);/g) ?? [];
+    for (const write of writes) {
+      for (const secret of sensitive) assert.ok(!write.includes(secret));
+      assert.doesNotMatch(write, /\b(?:error|request|body|capability)\b/);
+    }
+  }
+});
+
+test('diagnostic renderer rejects unrecognized code and send-state values', async () => {
+  const { diagnostic } = await import('./flow.mjs');
+  safeStatus(diagnostic(poison, poison), 'HARNESS_SETUP_INVALID', 'ambiguous');
 });
