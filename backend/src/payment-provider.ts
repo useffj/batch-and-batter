@@ -19,7 +19,7 @@ export interface IntentSnapshot {
   amountCapturableCents: number;
   currency: string;
   captureMethod: 'manual';
-  confirmationMethod: 'manual';
+  confirmationMethod: 'automatic';
   metadata: z.infer<typeof metadataSchema>;
   livemode: false;
   paymentFailed?: boolean;

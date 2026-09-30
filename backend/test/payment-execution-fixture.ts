@@ -39,6 +39,11 @@ export class FixtureProvider implements PaymentProvider {
     };
   }
   async createIntent(c: CreateIntentCommand) {
+    if (
+      c.parameters.confirmationMethod !== 'automatic' ||
+      c.parameters.captureMethod !== 'manual'
+    )
+      throw new Error('INVALID_CONFIRMATION_CONFIGURATION');
     this.calls.push({ kind: 'create', key: c.idempotencyKey });
     this.onCreate?.();
     if (this.timeoutCreate) throw new Error('synthetic provider timeout');
@@ -54,7 +59,7 @@ export class FixtureProvider implements PaymentProvider {
         amountCapturableCents: 0,
         status: 'requires_payment_method',
         captureMethod: 'manual',
-        confirmationMethod: 'manual',
+        confirmationMethod: 'automatic',
         livemode: false,
         metadata: c.parameters.metadata,
       });
@@ -79,6 +84,12 @@ export class FixtureProvider implements PaymentProvider {
     };
   }
   async confirmIntent(c: ConfirmIntentCommand) {
+    if (
+      c.confirmationSequence !== 0 ||
+      !c.confirmationTokenId ||
+      this.intents.get(c.intentId)?.confirmationMethod !== 'automatic'
+    )
+      throw new Error('INVALID_INITIAL_CONFIRMATION');
     this.calls.push({ kind: 'confirm', key: c.idempotencyKey });
     this.onConfirm?.();
     if (!this.confirmKeys.has(c.idempotencyKey)) {

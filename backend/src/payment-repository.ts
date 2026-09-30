@@ -277,7 +277,7 @@ export class PaymentRepository {
         amountCents: amount.totalCents,
         currency: amount.currency,
         captureMethod: 'manual',
-        confirmationMethod: 'manual',
+        confirmationMethod: 'automatic',
         paymentMethodTypes: ['card'],
         metadata: {
           environment: 'dev',

@@ -687,7 +687,7 @@ class FakeProvider implements PaymentProvider {
     amountReceivedCents: 0,
     currency: 'usd',
     captureMethod: 'manual',
-    confirmationMethod: 'manual',
+    confirmationMethod: 'automatic',
     amountCapturableCents: 900,
     livemode: false,
     metadata: {

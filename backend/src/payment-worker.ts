@@ -1,5 +1,5 @@
 import { paymentMessageSchema } from './payment-execution-domain';
-import type { PaymentWorkflow } from './payment-workflow';
+import { WorkflowError, type PaymentWorkflow } from './payment-workflow';
 import type { StripeInbox } from './stripe-webhook';
 // Queue factory shared by tests and the dedicated financial entrypoint.
 export function createPaymentWorker(
@@ -30,10 +30,17 @@ export function createPaymentWorker(
             ? await workflow.run(message)
             : await inbox.process(message, workflow);
         console.info(JSON.stringify({ operation: 'paymentWorkflow', outcome }));
-      } catch {
+      } catch (error) {
         // Raw exception objects can contain provider request/response secrets.
         console.info(
-          JSON.stringify({ operation: 'paymentWorkflow', outcome: 'RETRY' }),
+          JSON.stringify({
+            operation: 'paymentWorkflow',
+            outcome:
+              error instanceof WorkflowError &&
+              error.code === 'LEGACY_PAYMENT_CONTRACT'
+                ? 'LEGACY_PAYMENT_CONTRACT'
+                : 'RETRY',
+          }),
         );
         batchItemFailures.push({ itemIdentifier: record.messageId });
       }

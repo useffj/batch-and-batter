@@ -276,7 +276,9 @@ test('Attempt-only transitions advance payment ETag; stale continuation is rejec
   assert.equal(f.cart().updatedAt, cartUpdatedAt);
   assert.equal(after.payment.status, 'action_required');
   assert.equal(after.payment.clientSecret, 'synthetic-action-secret');
-  f.provider.intents.get('pi_Test1')!.status = 'requires_confirmation';
+  f.provider.intents.get('pi_Test1')!.status = 'requires_capture';
+  f.provider.intents.get('pi_Test1')!.amountCapturableCents =
+    f.provider.intents.get('pi_Test1')!.amountCents;
   await assert.rejects(
     f.customer.confirm({
       cartId: f.request.cartId,
@@ -287,12 +289,14 @@ test('Attempt-only transitions advance payment ETag; stale continuation is rejec
     }),
   );
 });
-test('same Attempt continuation advances one generation; replay neither advances nor extends grace', async () => {
+test('customer action wakes canonical retrieval; replay never reconfirms or extends grace', async () => {
   const f = await paymentFixture();
   await f.bind();
   await f.run();
   const deadline = f.cart().paymentDeadline;
-  f.provider.intents.get('pi_Test1')!.status = 'requires_confirmation';
+  f.provider.intents.get('pi_Test1')!.status = 'requires_capture';
+  f.provider.intents.get('pi_Test1')!.amountCapturableCents =
+    f.provider.intents.get('pi_Test1')!.amountCents;
   const current = await f.customer.get(f.request.cartId, tokenHash);
   const req = {
     cartId: f.request.cartId,
@@ -303,11 +307,11 @@ test('same Attempt continuation advances one generation; replay neither advances
   };
   await f.customer.confirm(req);
   await f.customer.confirm(req);
-  assert.equal(f.attempt().execution.confirmations.length, 2);
+  assert.equal(f.attempt().execution.confirmations.length, 1);
   assert.equal(f.cart().paymentDeadline, deadline);
   f.provider.outcome = 'requires_capture';
   await f.run();
-  assert.equal(f.provider.confirmKeys.size, 2);
+  assert.equal(f.provider.confirmKeys.size, 1);
   assert.equal(f.provider.intents.size, 1);
 });
 test('continuation at payment deadline fails closed', async () => {
@@ -363,7 +367,9 @@ test('local confirm route validates capability/revision/generation and productio
   const f = await paymentFixture();
   await f.bind();
   await f.run();
-  f.provider.intents.get('pi_Test1')!.status = 'requires_confirmation';
+  f.provider.intents.get('pi_Test1')!.status = 'requires_capture';
+  f.provider.intents.get('pi_Test1')!.amountCapturableCents =
+    f.provider.intents.get('pi_Test1')!.amountCents;
   const current = await f.customer.get(f.request.cartId, tokenHash);
   const event = {
     routeKey: 'POST /carts/{cartId}/payment/confirm',
@@ -544,7 +550,9 @@ test('confirmation receipt resolves a lost transaction response with stable acce
   const f = await paymentFixture();
   await f.bind();
   await f.run();
-  f.provider.intents.get('pi_Test1')!.status = 'requires_confirmation';
+  f.provider.intents.get('pi_Test1')!.status = 'requires_capture';
+  f.provider.intents.get('pi_Test1')!.amountCapturableCents =
+    f.provider.intents.get('pi_Test1')!.amountCents;
   const { etag } = await f.customer.get(f.request.cartId, tokenHash);
   const req = {
     cartId: f.request.cartId,
@@ -559,7 +567,7 @@ test('confirmation receipt resolves a lost transaction response with stable acce
   };
   assert.equal((await f.customer.confirm(req)).status, 202);
   assert.equal((await f.customer.confirm(req)).status, 202);
-  assert.equal(f.attempt().execution.confirmations.length, 2);
+  assert.equal(f.attempt().execution.confirmations.length, 1);
 });
 
 test('DynamoDB reads send only PK/SK, never queue envelope or revision fields as key attributes', async () => {

@@ -1548,3 +1548,12 @@ Batch & Batter does not need the most elaborate ecommerce architecture.
 It needs the smallest architecture that can reliably guarantee:
 
 **the right customer gets the right cookies, pays the right amount, knows when to pick them up, and cannot accidentally be promised inventory that does not exist.**
+
+
+## C3A2 confirmation compatibility
+
+Historical C3A exposed an incompatibility between Elements ConfirmationTokens and the originally selected manual confirmation. The corrected contract is **automatic confirmation + manual capture**. Initial server confirmation still sends the accepted ConfirmationToken after binding, with deterministic durable command identity. Stripe.js handleNextAction continues authentication; /payment/confirm only wakes canonical reconciliation, without a second confirmation generation.
+
+The immutable four-minute payment deadline still closes customer action admission. In-flight activity remains subject to canonical financial reconciliation; absence of a browser acknowledgment never proves absence of provider activity. Only exact canonical requires_capture establishes authorization. Capture requires durable claim and DISPATCHED authority; succeeded alone never means customer paid. Local atomic RESERVED-to-SOLD, CONVERTED, PAID and CAPTURED settlement remains required. Client secrets remain capability-protected, no-store, ephemeral, and absent from logs/work/receipts/URLs.
+
+This local correction does not enable payments or authorize deployment. A new C3A attempt requires review and a separately authorized deployment of the corrected code; payment admission remains false.

@@ -46,7 +46,7 @@ export const createParameters = z.strictObject({
   amountCents: z.number().int().min(50).max(99999999),
   currency: z.literal('usd'),
   captureMethod: z.literal('manual'),
-  confirmationMethod: z.literal('manual'),
+  confirmationMethod: z.literal('automatic'),
   paymentMethodTypes: z.tuple([z.literal('card')]),
   metadata: metadataSchema,
 });
@@ -122,7 +122,10 @@ export const executionSchema = z
       .max(100),
     confirmationTokenId,
     revision: z.number().int().nonnegative(),
-    parameters: createParameters,
+    // Persisted history preserves its original provider contract. Creation stays strict.
+    parameters: createParameters.extend({
+      confirmationMethod: z.enum(['manual', 'automatic']),
+    }),
     create: commandSchema,
     confirmations: z.array(commandSchema).max(8),
     capture: financialCommandSchema.optional(),

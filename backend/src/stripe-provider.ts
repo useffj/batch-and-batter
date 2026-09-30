@@ -36,7 +36,7 @@ function snapshot(p: Stripe.PaymentIntent): IntentSnapshot {
   if (
     p.livemode !== false ||
     p.capture_method !== 'manual' ||
-    p.confirmation_method !== 'manual' ||
+    p.confirmation_method !== 'automatic' ||
     p.payment_method_types.length !== 1 ||
     p.payment_method_types[0] !== 'card'
   )
@@ -49,7 +49,7 @@ function snapshot(p: Stripe.PaymentIntent): IntentSnapshot {
     amountCapturableCents: p.amount_capturable,
     currency: p.currency,
     captureMethod: 'manual',
-    confirmationMethod: 'manual',
+    confirmationMethod: 'automatic',
     livemode: false,
     metadata: metadataSchema.parse(p.metadata),
     paymentFailed: !!p.last_payment_error,
@@ -143,7 +143,7 @@ export class StripePaymentProvider
     return safe(async () => {
       if (
         !Number.isInteger(c.confirmationSequence) ||
-        c.confirmationSequence < 0 ||
+        c.confirmationSequence !== 0 ||
         c.idempotencyKey !==
           `payment-confirm:${c.paymentAttemptId}:${c.confirmationSequence}` ||
         (c.confirmationSequence === 0) !== !!c.confirmationTokenId

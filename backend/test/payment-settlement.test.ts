@@ -15,6 +15,7 @@ import { catalogKeys } from '../src/keys';
 import { dropId } from './fixtures';
 import { pid, tokenHash } from './cart-store';
 import { PaymentCustomer } from '../src/payment-workflow';
+import { createPaymentWorker } from '../src/payment-worker';
 
 async function fixture(products = 1) {
   const f = await paymentFixture(true, undefined, products);
@@ -814,4 +815,253 @@ test('temporary pre-deadline read outage does not prematurely close customer int
     (await f.customer.get(f.cart().cartId, tokenHash)).payment.status,
     'action_required',
   );
+});
+
+for (const outcome of [
+  'requires_capture',
+  'processing',
+  'requires_payment_method',
+  'canceled',
+  'succeeded',
+] as const) {
+  test(`automatic customer action reconciles ${outcome} without another confirmation`, async () => {
+    const f = await fixture();
+    f.provider.outcome = 'requires_action';
+    await f.authorize();
+    const deadline = f.cart().paymentDeadline;
+    assert.equal(f.attempt().status, 'AUTHENTICATING');
+    assert.equal(f.attempt().execution.stage, 'WAIT_FOR_CUSTOMER_ACTION');
+    const current = await f.customer.get(f.cart().cartId, tokenHash);
+    assert.equal(current.payment.status, 'action_required');
+    const p = f.provider.intents.get('pi_Test1')!;
+    p.status = outcome;
+    p.amountCapturableCents =
+      outcome === 'requires_capture' ? p.amountCents : 0;
+    p.amountReceivedCents = outcome === 'succeeded' ? p.amountCents : 0;
+    p.paymentFailed = outcome === 'requires_payment_method';
+    const request = {
+      cartId: f.cart().cartId,
+      tokenHash,
+      ifMatch: current.etag,
+      key: f.s.keyValue(),
+      continuationGeneration: 1,
+    };
+    await f.customer.confirm(request);
+    await f.customer.confirm(request);
+    const work = f.message();
+    await f.run();
+    await f.w.run(work);
+    assert.equal(
+      f.provider.calls.filter((c) => c.kind === 'confirm').length,
+      1,
+    );
+    assert.equal(
+      f.provider.calls.filter((c) => c.kind === 'capture').length,
+      0,
+    );
+    assert.equal(f.attempt().execution.confirmations.length, 1);
+    assert.equal(f.cart().paymentDeadline, deadline);
+    assert.equal(f.inventory().reserved, 2);
+    assert.equal(f.inventory().sold, 0);
+    if (outcome === 'requires_capture') {
+      assert.equal(f.attempt().status, 'AUTHORIZED');
+      assert.equal(f.attempt().execution.stage, 'CLAIM_CAPTURE');
+    }
+    assert.notEqual(
+      (await f.customer.get(f.cart().cartId, tokenHash)).payment.status,
+      'paid',
+    );
+  });
+}
+
+for (const [attemptStatus, cartStatus, customerStatus] of [
+  ['EXPIRED', 'EXPIRED', 'expired'],
+  ['FAILED', 'CANCELLED', 'failed'],
+  ['CANCELLED', 'CANCELLED', 'cancelled'],
+  ['CAPTURED', 'CONVERTED', 'paid'],
+] as const) {
+  test(`historical ${attemptStatus} is readable without provider access or execution`, async () => {
+    const f = await fixture();
+    if (attemptStatus === 'CAPTURED') {
+      await f.captured();
+      await f.run();
+    } else {
+      await f.authorize();
+      await f.w.selectCancel((await f.current())!, attemptStatus);
+      await f.run();
+      await f.run();
+    }
+    assert.equal(f.attempt().status, attemptStatus);
+    assert.equal(f.cart().status, cartStatus);
+    assert.equal(await f.w.completed(f.cart().paymentAttemptId), true);
+    const calls = f.provider.calls.length;
+    f.attempt().execution.parameters.confirmationMethod = 'manual';
+    const before = structuredClone(f.s.rows);
+    const a = await f.w.attempt(f.cart().paymentAttemptId);
+    assert.equal(a!.execution!.parameters.confirmationMethod, 'manual');
+    assert.equal(
+      (await f.customer.get(f.cart().cartId, tokenHash)).payment.status,
+      customerStatus,
+    );
+    assert.equal(await f.run(), 'STALE_WORK');
+    assert.equal(f.provider.calls.length, calls);
+    assert.deepEqual(f.s.rows, before);
+  });
+}
+for (const stage of [
+  'CREATE_INTENT',
+  'CONFIRM',
+  'WAIT_FOR_CUSTOMER_ACTION',
+  'CLAIM_CAPTURE',
+  'CAPTURE',
+  'CANCEL',
+  'VERIFY_CAPTURE',
+] as const) {
+  test(`legacy ${stage} retains responsibility and blocks all execution`, async () => {
+    const f = await fixture();
+    const state = (await f.current())!;
+    await f.w.advance(state, { ...state.e, stage });
+    f.attempt().execution.parameters.confirmationMethod = 'manual';
+    const before = structuredClone(f.s.rows);
+    assert.equal(
+      (await f.customer.get(f.cart().cartId, tokenHash)).payment.status,
+      'processing',
+    );
+    await assert.rejects(f.run(), /LEGACY_PAYMENT_CONTRACT/);
+    const deadline = paymentWork(f.cart() as any).deadline;
+    await assert.rejects(
+      f.w.deadline(paymentMessage({ ...deadline, revision: 0 }, 'PAYMENT')),
+      /LEGACY_PAYMENT_CONTRACT/,
+    );
+    const current = await f.customer.get(f.cart().cartId, tokenHash);
+    await assert.rejects(
+      f.customer.confirm({
+        cartId: f.cart().cartId,
+        tokenHash,
+        ifMatch: current.etag,
+        key: f.s.keyValue(),
+        continuationGeneration: 1,
+      }),
+      /LEGACY_PAYMENT_CONTRACT/,
+    );
+    assert.equal('clientSecret' in current.payment, false);
+    assert.equal(f.provider.calls.length, 0);
+    assert.deepEqual(f.s.rows, before);
+  });
+}
+test('settled legacy paid webhook is acknowledged without Stripe retrieval or financial resurrection', async () => {
+  const f = await fixture();
+  await f.captured();
+  await f.run();
+  f.attempt().execution.parameters.confirmationMethod = 'manual';
+  const before = structuredClone(f.inventory());
+  const calls = f.provider.calls.length;
+  await f.inbox.accept({
+    eventId: 'evt_LegacyTerminal',
+    intentId: f.attempt().execution.intentId,
+    eventType: 'payment_intent.succeeded',
+  });
+  const r = f.s.row('operations', {
+    PK: 'EXTERNAL_EVENT#STRIPE#evt_LegacyTerminal',
+    SK: 'META',
+  })!;
+  assert.equal(
+    await f.inbox.process(paymentMessage(r.work, 'STRIPE_EVENT'), f.w),
+    'COMPLETED',
+  );
+  assert.equal(f.provider.calls.length, calls);
+  assert.deepEqual(f.inventory(), before);
+  assert.equal(
+    (await f.customer.get(f.cart().cartId, tokenHash)).payment.status,
+    'paid',
+  );
+});
+test('unresolved legacy webhook retains inbox responsibility without provider access', async () => {
+  const f = await fixture();
+  await f.authorize();
+  f.attempt().execution.parameters.confirmationMethod = 'manual';
+  await f.inbox.accept({
+    eventId: 'evt_LegacyUnresolved',
+    intentId: f.attempt().execution.intentId,
+    eventType: 'payment_intent.amount_capturable_updated',
+  });
+  const r = f.s.row('operations', {
+    PK: 'EXTERNAL_EVENT#STRIPE#evt_LegacyUnresolved',
+    SK: 'META',
+  })!;
+  const calls = f.provider.calls.length;
+  const before = structuredClone(f.s.rows);
+  await assert.rejects(
+    f.inbox.process(paymentMessage(r.work, 'STRIPE_EVENT'), f.w),
+    /LEGACY_PAYMENT_CONTRACT/,
+  );
+  assert.equal(f.provider.calls.length, calls);
+  assert.deepEqual(f.s.rows, before);
+});
+
+for (const terminal of [false, true]) {
+  test(`queue legacy ${terminal ? 'terminal no-op' : 'unresolved escalation'} has no financial side effects`, async () => {
+    const f = await fixture();
+    if (terminal) {
+      await f.captured();
+      await f.run();
+    }
+    f.attempt().execution.parameters.confirmationMethod = 'manual';
+    const before = structuredClone(f.s.rows);
+    const calls = f.provider.calls.length;
+    const logs: string[] = [];
+    const original = console.info;
+    console.info = (line) => logs.push(line);
+    try {
+      const result = await createPaymentWorker(
+        f.w,
+        f.inbox,
+        'fixture-queue',
+      )({
+        Records: [
+          {
+            messageId: 'legacy-message',
+            eventSource: 'aws:sqs',
+            eventSourceARN: 'fixture-queue',
+            body: JSON.stringify(f.message()),
+          },
+        ],
+      });
+      assert.equal(result.batchItemFailures.length, terminal ? 0 : 1);
+      if (!terminal)
+        assert.equal(JSON.parse(logs[0]).outcome, 'LEGACY_PAYMENT_CONTRACT');
+    } finally {
+      console.info = original;
+    }
+    assert.equal(f.provider.calls.length, calls);
+    assert.deepEqual(f.s.rows, before);
+  });
+}
+
+test('legacy committing state blocks direct financial operations without releasing ownership', async () => {
+  const f = await fixture();
+  await f.authorize();
+  await f.run();
+  assert.equal(f.cart().status, 'PAYMENT_COMMITTING');
+  const state = (await f.current())!;
+  (state.e.parameters as { confirmationMethod: string }).confirmationMethod =
+    'manual';
+  f.attempt().execution.parameters.confirmationMethod = 'manual';
+  const before = structuredClone(f.s.rows);
+  const calls = f.provider.calls.length;
+  for (const action of [
+    () => f.w.reconcile(state),
+    () => f.w.claimCapture(state),
+    () => f.w.selectCancel(state, 'EXPIRED'),
+    () => f.w.settle(state),
+    () => f.run(),
+  ])
+    await assert.rejects(action(), /LEGACY_PAYMENT_CONTRACT/);
+  assert.equal(
+    (await f.customer.get(f.cart().cartId, tokenHash)).payment.status,
+    'processing',
+  );
+  assert.equal(f.inventory().reserved, 2);
+  assert.equal(f.provider.calls.length, calls);
+  assert.deepEqual(f.s.rows, before);
 });
