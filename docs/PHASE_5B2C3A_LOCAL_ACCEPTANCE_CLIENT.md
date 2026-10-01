@@ -381,3 +381,74 @@ New fixed codes are HARNESS_NEXT_ACTION_UNAVAILABLE, HARNESS_AUTHENTICATION_FAIL
 6. Observe canonical authorization, the existing durable capture path, canonical full success, and atomic PAID settlement. A browser completion or accepted continuation is not proof of payment.
 7. Verify Cart CONVERTED, Order PAID, Attempt CAPTURED, exact RESERVED-to-SOLD movement, one PAID outbox, genuine webhook processing, and cleared durable work. Close the test Drop normally only after settlement, without resetting SOLD.
 8. Explicitly relock admission false and verify it, regardless of outcome. Perform the reviewed token/capability/harness cleanup and queue/alarm checks. Any diagnostic, ambiguity, additional action, or deadline issue stops the human attempt for review; no automatic new Cart/token/payment is allowed.
+
+## Final C3B successful 3DS acceptance — human approved
+
+**PHASE 5B2C3B SUCCESSFUL 3DS AUTHENTICATION ACCEPTANCE: PASSED**, with the non-blocking browser-counter limitation below. The successful payment occurred on 2026-09-30; normal operational cleanup completed on 2026-10-01. This record does not authorize another payment, payment enablement, or production rollout. Final live `PAYMENT_START_ENABLED=false` was verified.
+
+### Historical C3B attempts remain failed
+
+The earlier C3B2 attempt used Cart `01M3SXJXZAKW7H5ZYH744BC04P`, Attempt `01M3SXVZFPYFDX112ERHP468CF`, and Order `01M3SXVZFP5CG8A3R3Q98N4DNA`. A stale localhost server lacked the new payment-status route even though newer browser files were present. It did not complete 3DS or settle PAID. Normal expiry canceled the provider Intent and left Cart, Order, and Attempt EXPIRED, with zero received and inventory 20 / 0 / 0 / 20. It is not reclassified as successful.
+
+The subsequent transport investigation found stale WORKFLOW revision 18 in the payment DLQ. Its original failure cause remained unproven. C3B2D added transport telemetry; C3B2E deployed it with admission disabled. The first targeted cleanup failed locally while parsing CLI input, before deletion. Separately authorized C3B2F verified and deleted only MessageId `43beb7e7-934b-4b39-8978-a94f2a1d1a7c`; queues emptied and all 32 alarms recovered. These historical transport events are separate from the successful payment below.
+
+C3B3 initially stopped at `STOREFRONT_OCCUPIED`. Human-authorized closure of historical Drop `01M3SXE9BX594ZDGBD8A2QG1EP` allowed the already-created fresh Drop to publish. Cart `01M3T25ZH233JEX9KV52S408D7` was not submitted for payment because too little reservation time remained. Admission was relocked, normal expiry returned all inventory, and no Order, Attempt, payment/start request, or Stripe Intent was created for that Cart. Only after the clean baseline and separate human approval was the following replacement Cart created.
+
+### Successful business outcome
+
+| Record         | Identifier                    | Final state |
+| -------------- | ----------------------------- | ----------- |
+| Cart           | `01M3T39RTM449TF7HE14QDGMA2`  | CONVERTED   |
+| Order          | `01M3T3EEJ1EJFGX48W35AQ7Y1W`  | PAID        |
+| PaymentAttempt | `01M3T3EEJ1PH9JBXZS2A72YHVT`  | CAPTURED    |
+| PaymentIntent  | `pi_3ULV2MDz3QSwRsAl2b1xljBx` | succeeded   |
+| Drop           | `01M3T1XK2FK6F7YBH24WYWV4TE`  | CLOSED      |
+
+Canonical Stripe retrieval verified `livemode=false`, `confirmation_method=automatic`, `capture_method=manual`, 2625 cents received, 0 capturable, and no next_action. One successful capture and one local PAID settlement produced one five-unit RESERVED-to-SOLD conversion: **20 total / 0 reserved / 5 sold / 15 available**. One PAID outbox was present. No duplicate confirmation command, capture financial effect, PAID settlement, or SOLD movement was observed; this is financial-result evidence rather than an independent count of Stripe HTTP requests.
+
+### 3DS and continuation evidence
+
+Exactly one payment/start request was logged as accepted with HTTP 201, request ID `EiC_DixdiYcEPUw=`. The durable ledger contains one initial server confirmation command, generation 0, OBSERVED. The pre-authentication checkpoint retrieved canonical `requires_action`, Attempt AUTHENTICATING, and workflow WAIT_FOR_CUSTOMER_ACTION on the same Intent, with no capture command and inventory still reserved. The customer-safe action_required projection and capability-authorized, no-store client-secret path were verified; successful status GETs and the visible challenge corroborated the path without exposing the secret.
+
+The human completed one visible Stripe 3DS challenge. There was no second server confirmation command and zero `/payment/confirm` requests. Webhook-driven authorization made explicit continuation unnecessary. The same Intent reached requires_capture, the backend recorded AUTHORIZED, and the existing durable manual-capture path completed.
+
+All times below are UTC on 2026-09-30:
+
+| Evidence                                      | Time             |
+| --------------------------------------------- | ---------------- |
+| Authorization webhook receipt                 | 21:30:55.911     |
+| requires_capture / AUTHORIZED observed        | 21:30:56.527     |
+| Capture generation 1 PREPARED                 | 21:30:56.939     |
+| Capture DISPATCHED                            | 21:30:57.239     |
+| Capture OBSERVED / canonical success verified | 21:30:58.871     |
+| Atomic settlement timestamps                  | 21:30:59.604–606 |
+| Immutable payment deadline                    | 21:31:35.232     |
+
+Settlement completed approximately 35.6 seconds before the deadline. Exact browser challenge-completion time was not recorded. Durable PROCESSED receipts exist for `payment_intent.amount_capturable_updated` and `payment_intent.succeeded`; canonical provider state remained authoritative. No unresolved PAYMENT, PAYMENT_WORKFLOW, or relevant STRIPE_EVENT responsibility remained.
+
+### Transport evidence
+
+Each listed post-authentication delivery had receiveCount 1 and belonged to the successful Attempt above:
+
+| MessageId                              | Revision | Outcome / disposition |
+| -------------------------------------- | -------- | --------------------- |
+| `82553592-d5ff-4347-ba1f-4457b9443a0d` | 19       | CLAIMED / ACK         |
+| `94cad922-2b04-4f46-9493-c9fbde90541f` | 20       | RECONCILED / ACK      |
+| `e9f2c5b8-ffcc-4245-9779-f6841dfe3ea8` | 21       | STALE_WORK / ACK      |
+| `7eb973d3-52e2-499c-815e-75e26b17e7ed` | 22       | SETTLED / ACK         |
+| `238dcb60-c0f3-4d3d-958e-c1f584231c24` | 18       | STALE_WORK / ACK      |
+| `d4905f5c-6784-4c51-aa83-7d1c1f3f7138` | 0        | STALE_WORK / ACK      |
+
+Earlier message `06eeaa35-40b5-40d1-940c-e70aa9014e59` initially returned RETRY, then was received again with receiveCount 2 and ACKed as STALE_WORK at 21:30:41.078, before authorization. Its original RETRY cause was not established. No post-authentication RETRY appeared in the reviewed deliveries.
+
+### Cleanup and non-blocking limitation
+
+Normal authenticated admin closure returned HTTP 200 and left the C3B Drop CLOSED without changing inventory 20 / 0 / 5 / 15. No refund, restock, SOLD reset, manual capture/cancellation, or manual application-data repair occurred. Reservation, reservation DLQ, recovery-infrastructure DLQ, payment, and payment DLQ each reported 0 visible / 0 invisible / 0 delayed. All 32 alarms were OK. Admission was explicitly relocked and verified false.
+
+The temporary admin token was deleted, the capability handoff file was absent, and the localhost harness was stopped. Stopping its process removed its process-local acceptance variables; task-local copies were unset. Variables in a separate human-owned terminal cannot be unset by this task and must be cleared there if retained. No secret values are included in this record.
+
+**Non-blocking limitation:** no independent numeric `handleNextAction` invocation counter was recorded. Evidence comprises the harness's one-entry guard, the human's one visible challenge completion, one Intent, one initial server confirmation command, no second confirmation command, and no duplicate financial effect. The invocation count is not described as independently measured.
+
+The harness displayed `HARNESS_PAYMENT_PROCESSING` because its post-authentication status refresh occurred before settlement and that path stops polling. This intermediate browser result did not prevent successful backend settlement and was not treated as financial authority.
+
+C3B proves the reviewed path: ConfirmationToken → one automatic server confirmation → requires_action → safe client-secret delivery → browser 3DS → webhook-driven continuation without a second server confirmation → same Intent requires_capture → durable manual capture → canonical succeeded → atomic PAID settlement → queue/recovery cleanup.
