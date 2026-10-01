@@ -56,3 +56,77 @@ Backend audit: zero vulnerabilities. Frontend audit: one moderate and one high a
 CDK synth passed, followed sequentially by a read-only diff with lookups disabled and no change set, using separate output directories and explicit authenticated DEV account / us-east-2. The diff reported no differences: no code-asset, IAM, queue, route, table, secret, admission, replacement or deletion changes. The read-only live Lambda environment check returned PAYMENT_START_ENABLED=false.
 
 The local readiness gate passes under the documented dependency exceptions. One controlled live abandonment attempt is technically ready for separate human authorization and fresh safety checks. No live abandonment acceptance is claimed. No commit, push, deployment, AWS/Stripe mutation, payment object or payment enablement occurred.
+
+## Final C3D live abandonment acceptance — human approved
+
+**PHASE 5B2C3D CUSTOMER-ABANDONMENT / PAYMENT-DEADLINE ACCEPTANCE: PASSED**, with the non-blocking transport limitations below. This separately authorized DEV sandbox acceptance occurred on 2026-10-01 after the local readiness review above. It does not authorize another payment, deployment, or payment enablement. Final live admission was verified `PAYMENT_START_ENABLED=false`.
+
+The earlier readiness results and historical C3A/C3B/C3C records remain unchanged. C3D initially stopped before timed state because local prerequisites were absent. Subsequent operational cleanup stopped on expired admin authentication, then on a stale payment DLQ item, and then on a failed targeted-delete command. Those stops are preserved below; business success was accepted before operational cleanup was complete. The final successful acceptance is recorded separately here.
+
+### Final business evidence
+
+| Record         | Identifier                    | Final state |
+| -------------- | ----------------------------- | ----------- |
+| Drop           | `01M3W947MRNBW80JHXXDRX71BZ`  | CLOSED      |
+| Cart           | `01M3W9CXTJ128HZGDNA0X5ECYK`  | EXPIRED     |
+| Order          | `01M3W9JFJ4ACMHZAXF6RFM2G5S`  | EXPIRED     |
+| PaymentAttempt | `01M3W9JFJ4XVSKZ7RY4E1MK17J`  | EXPIRED     |
+| PaymentIntent  | `pi_3ULoAMDz3QSwRsAl14YNU4hF` | canceled    |
+
+Exactly one payment/start was accepted with HTTP 201, one PaymentIntent was associated with the payment, and one initial server confirmation (generation 0) was observed. Canonical Stripe state was requires_action, the Attempt was AUTHENTICATING, and workflow was WAIT_FOR_CUSTOMER_ACTION. The sandbox Intent had livemode=false, confirmation_method=automatic, capture_method=manual, amount_received=0 and amount_capturable=0.
+
+The human intentionally left the visible 3DS challenge incomplete. No manual /payment/confirm continuation or second server confirmation occurred. The paymentDeadline remained immutable. Admission was explicitly relocked through the approved helper after the requires_action checkpoint, without interfering with existing recovery. The harness waited with the challenge open; no browser interaction was manufactured to obtain a terminal display.
+
+### Canonical reconciliation and expiry ordering
+
+All times below are UTC on 2026-10-01.
+
+| Evidence                                 | Time         |
+| ---------------------------------------- | ------------ |
+| Immutable paymentDeadline                | 17:57:07.652 |
+| Canonical requires_action reconciliation | 17:57:09.043 |
+| Durable cancellation PREPARED            | 17:57:09.044 |
+| Durable cancellation DISPATCHED          | 17:57:09.605 |
+| Canonical canceled proof                 | 17:57:10.902 |
+| Atomic expiry settlement                 | 17:57:11.363 |
+
+Canonical provider cancellation/no-capture safety was proven before inventory release. The final Intent was canceled with amount_received=0 and amount_capturable=0. No evidence existed for AUTHORIZED, requires_capture, capture authority, a capture command, capture, SOLD movement, PAID settlement, or a PAID outbox. No manual financial intervention occurred; cancellation was performed by the existing durable worker path.
+
+Inventory moved from **20 total / 5 reserved / 0 sold / 15 available** to **20 total / 0 reserved / 0 sold / 20 available**. The Cart's five-unit reservation was released exactly once, with no duplicate release, SOLD movement, or manual inventory repair.
+
+Capability-authorized customer GET returned action_required before deadline and expired after safe terminal settlement. The terminal GET returned HTTP 200 with Cache-Control: no-store and no client secret. This was independently checked without completing or dismissing the challenge.
+
+### Webhook and transport evidence
+
+Stripe webhook receipts reached PROCESSED, including:
+
+- payment_intent.created: `evt_3ULoAMDz3QSwRsAl1eCQAgAd`.
+- payment_intent.canceled: `evt_3ULoAMDz3QSwRsAl1EvM1QTb`.
+
+WORKFLOW revision-4 MessageId `2acdac1f-eb6d-4744-b6e1-fce8e769b176` returned RETRY on receive count 1 at 17:53:16.870 UTC, then STALE_WORK / ACK on receive count 2 at 17:56:15.696 UTC. Its initial RETRY cause remains unknown. No duplicate financial or inventory effect resulted.
+
+A distinct stale DLQ message, `58f74480-32f5-42b0-a311-a0873593ddd2`, was conclusively identified as WORKFLOW / PAYMENT_WORKFLOW revision 18 for the same C3D Cart, authoritative Attempt `01M3W9JFJ4XVSKZ7RY4E1MK17J`, and Order. Its referenced durable work was absent/superseded; the terminal Attempt was revision 23. No matching PaymentWorker telemetry was returned for this exact MessageId, so no source-delivery sequence or failure cause is claimed. Identity was established from parsed message ownership and persisted records, not inferred from timing or the unrelated revision-4 RETRY.
+
+The first authorized diagnostic receive reported count 6. Terminal ownership, canonical canceled state, zero received/capturable amounts, fully released inventory and absent financial responsibility satisfied the conditional-delete gate, but the first targeted-delete command failed. Its exact error was not recovered; the receipt handle was not persisted. A separately authorized fresh receive reported final diagnostic count 7 and matched the exact approved MessageId. The same ownership and safety gates were rechecked, and **one targeted delete succeeded** using the fresh in-memory receipt handle. No source-queue receive, purge, redrive, broad deletion, visibility-change command, IAM change or queue configuration change occurred.
+
+Two cancellation DISPATCHED log entries were observed. They do not establish two distinct durable commands or duplicate financial effects; no independent exact provider cancellation-request count is claimed.
+
+### Operational, local and security cleanup
+
+Normal admin Drop closure initially returned 401 and stopped until valid authentication was available. The eventual authenticated closure returned HTTP 200, and the Drop was verified CLOSED with inventory unchanged at 20 / 0 / 0 / 20.
+
+After targeted stale-transport cleanup and normal CloudWatch evaluation, the source payment queue, payment DLQ, reservation queue, reservation DLQ and recovery-infrastructure DLQ each reached **0 visible / 0 invisible / 0 delayed**. QueueAge and the payment DLQ alarm were OK; **32/32 alarms were OK**. No alarm thresholds or configuration were changed. No unresolved PAYMENT, PAYMENT_WORKFLOW, relevant STRIPE_EVENT or financial responsibility remained. Final admission was verified **PAYMENT_START_ENABLED=false**.
+
+The admin token file was deleted, the capability temp file was absent, the localhost harness was stopped (no listener remained on port 4242), and task-held acceptance variables/capability references were cleared. Variables exported in a separate human terminal cannot be cleared by the task process and should be unset manually if still present. Reviewed logs showed no sensitive-pattern matches; this is a bounded review rather than an exhaustive security proof. No secret values, raw message bodies, receipt handles, card data or customer contact values are included in this record.
+
+### Accepted non-blocking limitations and disposition
+
+Human review accepts these historical limitations:
+
+1. The original cause of the revision-4 PaymentWorker RETRY remains unknown; the same MessageId was later safely ACKed as STALE_WORK.
+2. The original source-delivery failure cause of stale DLQ MessageId `58f74480-32f5-42b0-a311-a0873593ddd2` remains unknown.
+3. The exact error from the earlier failed targeted-delete command was not recovered.
+
+None left unresolved financial or inventory responsibility. Business acceptance and final operational acceptance are **PASSED**.
+
+C3D proves: payment/start → requires_action → customer abandonment → immutable deadline → canonical reconciliation → durable provider cancellation → canonical canceled proof → atomic expiry settlement → exact reservation release → queue/DLQ cleanup → alarm recovery. **C3D is PASSED.**
