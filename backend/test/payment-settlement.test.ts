@@ -1425,3 +1425,123 @@ test('legitimate preparation inventory contention permits fresh recovery proof',
   assert.equal(f.attempt().execution.capture.generation, 2);
   assert.equal(f.inventory().reserved, 8);
 });
+
+for (const timing of [
+  'before',
+  'at-deadline',
+  'selected-before-deadline',
+] as const) {
+  test(`canonical decline safely releases once: ${timing}`, async () => {
+    const f = await fixture(1, true);
+    await f.run();
+    await f.run();
+    f.provider.confirmIntent = async () => {
+      const p = f.provider.intents.get('pi_Test1')!;
+      p.status = 'requires_payment_method';
+      p.paymentFailed = true;
+      throw new ProviderError('PROVIDER_UNKNOWN');
+    };
+    if (timing === 'at-deadline') {
+      const p = f.provider.intents.get('pi_Test1')!;
+      p.status = 'requires_payment_method';
+      p.paymentFailed = true;
+      f.s.now = Date.parse(f.cart().paymentDeadline);
+      await f.w.reconcile((await f.current())!);
+    } else {
+      await f.run();
+    }
+    assert.equal(f.attempt().execution.stage, 'CANCEL');
+    assert.equal(f.attempt().execution.recoveryReason, undefined);
+    assert.equal(f.inventory().reserved, 5);
+    if (timing === 'selected-before-deadline')
+      f.s.now = Date.parse(f.cart().paymentDeadline);
+    await f.run();
+    const finalization = (await f.current())!;
+    assert.equal(await f.run(), 'SETTLED');
+    assert.equal(await f.w.run(finalization.message), 'STALE_WORK');
+    assert.equal(
+      f.cart().status,
+      timing === 'at-deadline' ? 'EXPIRED' : 'CANCELLED',
+    );
+    assert.equal(
+      f.attempt().status,
+      timing === 'at-deadline' ? 'EXPIRED' : 'FAILED',
+    );
+    assert.equal(
+      f.s.row('commerce', orderKey(f.cart().orderId))!.status,
+      f.attempt().status,
+    );
+    assert.equal(f.inventory().reserved, 0);
+    assert.equal(f.inventory().sold, 0);
+    assert.equal(f.inventory().total, 20);
+    assert.equal(f.attempt().execution.capture, undefined);
+    assert.equal(f.cart().committingStartedAt, undefined);
+    assert.equal(
+      f.s.row('operations', paidEventKey(f.cart().orderId)),
+      undefined,
+    );
+    assert.equal(
+      f.provider.calls.some((c) => c.kind === 'capture'),
+      false,
+    );
+    const view = (await f.customer.get(f.cart().cartId, tokenHash)).payment;
+    assert.equal(view.status, timing === 'at-deadline' ? 'expired' : 'failed');
+    assert.equal('clientSecret' in view, false);
+  });
+}
+
+test('decline release preserves another owner and prior SOLD quantities', async () => {
+  const f = await fixture(1, true);
+  f.inventory().sold = 2;
+  await addOtherReservation(f, 3);
+  await f.run();
+  await f.run();
+  f.provider.confirmIntent = async () => {
+    const p = f.provider.intents.get('pi_Test1')!;
+    p.status = 'requires_payment_method';
+    p.paymentFailed = true;
+    throw new Error('private provider error must not be logged');
+  };
+  await f.run();
+  await f.run();
+  const stale = f.message();
+  await f.run();
+  await f.w.run(stale);
+  assert.equal(f.inventory().reserved, 3);
+  assert.equal(f.inventory().sold, 2);
+  assert.equal(f.attempt().status, 'FAILED');
+  assert.ok(!JSON.stringify(f.logs).includes('private provider error'));
+});
+
+test('decline webhook duplicates before and after failure cannot double-release', async () => {
+  const f = await fixture(1, true);
+  await f.run();
+  await f.run();
+  const p = f.provider.intents.get('pi_Test1')!;
+  p.status = 'requires_payment_method';
+  p.paymentFailed = true;
+  f.provider.confirmIntent = async () => {
+    throw new Error('synthetic decline');
+  };
+  await f.run();
+  const event = {
+    eventId: 'evt_DefinitiveDecline',
+    intentId: p.id,
+    eventType: 'payment_intent.payment_failed' as const,
+  };
+  await f.inbox.accept(event);
+  await f.inbox.accept(event);
+  const key = { PK: 'EXTERNAL_EVENT#STRIPE#' + event.eventId, SK: 'META' };
+  const receipt = f.s.row('operations', key)!;
+  const message = paymentMessage(receipt.work, 'STRIPE_EVENT');
+  await f.inbox.process(message, f.w);
+  await f.run();
+  await f.run();
+  await f.inbox.accept(event);
+  await f.inbox.process(message, f.w);
+  assert.equal(f.attempt().status, 'FAILED');
+  assert.equal(f.inventory().reserved, 0);
+  assert.equal(f.inventory().sold, 0);
+  assert.equal(f.s.row('operations', key)!.state, 'PROCESSED');
+  assert.equal(f.attempt().execution.capture, undefined);
+});

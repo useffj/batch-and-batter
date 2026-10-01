@@ -864,3 +864,24 @@ test('concurrent accepted-flow events cannot duplicate an in-flight authenticati
   assert.equal(actions, 1);
   assert.equal(c.calls.confirm.length, 1);
 });
+
+for (const status of ['failed', 'expired', 'cancelled']) {
+  test(`accepted start terminal ${status} stops without another token or request`, async () => {
+    const c = continuationFixture({
+      getStatus: async () => ({ status }),
+    });
+    const f = flow({ continuePayment: c.continuePayment });
+    const result = await f.pay(input);
+    await f.pay(input);
+    assert.match(result, /HARNESS_PAYMENT_TERMINAL_FAILURE/);
+    assert.match(result, /payment\/start sent: yes/);
+    assert.equal(f.calls.token, 1);
+    assert.equal(f.calls.sent.length, 1);
+    assert.equal(c.calls.action, 0);
+    assert.equal(c.calls.confirm.length, 0);
+    assert.doesNotMatch(
+      result,
+      /ctoken_|client_secret|synthetic-private|paid\./,
+    );
+  });
+}
