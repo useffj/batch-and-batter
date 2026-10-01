@@ -1545,3 +1545,161 @@ test('decline webhook duplicates before and after failure cannot double-release'
   assert.equal(f.s.row('operations', key)!.state, 'PROCESSED');
   assert.equal(f.attempt().execution.capture, undefined);
 });
+
+async function abandonedFixture() {
+  const f = await fixture(1, true);
+  f.provider.outcome = 'requires_action';
+  await f.authorize();
+  assert.equal(f.attempt().status, 'AUTHENTICATING');
+  assert.equal(f.attempt().execution.stage, 'WAIT_FOR_CUSTOMER_ACTION');
+  return f;
+}
+
+test('abandonment deadline releases five once and returns secret-free expired status', async () => {
+  const f = await abandonedFixture();
+  const deadline = f.cart().paymentDeadline;
+  const before = (await f.customer.get(f.cart().cartId, tokenHash)).payment;
+  assert.equal(before.status, 'action_required');
+  assert.ok(before.clientSecret);
+  await f.run();
+  assert.equal(f.cart().paymentDeadline, deadline);
+  const key = paymentWork(f.cart() as any).deadline;
+  const message = paymentMessage({ ...key, revision: 0 }, 'PAYMENT');
+  f.s.now = Date.parse(deadline);
+  await f.w.run(message);
+  assert.equal(f.attempt().execution.cancel.state, 'PREPARED');
+  assert.equal(f.inventory().reserved, 5);
+  await f.run();
+  assert.equal(f.attempt().execution.releaseEvidence, 'CANCELED');
+  assert.equal(f.inventory().reserved, 5);
+  const stale = f.message();
+  await f.run();
+  assert.equal(await f.w.run(message), 'STALE_WORK');
+  assert.equal(await f.w.run(stale), 'STALE_WORK');
+  assert.equal(f.cart().paymentDeadline, deadline);
+  assert.equal(f.cart().status, 'EXPIRED');
+  assert.equal(f.attempt().status, 'EXPIRED');
+  assert.equal(
+    f.s.row('commerce', orderKey(f.cart().orderId))!.status,
+    'EXPIRED',
+  );
+  assert.deepEqual(
+    [f.inventory().total, f.inventory().reserved, f.inventory().sold],
+    [20, 0, 0],
+  );
+  assert.equal(f.s.row('operations', key), undefined);
+  assert.equal(f.s.row('operations', stale), undefined);
+  assert.equal(
+    f.s.row('operations', paidEventKey(f.cart().orderId)),
+    undefined,
+  );
+  assert.equal(f.attempt().execution.capture, undefined);
+  assert.equal(f.provider.calls.filter((c) => c.kind === 'cancel').length, 1);
+  assert.equal(f.provider.calls.filter((c) => c.kind === 'confirm').length, 1);
+  assert.equal(
+    f.provider.calls.some((c) => c.kind === 'capture'),
+    false,
+  );
+  const view = (await f.customer.get(f.cart().cartId, tokenHash)).payment;
+  assert.equal(view.status, 'expired');
+  assert.equal('clientSecret' in view, false);
+  assert.ok(!JSON.stringify(f.logs).includes('synthetic-action-secret'));
+});
+
+test('canonical cancellation before deadline observation needs no second cancellation', async () => {
+  const f = await abandonedFixture();
+  f.provider.intents.get(f.attempt().execution.intentId)!.status = 'canceled';
+  f.s.now = Date.parse(f.cart().paymentDeadline);
+  await f.run();
+  assert.equal(f.attempt().execution.releaseEvidence, 'CANCELED');
+  await f.run();
+  assert.equal(f.cart().status, 'EXPIRED');
+  assert.equal(
+    f.provider.calls.some((c) => c.kind === 'cancel'),
+    false,
+  );
+});
+
+test('abandonment cancellation webhook and stale expiry cannot double-release', async () => {
+  const f = await abandonedFixture();
+  f.s.now = Date.parse(f.cart().paymentDeadline);
+  await f.run();
+  await f.run();
+  const stale = f.message();
+  const event = {
+    eventId: 'evt_AbandonmentFixture',
+    intentId: f.attempt().execution.intentId,
+    eventType: 'payment_intent.canceled' as const,
+  };
+  await f.inbox.accept(event);
+  const key = { PK: 'EXTERNAL_EVENT#STRIPE#' + event.eventId, SK: 'META' };
+  const message = paymentMessage(
+    f.s.row('operations', key)!.work,
+    'STRIPE_EVENT',
+  );
+  await f.inbox.process(message, f.w);
+  await f.w.run(stale);
+  await f.inbox.accept(event);
+  await f.inbox.process(message, f.w);
+  assert.equal(f.cart().status, 'EXPIRED');
+  assert.equal(f.inventory().reserved, 0);
+  assert.equal(f.inventory().sold, 0);
+  assert.equal(f.s.row('operations', key)!.state, 'PROCESSED');
+});
+
+test('abandonment release retries concurrent unrelated inventory ownership', async () => {
+  const f = await abandonedFixture();
+  f.inventory().sold = 2;
+  f.s.now = Date.parse(f.cart().paymentDeadline);
+  await f.run();
+  await f.run();
+  f.s.before = async (actions) => {
+    if (actions[0]?.Put?.TableName !== 'catalog') return;
+    f.s.before = undefined;
+    await addOtherReservation(f, 3);
+  };
+  await f.run();
+  assert.equal(f.cart().status, 'EXPIRED');
+  assert.equal(f.inventory().reserved, 3);
+  assert.equal(f.inventory().sold, 2);
+});
+
+test('abandonment unknown cancellation retains inventory and durable responsibility', async () => {
+  const f = await abandonedFixture();
+  f.s.now = Date.parse(f.cart().paymentDeadline);
+  await f.run();
+  f.provider.cancelIntent = async () => {
+    throw new Error('PRIVATE_PROVIDER_PAYLOAD');
+  };
+  f.provider.retrieveIntent = async () => {
+    throw new Error('PRIVATE_PROVIDER_PAYLOAD');
+  };
+  await f.run();
+  assert.equal(f.attempt().execution.releaseEvidence, undefined);
+  assert.equal(f.inventory().reserved, 5);
+  assert.equal(f.inventory().sold, 0);
+  assert.ok(f.s.row('operations', f.message()));
+  assert.ok(f.s.row('operations', paymentWork(f.cart() as any).deadline));
+  assert.equal(
+    (await f.customer.get(f.cart().cartId, tokenHash)).payment.status,
+    'processing',
+  );
+  assert.ok(!JSON.stringify(f.logs).includes('PRIVATE_PROVIDER_PAYLOAD'));
+});
+
+test('authorization racing abandonment deadline follows capture authority rather than expiry', async () => {
+  const f = await abandonedFixture();
+  const p = f.provider.intents.get(f.attempt().execution.intentId)!;
+  p.status = 'requires_capture';
+  p.amountCapturableCents = p.amountCents;
+  f.s.now = Date.parse(f.cart().paymentDeadline);
+  await f.run();
+  assert.equal(f.attempt().status, 'AUTHORIZED');
+  assert.equal(f.inventory().reserved, 5);
+  assert.equal(f.attempt().execution.cancel, undefined);
+  await f.run();
+  await f.run();
+  await f.run();
+  assert.equal(f.cart().status, 'CONVERTED');
+  assert.equal(f.inventory().sold, 5);
+});

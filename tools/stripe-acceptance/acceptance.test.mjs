@@ -885,3 +885,36 @@ for (const status of ['failed', 'expired', 'cancelled']) {
     );
   });
 }
+
+test('abandoned open challenge never retries or continues and reports elapsed deadline on return', async () => {
+  let finish;
+  let now = Date.parse('2099-10-05T18:03:00.000Z');
+  let actions = 0;
+  const c = continuationFixture({
+    now: () => now,
+    stripe: {
+      handleNextAction: () => {
+        actions++;
+        return new Promise((resolve) => {
+          finish = resolve;
+        });
+      },
+    },
+  });
+  const f = flow({ continuePayment: c.continuePayment });
+  const pending = f.pay(input);
+  while (!finish) await new Promise((resolve) => setImmediate(resolve));
+  now = Date.parse('2099-10-05T18:04:00.000Z');
+  await f.pay(input);
+  await c.continuePayment();
+  assert.equal(actions, 1);
+  assert.equal(c.calls.reads, 1);
+  assert.equal(c.calls.confirm.length, 0);
+  finish({});
+  const result = await pending;
+  safeStatus(result, 'HARNESS_PAYMENT_DEADLINE_ELAPSED', 'yes');
+  assert.equal(f.calls.token, 1);
+  assert.equal(f.calls.sent.length, 1);
+  assert.equal(c.calls.confirm.length, 0);
+  assert.doesNotMatch(result, /synthetic-private-action/);
+});
