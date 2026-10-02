@@ -4,7 +4,8 @@ import './globals.css';
 
 export const metadata: Metadata = {
   title: 'Batch & Batter | Cookie Co.',
-  description: 'Batch & Batter Cookie Co. — Coming Soon',
+  description:
+    'Current and upcoming cookie Drops, availability and pickup information.',
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
