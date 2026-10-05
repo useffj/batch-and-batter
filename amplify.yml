@@ -1,0 +1,23 @@
+version: 1
+applications:
+  - appRoot: web
+    frontend:
+      phases:
+        preBuild:
+          commands:
+            - nvm install "$(cat ../.nvmrc)"
+            - nvm use "$(cat ../.nvmrc)"
+            - npm install --global npm@11.11.0
+            - npm ci --cache .npm --prefer-offline
+        build:
+          commands:
+            - node scripts/prepare-amplify-env.mjs
+            - npm run build
+      artifacts:
+        baseDirectory: .next
+        files:
+          - '**/*'
+      cache:
+        paths:
+          - .npm/**/*
+          - .next/cache/**/*

@@ -14,3 +14,6 @@ next-env.d.ts
 infra/dist/
 infra/cdk.out/
 backend/dist/
+
+# Local Amplify dependency-download cache
+.npm/
