@@ -296,3 +296,133 @@ A separately reviewed Phase 5C2 DEV deployment/acceptance gate must:
 14. Clean up the acceptance Drop safely.
 
 No production payment activation. Stop after PR creation for human review.
+
+## Phase 5C2 — live DEV acceptance, human approved
+
+**PHASE 5C2 — DEV SCHEDULED-DROP LIFECYCLE ACCEPTANCE: PASSED.**
+
+Human review approved the following live acceptance on 2026-10-05. This is a
+separate record of the subsequently authorized DEV deployment and acceptance;
+the local implementation history and earlier deployment gate above remain
+historical evidence. Recording this approval authorizes no further deployment,
+AWS/Stripe mutation, live Drop mutation or payment enablement.
+
+### Deployment and pre-deploy safety
+
+- Deployed main HEAD: `cbb195ae51acf94ea24266fb16a3c11c763256fa`.
+- DEV deployment through the normal helper succeeded; stack reached `UPDATE_COMPLETE`.
+- `PAYMENT_START_ENABLED=false` before deployment, immediately after deployment,
+  and at the end of acceptance. It must remain false.
+- Final reviewed CDK scope: six approved API wiring additions and five shared
+  Lambda asset updates; no execution-role expansion, replacements or deletions.
+- Pre-deploy checks found no active customer Cart/payment responsibility or
+  unresolved payment/workflow/Stripe-event responsibility. Queues/DLQs, alarms
+  and recovery heartbeats were healthy.
+
+### Dedicated acceptance Drop and timeline
+
+Exactly one DEV acceptance Drop used **Development Test Cookie**:
+`01M472Q8CNZSGQJVV8GR4A8BMK`.
+
+Initial state was SCHEDULED, with the current/upcoming storefront pointer owned by
+this Drop. Initial inventory was **20 total / 0 reserved / 0 sold / 20 available**.
+No customer Cart or payment was created for this acceptance.
+
+| Checkpoint            | Opening time                           | Revision                   | Opening generation                     |
+| --------------------- | -------------------------------------- | -------------------------- | -------------------------------------- |
+| Initial SCHEDULED     | `2026-10-05T22:30:02.504Z`             | `2026-10-05T22:25:04.087Z` | Legacy/unversioned                     |
+| Rescheduled SCHEDULED | `2026-10-05T22:33:02.504Z`             | `2026-10-05T22:25:10.386Z` | `2026-10-05T22:25:10.386Z`             |
+| Canceled CLOSED       | `2026-10-05T22:33:02.504Z` (preserved) | `2026-10-05T22:25:36.209Z` | `2026-10-05T22:25:10.386Z` (preserved) |
+
+The protected reschedule succeeded: revision and generation advanced,
+deterministic replacement opening responsibility was established, and inventory
+remained unchanged. The public API and live `batchandbatter.com` storefront both
+reflected the new opening time; backend state remained authoritative.
+
+### Stale opening and reconciliation proof
+
+Direct replay of the old opening payload returned terminal `STALE_OPENING` while
+the Drop remained SCHEDULED with the new opening time. Current-generation
+reconciliation succeeded while the Drop remained SCHEDULED.
+
+After cancellation, both direct replay paths were harmless: the old payload
+returned terminal `STALE_OPENING`, and the current-generation payload returned
+terminal `DROP_NOT_EDITABLE`. Reconciliation returned **409 DROP_NOT_EDITABLE**;
+no reconciler path reopened the Drop.
+
+Natural Scheduler deliveries independently confirmed the guards:
+
+| Delivery                                | Observed time              | Terminal result     |
+| --------------------------------------- | -------------------------- | ------------------- |
+| Old opening responsibility              | `2026-10-05T22:30:44.242Z` | `STALE_OPENING`     |
+| Later/current-generation responsibility | `2026-10-05T22:33:32.206Z` | `DROP_NOT_EDITABLE` |
+
+No stale generation opened the Drop. It remained CLOSED after the later delivery.
+Both schedules cleaned up automatically; no schedule remained after settlement.
+No transport evidence was manually deleted to obtain a passing result.
+
+### Cancellation, storefront and history
+
+Cancellation atomically transitioned SCHEDULED → CLOSED at revision
+`2026-10-05T22:25:36.209Z`, preserved scheduled opening metadata/history and
+inventory, released current/upcoming storefront ownership, and prevented later
+automatic opening.
+
+After cancellation, the current public API returned null and the live storefront
+no longer displayed the test Drop. Historical/direct and administrator reads
+continued to return the CLOSED Drop.
+
+A stale-revision mutation attempt returned **HTTP 409 COMPOSITION_CONFLICT**.
+Drop state, inventory and audit count were unchanged by the rejected request.
+
+Exactly two immutable audit records were verified:
+
+1. Scheduled Drop edit.
+2. Scheduled Drop cancellation.
+
+Each included administrator identity, timestamp and verified before/after state,
+including the unchanged allocation/ownership quantities. No sensitive token values
+are included in this record.
+
+Final cleanup state: the dedicated test Drop remains **CLOSED**, with inventory
+**20 total / 0 reserved / 0 sold / 20 available**. Historical composition and audit
+evidence are preserved; counters were not reset and history was not rewritten.
+
+### Final health and security
+
+- All seven queues/DLQs had **0 visible / 0 invisible / 0 delayed** messages.
+  No messages were manually deleted.
+- All alarms were **32 / 32 OK**. Both recovery heartbeats were fresh, with no
+  unresolved workflow responsibility.
+- Both new administrator routes require JWT authentication. Anonymous requests
+  returned **401**; missing/invalid/unquoted If-Match and prohibited fields were
+  rejected safely with **400**.
+- Reviewed API Gateway and Lambda logs showed no token/sensitive-data matches
+  within the acceptance window. This is scoped log-review evidence, not a claim
+  of exhaustive detection outside that window.
+- No payment-worker or Stripe-webhook activity occurred during acceptance.
+- No customer Cart/payment creation, Stripe mutation, production Drop mutation,
+  payment enablement, refund, notification or waitlist work occurred.
+
+### Accepted boundaries and governing status
+
+No acceptance defects were found. The existing boundaries remain accepted:
+customer responsibility safety relies on established lifecycle/ownership
+invariants; arbitrary corrupted Commerce data is not independently scanned by
+lifecycle mutation; scheduling recovery remains operator-driven through the
+existing reconciliation mechanism; broader admin/dashboard UI remains separate.
+These are retained design boundaries, not newly identified defects. Existing
+rollback compatibility requirements remain in force.
+
+| Phase / scope                                  | Human-approved disposition                   |
+| ---------------------------------------------- | -------------------------------------------- |
+| Phase 5A — read-only storefront                | COMPLETE                                     |
+| Hosting A/B — Amplify/domain                   | COMPLETE                                     |
+| Phase 5C1 — scheduled lifecycle implementation | COMPLETE                                     |
+| Phase 5C2 — live lifecycle acceptance          | PASSED                                       |
+| Governing Phase 5 lifecycle-management gap     | COMPLETE within approved backend/admin scope |
+| Broader admin/dashboard phases                 | NOT COMPLETE                                 |
+
+This documentation-only acceptance record does not authorize application or
+infrastructure changes, deployment, live mutations, or production payment
+activation. `PAYMENT_START_ENABLED` must remain false.
