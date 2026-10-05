@@ -1,37 +1,52 @@
 # Known Dependency Risks
 
+## Frontend security maintenance baseline
+
+- **Review date:** 2026-10-05.
+- **Owner:** Batch & Batter project.
+- **Baseline:** `next` and `eslint-config-next` updated from exact `15.5.24` pins to exact `15.5.27` pins through normal npm installation. Only matching Next.js transitive packages changed; React, TypeScript, and other direct dependencies remain unchanged.
+- **Reason:** [Next.js 15.5.27](https://github.com/vercel/next.js/releases/tag/v15.5.27) is a supported 15.5.x security release addressing GHSA-f87g-xv8r-7p7x, GHSA-4jqv-mc3x-m676, and GHSA-mcj8-r9mp-w47p. No Next.js 16 migration, overrides, audit suppression, or audit-fix operation was used.
+- **Hosting compatibility:** [Amplify Hosting supports Next.js 12–15 SSR](https://docs.aws.amazon.com/amplify/latest/userguide/deploy-nextjs-app.html); this patch stays within that supported major. This is not verification of a future hosted artifact.
+- **Fresh audits:** Before and after the update, full audit reports five unique advisories across seven affected package nodes (six high, one moderate); production-only audit reports four unique advisories across two affected nodes (one high, one moderate). The remaining advisories are the braces and PostCSS findings below, not direct Next.js security advisories fixed by this release. Audit remains visibly nonzero.
+
+Hosting A work is preserved separately. Its commit remains blocked until this maintenance is reviewed and merged. Hosting B public deployment remains blocked pending its own review and actual Amplify artifact verification.
+
+## Braces temporary exception
+
+- **Status:** Temporarily accepted by human review for development under this documented lint/build-tooling scope; upstream blocked. This is not production approval.
+- **Advisory:** [GHSA-vfj7-8cjw-p6xm](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm) / CVE-2026-93687, high severity.
+- **Installed:** `braces@3.0.3`; affected range `<=3.0.3`.
+- **Patched release:** None listed upstream as of 2026-10-05.
+- **Exact path:** `eslint-config-next@15.5.27` → `@next/eslint-plugin-next@15.5.27` → `fast-glob@3.3.1` → `micromatch@4.0.8` → `braces@3.0.3`.
+- **Installation/exposure:** Development lint tooling. Fresh `npm explain braces` and `npm ls braces --all` confirm this single path. The Next ESLint plugin uses fast-glob for repository-controlled root-directory/configuration patterns. No storefront-request path into those inputs is demonstrated.
+- **Local runtime evidence:** Absent from all seven generated Next.js 15.5.27 SSR NFT traces, together with micromatch, fast-glob, and the Next ESLint plugin. Generated server/browser JavaScript scans also found no corresponding package-path markers. This does not establish absence from a future Amplify artifact.
+- **Residual risk:** Malicious repository/build glob inputs can still expose tooling to resource exhaustion. The issue is not harmless merely because linting is a development dependency.
+
+Do not downgrade eslint-config-next to npm audit's proposed 14.2.35 remediation, remove linting, or add unsupported overrides. Reevaluate when a patched braces release or compatible parent dependency is available, and before Hosting B public deployment. Audit findings must remain visible.
+
 ## Next.js transitive PostCSS dependency
 
-- **Decision:** Safe to commit with documented dependency risk.
-- **Owner:** Batch & Batter project.
-- **Status:** Accepted temporarily for development.
-- **Next.js version:** 15.5.24.
-- **Transitive dependency:** postcss 8.4.31.
-- **Dependency path:** application → next@15.5.24 → postcss@8.4.31.
-- **Audit result:** npm audit currently reports one moderate and one high affected package. Next.js inherits the finding from PostCSS; these package counts cover the four advisories below.
+- **Status:** Existing temporary development risk acceptance retained; not production risk acceptance.
+- **Installed path:** `next@15.5.27` → `postcss@8.4.31`.
+- **Installation classification:** Production dependency through Next.js, not a development-only dependency.
+- **Observed application exposure:** CSS/build processing. The current storefront does not accept user-supplied CSS.
+- **Local runtime artifact:** The vulnerable PostCSS package path is absent from all seven freshly built Next.js SSR NFT traces. Generated server/browser JavaScript scans found no `postcss/lib` marker. These local checks do not prove absence from a future Amplify deployment artifact.
+- **Audit:** Four unique advisories across the PostCSS and inherited Next.js nodes (one high and one moderate affected package). Next.js 15.5.27 still depends on PostCSS 8.4.31 and does not fix these findings.
 
 ### Relevant advisories
 
-- [GHSA-qx2v-qp2m-jg93](https://github.com/advisories/GHSA-qx2v-qp2m-jg93)
-- [GHSA-6g55-p6wh-862q](https://github.com/advisories/GHSA-6g55-p6wh-862q)
-- [GHSA-fxqj-rqcc-2cmp](https://github.com/advisories/GHSA-fxqj-rqcc-2cmp)
-- [GHSA-r28c-9q8g-f849](https://github.com/advisories/GHSA-r28c-9q8g-f849)
+| Advisory                                                                 | Affected range | First patched version |
+| ------------------------------------------------------------------------ | -------------- | --------------------- |
+| [GHSA-qx2v-qp2m-jg93](https://github.com/advisories/GHSA-qx2v-qp2m-jg93) | `<8.5.10`      | `8.5.10`              |
+| [GHSA-6g55-p6wh-862q](https://github.com/advisories/GHSA-6g55-p6wh-862q) | `<=8.5.11`     | `8.5.12`              |
+| [GHSA-fxqj-rqcc-2cmp](https://github.com/advisories/GHSA-fxqj-rqcc-2cmp) | `<=8.5.22`     | `8.5.23`              |
+| [GHSA-r28c-9q8g-f849](https://github.com/advisories/GHSA-r28c-9q8g-f849) | `<=8.5.17`     | `8.5.18`              |
 
-### Current exposure assessment
+Retain the supported 15.5.27 baseline while monitoring compatible upstream fixes. Do not use audit fix, unsupported PostCSS overrides, or npm audit's proposed Next.js 16 migration. Reassess before public hosting, including the actual Amplify SSR artifact. The frontend has not been deployed by this maintenance.
 
-- Primarily build/development CSS processing for this application.
-- The current application does not process user-supplied CSS.
-- The project is not yet deployed.
+### Maintenance validation and repeatable runtime check
 
-### Current mitigation and review requirements
-
-- Stay on the supported Next.js 15.5.24 project baseline. This version retains the known PostCSS risk; retaining the baseline does not fix the advisories.
-- Do not use `npm audit fix --force`.
-- Do not add unsupported PostCSS overrides without review.
-- Re-check when a newer supported Next.js 15 release is available.
-- Reassess before any production deployment.
-
-**Review again before production deployment.** This is temporary acceptance for development, not production risk acceptance.
+Validation passed on 2026-10-05: 54 frontend tests, 844 backend functional tests, seven backend artifact tests, 34 infrastructure tests, and two production-exclusion tests. Frontend typecheck, lint, production build, repository formatting, and `git diff --check` also passed. Inspect every `files` entry in `web/.next/**/*.nft.json` after building for braces, micromatch, fast-glob, @next/eslint-plugin-next, and the vulnerable PostCSS package path; also scan generated server and browser JavaScript for their package-path markers. Keep generated artifacts out of Git.
 
 ## AWS CDK bundled brace-expansion
 
