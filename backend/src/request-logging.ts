@@ -7,6 +7,8 @@ export interface InvocationContext {
 
 // Never derive operation names from paths, parameters, bodies or claims.
 const operations = new Map([
+  ['PATCH /admin/drops/{dropId}', 'editScheduledDrop'],
+  ['POST /admin/drops/{dropId}/cancel', 'cancelScheduledDrop'],
   ['POST /carts', 'createCart'],
   ['GET /carts/{cartId}', 'getCart'],
   ['PUT /carts/{cartId}/items', 'updateCart'],

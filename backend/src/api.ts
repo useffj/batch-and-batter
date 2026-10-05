@@ -1,3 +1,4 @@
+import { adminScheduled, scheduledRoutes } from './admin-scheduled';
 import { handler as health } from './health';
 import { cartApi, cartRoutes } from './cart-api';
 import type { CartService } from './cart-repository';
@@ -84,28 +85,37 @@ export function createHandler(
       event.routeKey === publishRoute ||
       event.routeKey === openRoute ||
       event.routeKey === reconcileOpeningRoute ||
-      lifecycleRoutes.includes(event.routeKey)
+      lifecycleRoutes.includes(event.routeKey) ||
+      scheduledRoutes.includes(event.routeKey)
     ) {
       try {
         const identity = requireAdmin(event);
         if (event.routeKey === 'GET /admin/me') return json(200, identity);
-        const result = lifecycleRoutes.includes(event.routeKey)
-          ? await adminLifecycle(event, getRepository)
-          : event.routeKey === reconcileOpeningRoute
-            ? await adminReconcileOpening(event, getRepository, getSchedules)
-            : event.routeKey === openRoute
-              ? await adminOpen(event, getRepository)
-              : event.routeKey === publishRoute
-                ? await adminPublish(event, getRepository, getSchedules)
-                : compositionRoutes.includes(event.routeKey)
-                  ? await adminComposition(event, getRepository)
-                  : await adminWrite(event, getRepository);
+        const result = scheduledRoutes.includes(event.routeKey)
+          ? await adminScheduled(
+              event,
+              getRepository,
+              getSchedules,
+              identity.subject,
+            )
+          : lifecycleRoutes.includes(event.routeKey)
+            ? await adminLifecycle(event, getRepository)
+            : event.routeKey === reconcileOpeningRoute
+              ? await adminReconcileOpening(event, getRepository, getSchedules)
+              : event.routeKey === openRoute
+                ? await adminOpen(event, getRepository)
+                : event.routeKey === publishRoute
+                  ? await adminPublish(event, getRepository, getSchedules)
+                  : compositionRoutes.includes(event.routeKey)
+                    ? await adminComposition(event, getRepository)
+                    : await adminWrite(event, getRepository);
         return json(result.status, result.body);
       } catch (failure) {
         if (failure instanceof AdminError)
           return error(failure.status, failure.code, failure.message);
         if (failure instanceof CatalogWriteError) {
           const messages = {
+            STALE_OPENING: 'Opening work has been superseded.',
             DROP_NOT_READY:
               event.routeKey === openRoute ||
               event.routeKey === 'POST /admin/drops/{dropId}/resume'
@@ -125,11 +135,13 @@ export function createHandler(
             DROP_NOT_FOUND: 'Drop not found.',
             PRODUCT_CONFLICT: 'Product changed or already exists.',
             DROP_CONFLICT: 'Drop changed or already exists.',
-            DROP_NOT_EDITABLE: lifecycleRoutes.includes(event.routeKey)
-              ? 'Drop status does not allow this operation.'
-              : event.routeKey === openRoute
-                ? 'Only SCHEDULED Drops can be opened.'
-                : 'Only DRAFT Drops can be edited.',
+            DROP_NOT_EDITABLE: scheduledRoutes.includes(event.routeKey)
+              ? 'Only future SCHEDULED Drops can be changed or canceled.'
+              : lifecycleRoutes.includes(event.routeKey)
+                ? 'Drop status does not allow this operation.'
+                : event.routeKey === openRoute
+                  ? 'Only SCHEDULED Drops can be opened.'
+                  : 'Only DRAFT Drops can be edited.',
           };
           return error(
             failure.code.endsWith('NOT_FOUND') ? 404 : 409,

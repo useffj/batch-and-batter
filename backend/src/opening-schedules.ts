@@ -38,7 +38,7 @@ export class SchedulerOpeningSchedules implements OpeningSchedules {
     if (Date.now() >= Date.parse(drop.opensAt))
       throw new OpeningScheduleError('OPENING_TIME_PASSED');
     const expected = {
-      Name: `open-${drop.dropId}`,
+      Name: `open-${drop.dropId}${drop.openingRevision ? `-${createHash('sha256').update(drop.openingRevision).digest('hex').slice(0, 20)}` : ''}`,
       GroupName: this.group,
       ScheduleExpression: `at(${new Date(time).toISOString().slice(0, 19)})`,
       ScheduleExpressionTimezone: 'UTC',
@@ -52,6 +52,9 @@ export class SchedulerOpeningSchedules implements OpeningSchedules {
           source: schedulerSource,
           operation: 'openDrop',
           dropId: drop.dropId,
+          ...(drop.openingRevision
+            ? { openingRevision: drop.openingRevision }
+            : {}),
         }),
         RetryPolicy: { MaximumEventAgeInSeconds: 900, MaximumRetryAttempts: 3 },
       },

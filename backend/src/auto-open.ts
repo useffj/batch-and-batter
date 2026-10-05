@@ -8,6 +8,7 @@ const internalEvent = z.strictObject({
   source: z.literal(schedulerSource),
   operation: z.literal('openDrop'),
   dropId: idSchema,
+  openingRevision: z.iso.datetime().optional(),
 });
 function log(
   context: InvocationContext | undefined,
@@ -42,7 +43,9 @@ export function createAutoOpenHandler(getRepository: () => CatalogRepository) {
     }
     let code = 'INTERNAL_ERROR';
     try {
-      await getRepository().openScheduled(parsed.data.dropId);
+      await getRepository().openScheduled(parsed.data.dropId, {
+        openingRevision: parsed.data.openingRevision,
+      });
       log(context, 'opened');
       return { result: 'opened' };
     } catch (error) {
@@ -50,6 +53,7 @@ export function createAutoOpenHandler(getRepository: () => CatalogRepository) {
         code = error.code;
         if (
           [
+            'STALE_OPENING',
             'DROP_NOT_EDITABLE',
             'DROP_NOT_FOUND',
             'STOREFRONT_CONFLICT',
