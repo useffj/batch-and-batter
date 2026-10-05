@@ -9,7 +9,7 @@
 - **Hosting compatibility:** [Amplify Hosting supports Next.js 12–15 SSR](https://docs.aws.amazon.com/amplify/latest/userguide/deploy-nextjs-app.html); this patch stays within that supported major. This is not verification of a future hosted artifact.
 - **Fresh audits:** Before and after the update, full audit reports five unique advisories across seven affected package nodes (six high, one moderate); production-only audit reports four unique advisories across two affected nodes (one high, one moderate). The remaining advisories are the braces and PostCSS findings below, not direct Next.js security advisories fixed by this release. Audit remains visibly nonzero.
 
-Hosting A work is preserved separately. Its commit remains blocked until this maintenance is reviewed and merged. Hosting B public deployment remains blocked pending its own review and actual Amplify artifact verification.
+Historical maintenance gate: Hosting A and Hosting B were blocked pending their respective reviews. Those reviews are now complete: Hosting A is merged, and Hosting B1/B2B passed human acceptance on 2026-10-05 under the artifact-specific PostCSS exception below. Existing advisory findings remain unchanged.
 
 ## Braces temporary exception
 
@@ -26,7 +26,7 @@ Do not downgrade eslint-config-next to npm audit's proposed 14.2.35 remediation,
 
 ## Next.js transitive PostCSS dependency
 
-- **Status:** Existing temporary development risk acceptance retained; not production risk acceptance.
+- **Status:** Temporary development risk acceptance retained, with a separately human-approved, narrowly scoped public Hosting B exception for the specific artifact below. This is not blanket production or payment-launch risk acceptance.
 - **Installed path:** `next@15.5.27` → `postcss@8.4.31`.
 - **Installation classification:** Production dependency through Next.js, not a development-only dependency.
 - **Observed application exposure:** CSS/build processing. The current storefront does not accept user-supplied CSS.
@@ -91,3 +91,22 @@ The 2026-09-30 verification found neither package in the esbuild inputs or any o
 Upgrade promptly when an official compatible `aws-cdk-lib` release bundles `brace-expansion >=5.0.12`, or another version verified to resolve every current advisory. Re-run audits, runtime absence checks, tests, synth, and diff when upgrading.
 
 **This exception MUST be reevaluated before production payment launch.** It is temporary development risk acceptance, not a clean audit or a production security approval.
+
+## Hosting B artifact-specific PostCSS acceptance — 2026-10-05
+
+Human review accepted Hosting B1 and B2B as PASSED under a **TEMPORARY, NARROWLY SCOPED** exception. This supplements, rather than erases, the earlier local-trace evidence and advisory table.
+
+- App `batch-and-batter-storefront` / `d1aw7cfglvejmo`, branch `main`, WEB_COMPUTE / Next.js SSR, Job 1 SUCCEED.
+- Accepted repository HEAD: `395a03f918ac5577a6cc9354243d713f021597b0`.
+- Actual downloaded compute artifact SHA-256: `922e2460594dcc5994e3902ddbf21b3592c329a2587862977d30bb9d28072e5f`.
+- Next.js 15.5.27 physically packages vulnerable PostCSS 8.4.31. Local NFT absence did **not** predict Amplify package absence.
+- Classification: **PACKAGED BUT NOT REQUEST-REACHABLE**, for the reviewed read-only routes/configuration only.
+- The production entrypoint sets dev=false; PostCSS references lead into CSS build/development tooling, not the identified normal storefront request path. No user-supplied CSS feature exists, and public HTTP inputs do not reach PostCSS configuration or CSS input.
+- Representative local execution of the downloaded compute package loaded 391 unique modules, with zero modules beneath node_modules/postcss. Braces/micromatch/fast-glob/ESLint tooling were absent from relevant runtime execution. Representative execution is not exhaustive proof of all possible future requests.
+- Vulnerable advisory ranges and audit findings still apply. No audit suppression, override or dependency workaround was used. PostCSS is not fixed or universally safe; package presence is not irrelevant.
+- The temporary URL and canonical https://batchandbatter.com use the same accepted artifact. B2B domain/certificate/redirect configuration introduced no new application build; Job 1 and repository HEAD remained unchanged. New hostname/redirect behavior was reviewed separately.
+- Automatic builds remain disabled. PAYMENT_START_ENABLED was verified false before and after hosting/domain work; no Cart, checkout or Stripe browser SDK is exposed.
+
+Renewed security review is mandatory for changes to Next.js, PostCSS, Amplify packaging behavior, build configuration, serving artifact, server routes, middleware, server actions, CSS-processing features, public request surface or hosting architecture. The exception must not silently transfer to a new artifact. Continue monitoring supported upstream remediation; retain all existing advisory records and the independent CDK production-review gate.
+
+Full acceptance, DNS/email preservation and rollback evidence are recorded in [Amplify hosting readiness and acceptance](PHASE_5B_AMPLIFY_HOSTING_READINESS.md). This documentation does not authorize a deployment or payment launch.
