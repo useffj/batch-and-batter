@@ -1,5 +1,6 @@
 /* A full navigation intentionally bypasses client router caches for a fresh public read. */
 /* eslint-disable @next/next/no-html-link-for-pages */
+import Image from 'next/image';
 import type { StorefrontResult, DropState } from '../../lib/storefront/client';
 const labels: Record<DropState, string> = {
   OPEN: 'Open',
@@ -31,10 +32,20 @@ export function Storefront({ result }: { result: StorefrontResult }) {
           <a href="/">Reload Drop information</a>
         </section>
       ) : !drop ? (
-        <section>
-          <h2>Our next Drop is on its way</h2>
+        <section className="no-drop" aria-labelledby="no-drop-heading">
+          <Image
+            className="no-drop-logo"
+            src="/brand/secondary-mixing-bowl.png"
+            alt="A smiling mixing bowl with cookies, Batch and Batter Cookie Co."
+            width={1254}
+            height={1254}
+            sizes="(max-width: 480px) 85vw, 360px"
+            priority
+          />
+          <h2 id="no-drop-heading">Fresh cookies are in the works.</h2>
           <p>
-            No current or upcoming Drop is available. Please check back later.
+            We’re getting the kitchen ready for our first drop. Check back soon
+            for what’s baking.
           </p>
         </section>
       ) : (
