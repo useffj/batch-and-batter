@@ -95,7 +95,9 @@ describe('authoritative storefront presentation', () => {
       expect(html).toContain(s);
   });
   it('handles null Drop', () =>
-    expect(render({ drop: null })).toContain('No current or upcoming Drop'));
+    expect(render({ drop: null })).toContain(
+      'Fresh cookies are in the works.',
+    ));
   it('handles permitted empty lists', () => {
     const f = fixture();
     f.drop.products = [];
