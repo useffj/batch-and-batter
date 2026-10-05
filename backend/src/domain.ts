@@ -46,6 +46,7 @@ export const dropSchema = z
     status: dropStatusSchema,
     opensAt: timestamp,
     closesAt: timestamp.optional(),
+    openingRevision: timestamp.optional(),
     quantityLimit: positiveInteger.default(12),
     timezone: timezoneSchema,
     pickupLocation: z.string().trim().min(1),

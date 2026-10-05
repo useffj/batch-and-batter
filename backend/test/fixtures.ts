@@ -59,6 +59,9 @@ export function fakeRepository(
   overrides: Partial<CatalogRepository> = {},
 ): CatalogRepository {
   return {
+    changeScheduled: async () => {
+      throw new Error('Unexpected scheduled change');
+    },
     pauseDrop: async () => {
       throw new Error('Unexpected pause');
     },

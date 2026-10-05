@@ -345,6 +345,16 @@ export class DevelopmentStack extends Stack {
     });
     for (const [route, method, integrationId] of [
       [
+        '/admin/drops/{dropId}',
+        apigateway.HttpMethod.PATCH,
+        'AdminEditScheduledDropIntegration',
+      ],
+      [
+        '/admin/drops/{dropId}/cancel',
+        apigateway.HttpMethod.POST,
+        'AdminCancelScheduledDropIntegration',
+      ],
+      [
         '/admin/products',
         apigateway.HttpMethod.POST,
         'AdminCreateProductIntegration',
