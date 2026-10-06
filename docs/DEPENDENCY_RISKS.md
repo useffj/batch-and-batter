@@ -110,3 +110,51 @@ Human review accepted Hosting B1 and B2B as PASSED under a **TEMPORARY, NARROWLY
 Renewed security review is mandatory for changes to Next.js, PostCSS, Amplify packaging behavior, build configuration, serving artifact, server routes, middleware, server actions, CSS-processing features, public request surface or hosting architecture. The exception must not silently transfer to a new artifact. Continue monitoring supported upstream remediation; retain all existing advisory records and the independent CDK production-review gate.
 
 Full acceptance, DNS/email preservation and rollback evidence are recorded in [Amplify hosting readiness and acceptance](PHASE_5B_AMPLIFY_HOSTING_READINESS.md). This documentation does not authorize a deployment or payment launch.
+
+## Phase 9A source-map-js review and local remediation — 2026-10-05
+
+The fresh pre-install frontend audit found a previously unrecorded high finding:
+[GHSA-68fv-2mgg-jv7q / CVE-2026-93749](https://github.com/advisories/GHSA-68fv-2mgg-jv7q).
+The affected range is `>=1.0.0 <1.2.2`; installed version was 1.2.1. Indexed
+source-map section offsets can cause synchronous event-loop denial of service.
+This was present before adding Stripe and must not be attributed to Stripe.
+
+It is transitive through both `next@15.5.27 -> postcss@8.4.31 -> source-map-js`
+(production dependency classification) and `vitest@4.1.11 -> vite@8.3.0 ->
+postcss@8.5.28 -> source-map-js` (development tooling). The corresponding parent
+ranges, `^1.0.2` and `^1.2.1`, both accept patched 1.2.2.
+
+The retained accepted Phase 6A Job 3 BUILD.zip was rehashed locally to
+`f3ed72232fed0c153474be3610e24ac6ee08aafef51afbba3545a7e66dcdb494`, matching the
+acceptance record. It physically contains source-map-js 1.2.1. Inspection found
+imports from PostCSS input, previous-map and map-generator modules. There is no
+application feature accepting source maps or CSS. Its retained representative
+runtime trace has 1,251 successful module-load edges / 463 unique modules and zero
+source-map-js or PostCSS loads. This is evidence of bounded tooling exposure for
+that artifact/request surface, not proof of universal non-reachability and not a
+claim that the deployed package is patched. No live AWS request was used for this
+review; current live artifact identity was not independently re-queried.
+
+Under the authorized bounded-dependency review, normal targeted `npm update
+source-map-js --ignore-scripts` resolved 1.2.2 without overrides, direct dependency
+addition, parent upgrades or audit suppression. Only that transitive version and
+its integrity/resolved URL changed. Full regressions accompany this local patch.
+No deployment is authorized; the accepted historical artifact still contains 1.2.1.
+
+Stripe preflight used a separate package-lock-only resolution before installation.
+Exact pins `@stripe/stripe-js@10.0.0` and `@stripe/react-stripe-js@7.0.0` are
+compatible with React 19.1.9; the wrapper requires Stripe.js >=10 <11 and React
+
+> =16.8 <20. Two new nodes are added. Five existing nodes (`prop-types`, `react-is`,
+> `object-assign`, `loose-envify`, `js-tokens`) become part of the production closure;
+> none changes version. Stripe.js has no runtime package dependencies; the React
+> wrapper depends on prop-types. No new advisory appears in the isolated or actual
+> installation. Registry unpacked sizes are 1,032,122 and 870,381 bytes; those are
+> package sizes, not browser payload sizes.
+
+Full audit changes from 8 affected nodes (7 high / 1 moderate) to the previously
+recorded 7 (6 high / 1 moderate). Production-only audit retains the two Next/PostCSS
+nodes (1 high / 1 moderate). Existing PostCSS, braces and CDK exceptions are neither
+expanded nor erased. A future checkout deployment creates a NEW Amplify artifact
+and request surface requiring independent PostCSS and source-map reachability
+reevaluation. This local source-map fix does not make the remaining audit clean.

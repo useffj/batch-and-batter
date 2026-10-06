@@ -215,10 +215,17 @@ export function CartPanel({
                   : ''}
                 . Prices are held for this reservation.
               </p>
-              <button disabled aria-describedby="checkout-boundary">
-                Checkout unavailable
-              </button>
-              <p id="checkout-boundary">Online payment is not enabled yet.</p>
+              {editable &&
+              drop?.id === cart.dropId &&
+              drop.status === 'OPEN' ? (
+                <a href="/checkout">Continue to checkout</a>
+              ) : cart.status === 'PAYMENT_PENDING' ||
+                cart.status === 'PAYMENT_COMMITTING' ||
+                cart.status === 'CONVERTED' ? (
+                <a href="/checkout">Check payment status</a>
+              ) : (
+                <p>Checkout unavailable</p>
+              )}
             </>
           )}
         </>

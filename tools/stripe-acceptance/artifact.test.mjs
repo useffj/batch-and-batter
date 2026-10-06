@@ -22,6 +22,10 @@ test('actual Next production route manifest excludes acceptance endpoints', asyn
     '/_not-found/page',
     '/api/cart/route',
     '/api/cart/session/route',
+    '/api/checkout/continue/route',
+    '/api/checkout/route',
+    '/api/checkout/start/route',
+    '/checkout/page',
     '/page',
   ]);
   const routes = JSON.parse(
@@ -30,10 +34,10 @@ test('actual Next production route manifest excludes acceptance endpoints', asyn
   assert.equal(routes.dynamicRoutes.length, 0);
   assert.doesNotMatch(
     JSON.stringify(routes),
-    /stripe|acceptance|\/start|payment/,
+    /stripe-acceptance|acceptance|\/setup|\/preview/,
   );
 });
-test('actual browser/server bundles and Lambda inputs contain no harness or Stripe browser SDK', async () => {
+test('actual browser/server bundles and Lambda inputs contain no harness or secret payment configuration', async () => {
   for (const path of ['web/.next/static/', 'web/.next/server/']) {
     for (const file of await walk(new URL(path, root))) {
       if (!/\.(js|json|html)$/.test(file.pathname)) continue;
@@ -46,7 +50,12 @@ test('actual browser/server bundles and Lambda inputs contain no harness or Stri
         );
       assert.doesNotMatch(
         content,
-        /stripe-acceptance|STRIPE_ACCEPTANCE_|DEV \/ STRIPE SANDBOX ACCEPTANCE ONLY|js\.stripe\.com|@stripe\/stripe-js|payment\/start|127\.0\.0\.1:4242/,
+        /CHECKOUT_MOCK_BROWSER_ONLY|__checkoutMock|__checkout_mock_action|stripe-acceptance|STRIPE_ACCEPTANCE_|DEV \/ STRIPE SANDBOX ACCEPTANCE ONLY|127\.0\.0\.1:4242/,
+        file.pathname,
+      );
+      assert.doesNotMatch(
+        content,
+        /STRIPE_(?:WORKER|READ|SECRET|RESTRICTED)_KEY|STRIPE_WEBHOOK_SECRET|pk_test_mock|pi_[A-Za-z0-9]+_secret_[A-Za-z0-9]{8,}|ctoken_[A-Za-z0-9]{8,}|(?:sk|rk)_(?:test|live)_[A-Za-z0-9]{16,}|whsec_[A-Za-z0-9]{16,}|acceptanceCapability/,
         file.pathname,
       );
     }
