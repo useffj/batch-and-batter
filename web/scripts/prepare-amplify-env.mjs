@@ -26,22 +26,49 @@ function prepare() {
     url.hash
   )
     throw new Error('STOREFRONT_API_BASE_URL must be a public HTTPS base URL.');
+  // Optional for storefront-only builds. Missing checkout settings stay absent,
+  // so the existing server-side checkout gate continues to fail closed.
+  const pricingMode = process.env.CHECKOUT_PRICING_MODE;
+  const publishableKey = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
+  if (pricingMode !== undefined && pricingMode !== 'dev-zero-tax-fee')
+    throw new Error('CHECKOUT_PRICING_MODE must be dev-zero-tax-fee when set.');
+  if (
+    publishableKey !== undefined &&
+    !/^pk_test_[a-zA-Z0-9]+$/.test(publishableKey)
+  )
+    throw new Error(
+      'NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY must be a test publishable key when set.',
+    );
+  // Explicit non-secret allowlist; never copy arbitrary NEXT_PUBLIC_ variables,
+  // credentials, capabilities, provider tokens/secrets or customer data.
+  const lines = [
+    `STOREFRONT_API_BASE_URL=${url.href}`,
+    'STOREFRONT_CURRENCY=USD',
+  ];
+  if (pricingMode !== undefined)
+    lines.push(`CHECKOUT_PRICING_MODE=${pricingMode}`);
+  if (publishableKey !== undefined)
+    lines.push(`NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${publishableKey}`);
   // Exclusive creation prevents silently overwriting operator-owned local files.
-  writeFileSync(
-    resolve('.env.production'),
-    `STOREFRONT_API_BASE_URL=${url.href}\nSTOREFRONT_CURRENCY=USD\n`,
-    { encoding: 'utf8', mode: 0o600, flag: 'wx' },
-  );
+  writeFileSync(resolve('.env.production'), `${lines.join('\n')}\n`, {
+    encoding: 'utf8',
+    mode: 0o600,
+    flag: 'wx',
+  });
 }
 try {
   prepare();
-  console.log('Prepared the two public storefront settings for SSR.');
+  console.log(
+    'Prepared explicitly allowlisted non-secret application settings for SSR.',
+  );
 } catch (error) {
   const allowed = [
     'STOREFRONT_API_BASE_URL is required.',
     'STOREFRONT_CURRENCY is required.',
     'STOREFRONT_CURRENCY must be USD.',
     'STOREFRONT_API_BASE_URL must be a public HTTPS base URL.',
+    'CHECKOUT_PRICING_MODE must be dev-zero-tax-fee when set.',
+    'NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY must be a test publishable key when set.',
   ];
   console.error(
     error instanceof Error && allowed.includes(error.message)

@@ -382,3 +382,70 @@ The browser mock scenario above belongs to the earlier local implementation revi
 it was not rerun for repository finalization. Fresh audits retain seven frontend
 affected nodes (six high, one moderate; production-only one high and one moderate),
 zero backend findings and one existing high infrastructure node.
+
+## Job 4 deployment and SSR environment propagation fix
+
+Amplify Job 4 deployed revision `4f68a79296ad8b84dcd42a1969f6582f349189ed`
+successfully on 2026-10-06 (04:11:36–04:14:08 UTC), but **Phase 9A deployment
+acceptance DID NOT PASS**. Its downloaded BUILD.zip SHA-256 is
+`ccc0c81cc044724ed1896dae641342e7405156a3de23d6d2e613c6472458b44b`.
+
+Amplify build environment variables are not automatically available to Next.js SSR.
+Job 4 had `CHECKOUT_PRICING_MODE=dev-zero-tax-fee` configured in the Amplify branch,
+but `compute/default/.env.production` contained only `STOREFRONT_API_BASE_URL` and
+`STOREFRONT_CURRENCY`. The checkout relay reads the pricing mode at runtime, so its
+server-side gate could not operate as intended. This is hosting configuration
+plumbing, not a payment-domain contract change. The public test key was present in
+rendered checkout configuration, and no-Cart checkout remained safe.
+
+The gate performed no Cart, Drop, reservation, ConfirmationToken, payment-start,
+PaymentIntent or Stripe mutation and created no new paid Orders. Payment admission
+was verified false before and after, automatic builds remained disabled, and no
+second deployment was attempted. PostCSS 8.4.31 was packaged, with zero PostCSS
+loads in a bounded 402-module read-only runtime exercise; source-map-js 1.2.2 was
+physically packaged. These findings do not convert Job 4 into passed acceptance.
+
+The local remediation extends `web/scripts/prepare-amplify-env.mjs`, preserving the
+existing build command and exclusive mode-0600 `.env.production` creation. Its
+explicit non-secret allowlist is exactly:
+
+- `STOREFRONT_API_BASE_URL`: required, validated public HTTPS URL.
+- `STOREFRONT_CURRENCY`: required, exactly `USD`.
+- `CHECKOUT_PRICING_MODE`: optional for storefront-only builds; when configured,
+  exactly `dev-zero-tax-fee`. It remains server-side, never `NEXT_PUBLIC`.
+- `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`: optional for storefront-only builds; when
+  configured, a `pk_test_`-shaped public key. No concrete account key is committed.
+
+Missing optional settings are omitted, not defaulted. Existing checkout tests
+continue to enforce missing/unsupported pricing mode and unsupported currency
+fail-closed behavior. Invalid configured values fail preparation before any file
+is written. Tests run the actual helper in isolated temporary directories using
+only synthetic values. They check exact output, omitted optional settings,
+required settings, invalid values/injection, file permissions and non-overwrite.
+
+No arbitrary `NEXT_PUBLIC_` prefix expansion or bulk environment copying is used.
+Unrelated public variables, Stripe secret/restricted keys, webhook secrets, Cognito
+admin credentials/tokens, AWS credentials, Cart capabilities, action/client secrets,
+ConfirmationToken IDs and customer data are not copied from other environment
+variables. Invalid key types are also rejected in the publishable-key slot. Helper
+success/error output does not disclose configured values.
+
+A separately approved new deployment must independently verify the actual packaged
+`.env.production` contains the intended four settings, the pricing mode is available
+to SSR, the public test key is available as intended, and no prohibited values are
+packaged. It must also verify packaged source-map-js remains 1.2.2 where applicable
+and repeat the artifact-specific PostCSS static/dynamic request-reachability review.
+Local build success is not hosted artifact acceptance. No deployment, AWS environment
+mutation, payment enablement or commerce/Stripe mutation is part of this local fix.
+
+Local fix validation: 238 frontend tests passed (208 existing plus 30 new helper
+cases), including unchanged Phase 9A fail-closed pricing tests. Typecheck,
+zero-warning lint, production build, both production-exclusion tests, repository
+formatting and diff checks passed. The controlled build used only synthetic public
+configuration, generated exactly four settings with the real helper, and removed
+those settings from the build process environment so Next.js loaded the generated
+file. Representative prohibited values were excluded, and neither the pricing-mode
+variable nor its value appeared in browser JavaScript. The temporary environment
+file was removed afterward. No dependency, backend, infrastructure or build-spec
+change was needed. Broader backend/infrastructure suites were not rerun for this
+helper-only change; hosted packaging remains a separate acceptance gate.
