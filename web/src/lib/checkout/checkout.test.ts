@@ -35,6 +35,7 @@ const config = {
   STOREFRONT_API_BASE_URL: 'https://backend.test/dev',
   STOREFRONT_CURRENCY: 'USD',
   CHECKOUT_PRICING_MODE: 'dev-zero-tax-fee',
+  CHECKOUT_SUBMISSION_MODE: 'enabled',
   NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: 'pk_test_mock',
 };
 const contact = {
@@ -71,6 +72,7 @@ function fresh(): CheckoutSnapshot {
     paymentEtag: null,
     serverNow: now,
     available: true,
+    paymentSubmissionAllowed: true,
     summary: { currency: 'USD', subtotal: 1050, tax: 0, fees: 0, total: 1050 },
     drop: {
       id: dropId,
@@ -524,7 +526,7 @@ describe('payment lifecycle and concurrency', () => {
     expect(request.mock.calls[0][0]).toBe('/api/checkout');
     expect(request.mock.calls[0][1].method).toBe('GET');
   });
-  it('validates Elements before creating token and submits exact body once', async () => {
+  it('normalizes U.S. phone input before submitting the exact payment-start body', async () => {
     const p = providers(),
       store = memory();
     let accepted = false;
@@ -538,7 +540,7 @@ describe('payment lifecycle and concurrency', () => {
     const c = new CheckoutClient(serial(), store, request);
     const result = await c.submit(
       fresh(),
-      contact,
+      { ...contact, phone: '(303) 555-0123' },
       body.pickupDate,
       p.stripe,
       p.elements,
@@ -687,6 +689,75 @@ describe('payment lifecycle and concurrency', () => {
         c.submit(fresh(), contact, body.pickupDate, p.stripe, p.elements),
       ).rejects.toThrow('current browser');
     expect(p.token).not.toHaveBeenCalled();
+  });
+  it('locked unadmitted checkout cannot authenticate or start a replacement payment', async () => {
+    const locked = { ...fresh(), paymentSubmissionAllowed: false };
+    const request = vi.fn().mockResolvedValue(response(locked));
+    const handleNextAction = vi.fn();
+    const p = providers();
+    const client = new CheckoutClient(serial(), memory(), request);
+    expect(
+      (await client.authenticate({ handleNextAction })).payment,
+    ).toBeNull();
+    await expect(
+      client.submit(locked, contact, body.pickupDate, p.stripe, p.elements),
+    ).rejects.toThrow();
+    expect(handleNextAction).not.toHaveBeenCalled();
+    expect(p.submit).not.toHaveBeenCalled();
+    expect(p.token).not.toHaveBeenCalled();
+    expect(
+      request.mock.calls.every(
+        ([url, init]) => url === '/api/checkout' && init.method === 'GET',
+      ),
+    ).toBe(true);
+  });
+  it('locked recovery authenticates only the backend-provided existing intent and keeps new submission locked', async () => {
+    const action = {
+      ...pending('action_required'),
+      paymentSubmissionAllowed: false,
+    };
+    const processing = {
+      ...pending('processing'),
+      paymentSubmissionAllowed: false,
+    };
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce(response(action))
+      .mockResolvedValueOnce(response(action))
+      .mockResolvedValueOnce(response({ accepted: true }, 202))
+      .mockResolvedValueOnce(response(processing));
+    const p = providers();
+    const handleNextAction = vi.fn().mockResolvedValue({
+      paymentIntent: { id: 'pi_mock', status: 'succeeded' },
+    });
+    const client = new CheckoutClient(serial(), memory(), request);
+    const result = await client.authenticate({
+      handleNextAction,
+      createConfirmationToken: p.token,
+    } as unknown as Stripe);
+    expect(handleNextAction).toHaveBeenCalledExactlyOnceWith({
+      clientSecret: action.payment!.clientSecret,
+    });
+    expect(result.payment!.paymentAttemptId).toBe(
+      action.payment!.paymentAttemptId,
+    );
+    expect(result.payment!.status).toBe('processing');
+    expect(result.paymentSubmissionAllowed).toBe(false);
+    expect(request.mock.calls.map(([url]) => url)).toEqual([
+      '/api/checkout',
+      '/api/checkout',
+      '/api/checkout/continue',
+      '/api/checkout',
+    ]);
+    expect(JSON.parse(request.mock.calls[2][1].body)).toEqual({
+      continuationGeneration: 1,
+    });
+    await expect(
+      client.submit(result, contact, body.pickupDate, p.stripe, p.elements),
+    ).rejects.toThrow();
+    expect(p.token).not.toHaveBeenCalled();
+    expect(p.submit).not.toHaveBeenCalled();
+    expect(request).toHaveBeenCalledTimes(4);
   });
   it('browser action success rereads backend and cannot itself mark paid', async () => {
     const request = vi
@@ -838,4 +909,72 @@ it('checkout is unavailable when no pickup window remains eligible', async () =>
   s.drop!.pickupDates = [];
   const result = await checkoutRelay(req(), 'read', config, mockBackend(s));
   expect((await result.json()).available).toBe(false);
+});
+
+describe('secondary checkout submission lock', () => {
+  it.each([undefined, '', 'invalid', 'ENABLED', 'locked'])(
+    'mode %j fails locked while preserving pricing and rendering availability',
+    async (mode) => {
+      const settings = { ...config, CHECKOUT_SUBMISSION_MODE: mode };
+      const snapshot = await (
+        await checkoutRelay(req(), 'read', settings, mockBackend())
+      ).json();
+      expect(snapshot.paymentSubmissionAllowed).toBe(false);
+      expect(snapshot.available).toBe(true);
+      expect(snapshot.summary).toEqual(fresh().summary);
+      expect(JSON.stringify(snapshot)).not.toMatch(
+        /CHECKOUT_SUBMISSION_MODE|PAYMENT_START_ENABLED|dev-zero-tax-fee/,
+      );
+      const upstream = vi.fn();
+      expect(
+        (await checkoutRelay(req(body), 'start', settings, upstream)).status,
+      ).toBe(503);
+      expect(upstream).not.toHaveBeenCalled();
+    },
+  );
+  it.each([undefined, null, 'true', 1, false])(
+    'only a literal true client projection permits submission (%j)',
+    (value) => {
+      expect(
+        parseCheckout({ ...fresh(), paymentSubmissionAllowed: value })
+          .paymentSubmissionAllowed,
+      ).toBe(false);
+    },
+  );
+  it.each(['initial', 'refreshed'] as const)(
+    'a %s lock stops before Stripe, markers or start requests',
+    async (stage) => {
+      const locked = { ...fresh(), paymentSubmissionAllowed: false };
+      const request = vi.fn().mockResolvedValue(response(locked));
+      const store = memory(),
+        p = providers();
+      const client = new CheckoutClient(serial(), store, request);
+      await expect(
+        client.submit(
+          stage === 'initial' ? locked : fresh(),
+          contact,
+          body.pickupDate,
+          p.stripe,
+          p.elements,
+        ),
+      ).rejects.toThrow('Online payment is not available');
+      expect(p.submit).not.toHaveBeenCalled();
+      expect(p.token).not.toHaveBeenCalled();
+      expect([...store.data]).toEqual([]);
+      expect(
+        request.mock.calls.every(([, init]) => init.method === 'GET'),
+      ).toBe(true);
+      if (stage === 'initial') expect(request).not.toHaveBeenCalled();
+    },
+  );
+  it('enabled UI gate forwards backend admission rejection without overriding it', async () => {
+    const upstream = vi
+      .fn()
+      .mockResolvedValue(response({ code: 'PAYMENTS_DISABLED' }, 503));
+    const result = await checkoutRelay(req(body), 'start', config, upstream);
+    expect(result.status).toBe(503);
+    expect(await result.json()).toEqual({ code: 'PAYMENTS_DISABLED' });
+    expect(upstream).toHaveBeenCalledTimes(1);
+    expect(String(upstream.mock.calls[0][0])).toContain('/payment/start');
+  });
 });

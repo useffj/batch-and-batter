@@ -1,9 +1,117 @@
 # Phase 9A — customer checkout contract review
 
-Status: local implementation human review approved for repository finalization. Commit, branch push and PR creation are authorized; deployment and payment acceptance remain separately gated.
+Status: hosted checkout UI acceptance is **NOT PASSED**. Repository finalization (commit, branch push and PR) is human approved. Deployment, payment enablement, AWS/Stripe mutation and live Cart/Drop mutation remain unauthorized.
 
-Starting main and origin/main: `1701f457a0692f16bf2f9d701ba8ab21deab15f3`.
-Branch: `codex/phase-9a-customer-checkout`. Repository finalization targets a PR to main.
+Starting main and origin/main: `304f49b53fc6dc212e4999953442b9afee7aee83`.
+Branch: `codex/phase-9a-checkout-submission-lock`.
+Job 5 artifact acceptance passed. Accepted serving deployment remains Amplify Job 5, artifact SHA-256
+`483260775eb55528fa425e4574670d028d2771b4ceb687a5893c2b19ef944260`.
+
+## Local checkout submission lock follow-up
+
+Most hosted rendering, pricing, restoration, privacy, inventory-release and
+operational checks succeeded. However, Pay remained enabled while backend payment
+admission was locked, and complete keyboard/focus acceptance was not established.
+These results do not mark hosted acceptance passed.
+
+`CHECKOUT_SUBMISSION_MODE` is a server-side secondary UI safety gate. Only the
+exact value `enabled` allows new submission; `locked`, missing and invalid runtime
+values project `paymentSubmissionAllowed: false`. The SSR helper accepts only
+`locked` or `enabled` when configured and rejects invalid build configuration
+without writing an environment file. Missing configuration stays absent and
+therefore locked. Neither the raw setting nor `PAYMENT_START_ENABLED` is projected
+to customers. This gate is not financial authority: `PAYMENT_START_ENABLED`
+remains the unchanged backend authority, including when the UI gate is enabled.
+
+Locked checkout retains contact/pickup fields, pricing, summary and Payment
+Element rendering. Pay is a native disabled submit button associated through
+`aria-describedby` with “Payments are temporarily unavailable.” It never uses a
+fake loading label to communicate the lock. Interactive Express Checkout is not
+mounted while locked; enabled mode preserves its existing integration/options.
+Form submission stops before validation/Stripe delegation when locked. The
+checkout client also checks both the displayed projection and a fresh relay read
+before Elements submission, token creation or start. The server relay rejects
+new starts while locked, including a stale enabled client. Reads and recovery of
+an already admitted payment remain available; the lock does not abandon existing
+payment responsibility.
+
+Approval checklist: locked mode never calls `handleNextAction` unless recovering
+an already-admitted same-PaymentIntent `requires_action` state (represented as
+`action_required` by the backend checkout contract). Recovery uses only the
+backend-provided existing intent client secret, rereads authoritative status after
+authentication, and can wake reconciliation for the same attempt. Browser action
+success cannot mark PAID. It cannot create a token, new intent or replacement
+attempt. New submission stays locked throughout recovery; backend admission need
+not be re-enabled to finish an already-admitted payment. Focused tests cover both
+locked unadmitted checkout and locked existing-payment authentication.
+
+The explicit SSR allowlist now consists only of:
+
+- `STOREFRONT_API_BASE_URL`
+- `STOREFRONT_CURRENCY`
+- `CHECKOUT_PRICING_MODE`
+- `CHECKOUT_SUBMISSION_MODE`
+- `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`
+
+No wildcard or unrelated public-variable propagation is introduced. Existing
+secret exclusion, cookie/session, pricing and backend admission contracts remain.
+
+Background status polling previously disabled the contact fieldset, potentially
+interrupting keyboard focus every five seconds. Only an actual submission now
+disables that fieldset. Native control order, labels, optional consent, pickup
+selection, name/phone constraints, phone-help association and visible focus styles
+remain intact. Native `reportValidity` provides validation and invalid-field
+focus before enabled submission. The disabled Pay explanation is visible even
+though native disabled buttons are skipped in keyboard navigation.
+
+Local tests cover the gate, server projection, stale-client locking, real form
+handler guards, rendered native disabled semantics, mocked enabled Pay/Express
+flows and polling focusability. Node form-handler tests do not certify browser
+keyboard navigation or Stripe iframe accessibility. Any local browser smoke uses
+mocked Stripe components, with no external financial calls. Real Stripe iframe
+inspection and complete hosted keyboard/focus verification remain bounded and
+require a fresh hosted review.
+
+Fresh repository-finalization validation: 283 frontend tests passed, plus 902
+backend regression tests, 7 backend artifact tests, 2 frontend production-exclusion
+tests and 34 infrastructure tests. Offline infrastructure synthesis also passed. Typecheck, lint, production
+build, repository formatting and `git diff --check` passed. The production browser
+chunks contain none of `CHECKOUT_SUBMISSION_MODE`, `CHECKOUT_PRICING_MODE` or
+`PAYMENT_START_ENABLED`; server configuration is represented to the client only
+by the strict boolean projection, not the raw mode value.
+
+A localhost smoke of the actual checkout component with synthetic Cart data and
+mocked Stripe verified name → email → phone → pickup → optional consent keyboard
+order, focus retained across background polling, keyboard pickup selection,
+Space toggling consent with a visible focus outline, and disabled Pay skipped in
+tab navigation. Enabled-mode empty-form activation focused Name and displayed
+native required-field feedback. These observations cover application-owned
+controls only, not real Stripe iframe internals or hosted deployment acceptance.
+No actual provider or payment-start requests were made by this smoke.
+
+The earlier redaction miss originated in external acceptance inspection tooling,
+not repository application/tooling code. No unrelated application change was
+made for it. Future inspection must redact all cookie values/identifiers,
+capabilities, admin tokens and provider secrets before output; retain only safe
+metadata and comparison results.
+
+A future deployment requires separate human approval, a new build and independent
+artifact-specific security acceptance, including SSR propagation, boolean-only
+projection, browser-bundle exposure, locked UI/Express behavior, keyboard/focus,
+network/log safety and backend admission remaining false. Job 5 is not acceptance
+evidence for this new code. Hosted acceptance remains **NOT PASSED**.
+
+## U.S. phone input follow-up
+
+The phone field labels the fixed country context “United States (+1)” and accepts
+10-digit input with ordinary punctuation/spacing or an already prefixed +1 value.
+The client normalizes it before the existing E.164 payment-start contract;
+backend validation is unchanged. Unsupported explicit country prefixes receive a
+specific native validation message. No country selector or dependency was added.
+There is no existing geographic phone metadata utility: this validates NANP
+syntax, not U.S. allocation, residence, mobile status or ownership. Canadian and
+other NANP numbers cannot reliably be distinguished by this implementation.
+Hosted acceptance remains NOT PASSED.
 
 ## Existing HTTP contracts
 

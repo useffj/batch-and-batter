@@ -18,6 +18,7 @@ const storefront = {
 };
 const checkout = {
   CHECKOUT_PRICING_MODE: 'dev-zero-tax-fee',
+  CHECKOUT_SUBMISSION_MODE: 'locked',
   NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: 'pk_test_LocalBuildPlaceholder',
 };
 afterEach(() => {
@@ -39,7 +40,7 @@ function run(env: Record<string, string | undefined>, existing?: string) {
 }
 
 describe('Amplify SSR environment preparation', () => {
-  it('writes exactly four reviewed settings and excludes all unrelated values', () => {
+  it('writes exactly five reviewed settings and excludes all unrelated values', () => {
     const prohibited = {
       NEXT_PUBLIC_UNREVIEWED: 'unreviewed-placeholder',
       STRIPE_SECRET_KEY: 'sk_test_placeholder',
@@ -63,6 +64,7 @@ describe('Amplify SSR environment preparation', () => {
       'STOREFRONT_API_BASE_URL=https://api.example.invalid/\n' +
         'STOREFRONT_CURRENCY=USD\n' +
         'CHECKOUT_PRICING_MODE=dev-zero-tax-fee\n' +
+        'CHECKOUT_SUBMISSION_MODE=locked\n' +
         'NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_LocalBuildPlaceholder\n',
     );
     expect(statSync(result.path).mode & 0o777).toBe(0o600);
@@ -160,3 +162,22 @@ describe('Amplify SSR environment preparation', () => {
     expect(readFileSync(result.path, 'utf8')).toBe('existing-placeholder\n');
   });
 });
+
+it.each(['locked', 'enabled'])(
+  'explicit submission mode %s is propagated',
+  (mode) => {
+    const result = run({ ...storefront, CHECKOUT_SUBMISSION_MODE: mode });
+    expect(result.status).toBe(0);
+    expect(readFileSync(result.path, 'utf8')).toContain(
+      `CHECKOUT_SUBMISSION_MODE=${mode}\n`,
+    );
+  },
+);
+it.each(['', 'ENABLED', 'enabled\nSECRET=value'])(
+  'invalid submission mode %j fails closed without a file',
+  (mode) => {
+    const result = run({ ...storefront, CHECKOUT_SUBMISSION_MODE: mode });
+    expect(result.status).toBe(1);
+    expect(() => readFileSync(result.path)).toThrow();
+  },
+);
