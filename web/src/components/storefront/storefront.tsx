@@ -1,6 +1,7 @@
 /* A full navigation intentionally bypasses client router caches for a fresh public read. */
 /* eslint-disable @next/next/no-html-link-for-pages */
 import Image from 'next/image';
+import { AddToCart, CartProvider } from '../cart/cart';
 import type { StorefrontResult, DropState } from '../../lib/storefront/client';
 const labels: Record<DropState, string> = {
   OPEN: 'Open',
@@ -21,114 +22,118 @@ export function Storefront({ result }: { result: StorefrontResult }) {
         <h1>Batch &amp; Batter</h1>
         <p>Cookie Co.</p>
       </header>
-      {result.kind !== 'ready' ? (
-        <section aria-labelledby="unavailable">
-          <h2 id="unavailable">Drop information unavailable</h2>
-          <p role="status">
-            {result.kind === 'invalid'
-              ? 'We could not display the latest Drop information safely. Please try again later.'
-              : 'We cannot load the latest Drop right now. Please try again later.'}
-          </p>
-          <a href="/">Reload Drop information</a>
-        </section>
-      ) : !drop ? (
-        <section className="no-drop" aria-labelledby="no-drop-heading">
-          <Image
-            className="no-drop-logo"
-            src="/brand/secondary-mixing-bowl.png"
-            alt="A smiling mixing bowl with cookies, Batch and Batter Cookie Co."
-            width={1254}
-            height={1254}
-            sizes="(max-width: 480px) 85vw, 360px"
-            priority
-          />
-          <h2 id="no-drop-heading">Fresh cookies are in the works.</h2>
-          <p>
-            We’re getting the kitchen ready for our first drop. Check back soon
-            for what’s baking.
-          </p>
-        </section>
-      ) : (
-        <>
-          <section aria-labelledby="drop-name">
-            <h2 id="drop-name">{drop.name}</h2>
-            <p className="drop-status">{labels[drop.status]}</p>
-            <p>{drop.description}</p>
-            {drop.status === 'SCHEDULED' && (
-              <p>
-                Scheduled opening:{' '}
-                <time dateTime={drop.opensAt}>
-                  {new Intl.DateTimeFormat('en-US', {
-                    dateStyle: 'full',
-                    timeStyle: 'short',
-                    timeZone: drop.timezone,
-                  }).format(new Date(drop.opensAt))}
-                </time>{' '}
-                ({drop.timezone}). Opening is confirmed by the store.
-              </p>
-            )}
-            {drop.status !== 'OPEN' && (
-              <p>Ordering is not currently available for this Drop.</p>
-            )}
-          </section>
-          <section aria-labelledby="cookies">
-            <h2 id="cookies">Cookies</h2>
-            <p>
-              Availability is informational and may change. Viewing this page
-              does not reserve inventory.
+      <CartProvider drop={drop}>
+        {result.kind !== 'ready' ? (
+          <section aria-labelledby="unavailable">
+            <h2 id="unavailable">Drop information unavailable</h2>
+            <p role="status">
+              {result.kind === 'invalid'
+                ? 'We could not display the latest Drop information safely. Please try again later.'
+                : 'We cannot load the latest Drop right now. Please try again later.'}
             </p>
-            {drop.products.length === 0 ? (
-              <p>No products are listed for this Drop.</p>
-            ) : (
-              <ul className="products">
-                {drop.products.map((p, index) => (
-                  <li key={index}>
-                    <h3>{p.name}</h3>
-                    <p>
-                      {new Intl.NumberFormat('en-US', {
-                        style: 'currency',
-                        currency: 'USD',
-                      }).format(p.priceCents / 100)}
-                    </p>
-                    <p>
-                      {p.available === 0
-                        ? 'None currently available'
-                        : `${p.available} available`}
-                    </p>
-                  </li>
-                ))}
-              </ul>
-            )}
+            <a href="/">Reload Drop information</a>
           </section>
-          <section aria-labelledby="pickup">
-            <h2 id="pickup">Pickup</h2>
-            <p>{drop.pickupLocation}</p>
-            <p className="instructions">{drop.pickupInstructions}</p>
-            {drop.pickupDates.length === 0 ? (
-              <p>No pickup dates are listed.</p>
-            ) : (
-              <ul>
-                {drop.pickupDates.map((p, index) => (
-                  <li key={index}>
-                    <time dateTime={p.date}>
-                      {new Intl.DateTimeFormat('en-US', {
-                        dateStyle: 'full',
-                        timeZone: 'UTC',
-                      }).format(new Date(`${p.date}T12:00:00Z`))}
-                    </time>
-                    : {clock(p.startTime)}–{clock(p.endTime)} ({p.timezone})
-                  </li>
-                ))}
-              </ul>
-            )}
+        ) : !drop ? (
+          <section className="no-drop" aria-labelledby="no-drop-heading">
+            <Image
+              className="no-drop-logo"
+              src="/brand/secondary-mixing-bowl.png"
+              alt="A smiling mixing bowl with cookies, Batch and Batter Cookie Co."
+              width={1254}
+              height={1254}
+              sizes="(max-width: 480px) 85vw, 360px"
+              priority
+            />
+            <h2 id="no-drop-heading">Fresh cookies are in the works.</h2>
+            <p>
+              We’re getting the kitchen ready for our first drop. Check back
+              soon for what’s baking.
+            </p>
           </section>
-          <p>
-            This page shows Drop information only. Online ordering is not
-            available here yet.
-          </p>
-          <a href="/">Reload Drop information</a>
-        </>
-      )}
+        ) : (
+          <>
+            <section aria-labelledby="drop-name">
+              <h2 id="drop-name">{drop.name}</h2>
+              <p className="drop-status">{labels[drop.status]}</p>
+              <p>{drop.description}</p>
+              {drop.status === 'SCHEDULED' && (
+                <p>
+                  Scheduled opening:{' '}
+                  <time dateTime={drop.opensAt}>
+                    {new Intl.DateTimeFormat('en-US', {
+                      dateStyle: 'full',
+                      timeStyle: 'short',
+                      timeZone: drop.timezone,
+                    }).format(new Date(drop.opensAt))}
+                  </time>{' '}
+                  ({drop.timezone}). Opening is confirmed by the store.
+                </p>
+              )}
+              {drop.status !== 'OPEN' && (
+                <p>Ordering is not currently available for this Drop.</p>
+              )}
+            </section>
+            <section aria-labelledby="cookies">
+              <h2 id="cookies">Cookies</h2>
+              <p>
+                Availability is informational and may change. Viewing this page
+                does not reserve inventory.
+              </p>
+              {drop.products.length === 0 ? (
+                <p>No products are listed for this Drop.</p>
+              ) : (
+                <ul className="products">
+                  {drop.products.map((p, index) => (
+                    <li key={index}>
+                      <h3>{p.name}</h3>
+                      {drop.status === 'OPEN' && p.available > 0 && (
+                        <AddToCart productId={p.id} name={p.name} />
+                      )}
+                      <p>
+                        {new Intl.NumberFormat('en-US', {
+                          style: 'currency',
+                          currency: 'USD',
+                        }).format(p.priceCents / 100)}
+                      </p>
+                      <p>
+                        {p.available === 0
+                          ? 'None currently available'
+                          : `${p.available} available`}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+            <section aria-labelledby="pickup">
+              <h2 id="pickup">Pickup</h2>
+              <p>{drop.pickupLocation}</p>
+              <p className="instructions">{drop.pickupInstructions}</p>
+              {drop.pickupDates.length === 0 ? (
+                <p>No pickup dates are listed.</p>
+              ) : (
+                <ul>
+                  {drop.pickupDates.map((p, index) => (
+                    <li key={index}>
+                      <time dateTime={p.date}>
+                        {new Intl.DateTimeFormat('en-US', {
+                          dateStyle: 'full',
+                          timeZone: 'UTC',
+                        }).format(new Date(`${p.date}T12:00:00Z`))}
+                      </time>
+                      : {clock(p.startTime)}–{clock(p.endTime)} ({p.timezone})
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+            <p>
+              Reserve your cookies in a Cart. Online payment is not enabled yet.
+            </p>
+            <a href="/">Reload Drop information</a>
+          </>
+        )}
+      </CartProvider>
     </main>
   );
 }

@@ -11,6 +11,8 @@ const config = {
 function fixture() {
   return {
     drop: {
+      id: '01K00000000000000000000000',
+      quantityLimit: 18,
       name: 'October cookies',
       description: 'Fresh cookies',
       status: 'OPEN',
@@ -20,11 +22,15 @@ function fixture() {
       pickupInstructions: 'Bring your order number.',
       products: [
         {
+          id: '01K00000000000000000000001',
+          cookieUnits: 2,
           name: 'Chocolate cookie',
           priceCents: 525,
           availability: { total: 20, reserved: 5, sold: 0, available: 15 },
         },
         {
+          id: '01K00000000000000000000002',
+          cookieUnits: 1,
           name: 'Vanilla cookie',
           priceCents: 450,
           availability: { total: 20, reserved: 0, sold: 20, available: 0 },
@@ -66,7 +72,8 @@ describe('authoritative storefront presentation', () => {
     expect(html.match(/<h1>/g)).toHaveLength(1);
     expect(html).toContain('aria-labelledby="cookies"');
     expect(html).toContain('<ul');
-    expect(html).not.toMatch(/<button|Add to Cart|<form|<script/);
+    expect(html).toContain('Add to Cart');
+    expect(html).not.toMatch(/<form|<script/);
   });
   it.each(['SCHEDULED', 'PAUSED', 'SOLD_OUT', 'CLOSED'])(
     'renders %s without pretending ordering is available',
@@ -108,7 +115,9 @@ describe('authoritative storefront presentation', () => {
   it('escapes untrusted text and does not render storage IDs', () => {
     const f = fixture();
     f.drop.name = '<script>alert(1)</script>';
-    const html = render({ drop: { ...f.drop, id: 'PRIVATE_INTERNAL_ID' } });
+    const html = render({
+      drop: { ...f.drop, privateField: 'PRIVATE_INTERNAL_ID' },
+    });
     expect(html).toContain('&lt;script&gt;');
     expect(html).not.toContain('<script>');
     expect(html).not.toContain('PRIVATE_INTERNAL_ID');

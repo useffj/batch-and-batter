@@ -18,14 +18,19 @@ test('actual Next production route manifest excludes acceptance endpoints', asyn
       'utf8',
     ),
   );
-  assert.deepEqual(Object.keys(manifest).sort(), ['/_not-found/page', '/page']);
+  assert.deepEqual(Object.keys(manifest).sort(), [
+    '/_not-found/page',
+    '/api/cart/route',
+    '/api/cart/session/route',
+    '/page',
+  ]);
   const routes = JSON.parse(
     await readFile(new URL('web/.next/routes-manifest.json', root), 'utf8'),
   );
   assert.equal(routes.dynamicRoutes.length, 0);
   assert.doesNotMatch(
     JSON.stringify(routes),
-    /stripe|acceptance|\/cart|\/start/,
+    /stripe|acceptance|\/start|payment/,
   );
 });
 test('actual browser/server bundles and Lambda inputs contain no harness or Stripe browser SDK', async () => {
@@ -33,9 +38,15 @@ test('actual browser/server bundles and Lambda inputs contain no harness or Stri
     for (const file of await walk(new URL(path, root))) {
       if (!/\.(js|json|html)$/.test(file.pathname)) continue;
       const content = await readFile(file, 'utf8');
+      if (path === 'web/.next/static/')
+        assert.doesNotMatch(
+          content,
+          /X-Cart-Token|__Host-bb-cart|bb-cart-local/,
+          file.pathname,
+        );
       assert.doesNotMatch(
         content,
-        /stripe-acceptance|STRIPE_ACCEPTANCE_|DEV \/ STRIPE SANDBOX ACCEPTANCE ONLY|js\.stripe\.com\/dahlia|127\.0\.0\.1:4242/,
+        /stripe-acceptance|STRIPE_ACCEPTANCE_|DEV \/ STRIPE SANDBOX ACCEPTANCE ONLY|js\.stripe\.com|@stripe\/stripe-js|payment\/start|127\.0\.0\.1:4242/,
         file.pathname,
       );
     }
