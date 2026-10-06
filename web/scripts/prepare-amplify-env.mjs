@@ -28,6 +28,14 @@ function prepare() {
     throw new Error('STOREFRONT_API_BASE_URL must be a public HTTPS base URL.');
   // Optional for storefront-only builds. Missing checkout settings stay absent,
   // so the existing server-side checkout gate continues to fail closed.
+  const submissionMode = process.env.CHECKOUT_SUBMISSION_MODE;
+  if (
+    submissionMode !== undefined &&
+    !['locked', 'enabled'].includes(submissionMode)
+  )
+    throw new Error(
+      'CHECKOUT_SUBMISSION_MODE must be locked or enabled when set.',
+    );
   const pricingMode = process.env.CHECKOUT_PRICING_MODE;
   const publishableKey = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
   if (pricingMode !== undefined && pricingMode !== 'dev-zero-tax-fee')
@@ -47,6 +55,8 @@ function prepare() {
   ];
   if (pricingMode !== undefined)
     lines.push(`CHECKOUT_PRICING_MODE=${pricingMode}`);
+  if (submissionMode !== undefined)
+    lines.push(`CHECKOUT_SUBMISSION_MODE=${submissionMode}`);
   if (publishableKey !== undefined)
     lines.push(`NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${publishableKey}`);
   // Exclusive creation prevents silently overwriting operator-owned local files.
@@ -68,6 +78,7 @@ try {
     'STOREFRONT_CURRENCY must be USD.',
     'STOREFRONT_API_BASE_URL must be a public HTTPS base URL.',
     'CHECKOUT_PRICING_MODE must be dev-zero-tax-fee when set.',
+    'CHECKOUT_SUBMISSION_MODE must be locked or enabled when set.',
     'NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY must be a test publishable key when set.',
   ];
   console.error(

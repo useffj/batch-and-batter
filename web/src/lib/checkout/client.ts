@@ -1,3 +1,4 @@
+import { normalizeUSPhone } from './phone';
 import type {
   Stripe,
   StripeElements,
@@ -98,6 +99,7 @@ export function parseCheckout(value: unknown): CheckoutSnapshot {
     paymentEtag: p ? revision(v.paymentEtag) : null,
     summary,
     serverNow: Number(v.serverNow),
+    paymentSubmissionAllowed: v.paymentSubmissionAllowed === true,
     available:
       v.available && !!cart && cart.status === 'ACTIVE' && !p && !!summary,
     drop: v.drop as CheckoutSnapshot['drop'],
@@ -201,15 +203,22 @@ export class CheckoutClient {
     stripe: Pick<Stripe, 'createConfirmationToken'>,
     elements: Pick<StripeElements, 'submit'>,
   ) {
+    if (expected.paymentSubmissionAllowed !== true)
+      throw new CheckoutFailure('CHECKOUT_UNAVAILABLE');
     if (this.busy) throw new CheckoutFailure('RECOVERY_REQUIRED');
     if (!this.lock || !this.store)
       throw new CheckoutFailure('UNSUPPORTED_BROWSER');
     this.busy = true;
     try {
       return await this.lock(async () => {
-        const c = customer(contact),
+        const c = customer({
+            ...contact,
+            phone: normalizeUSPhone(contact.phone),
+          }),
           pickupDate = date(pickup);
         const current = await this.read();
+        if (!current.paymentSubmissionAllowed)
+          throw new CheckoutFailure('CHECKOUT_UNAVAILABLE');
         if (
           !current.available ||
           !current.cart ||

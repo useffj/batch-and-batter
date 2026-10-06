@@ -139,6 +139,7 @@ export interface CheckoutSnapshot {
   paymentEtag: string | null;
   serverNow: number;
   available: boolean;
+  paymentSubmissionAllowed: boolean;
   summary: Summary | null;
   drop: StorefrontDrop | null;
 }

@@ -17,7 +17,13 @@ import {
   type PricingConfig,
 } from './pricing';
 type Config = Parameters<typeof publicEndpoint>[0] &
-  PricingConfig & { NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY?: string };
+  PricingConfig & {
+    NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY?: string;
+    CHECKOUT_SUBMISSION_MODE?: string;
+  };
+// Secondary presentation/submission lock, never backend financial authority.
+const submissionAllowed = (config: Config) =>
+  config.CHECKOUT_SUBMISSION_MODE === 'enabled';
 const statuses: Record<string, number> = {
   VALIDATION_ERROR: 400,
   INVALID_PICKUP_DATE: 400,
@@ -68,6 +74,8 @@ export async function checkoutRelay(
       request.headers.get('sec-fetch-site') !== 'same-origin')
   )
     return output({ code: 'FORBIDDEN' }, 403);
+  if (action === 'start' && !submissionAllowed(config))
+    return output({ code: 'CHECKOUT_UNAVAILABLE' }, 503);
   let s;
   try {
     s = session(request, config);
@@ -159,6 +167,7 @@ export async function checkoutRelay(
         serverNow,
         summary,
         drop,
+        paymentSubmissionAllowed: submissionAllowed(config),
         available:
           !p &&
           cart.status === 'ACTIVE' &&
@@ -229,6 +238,7 @@ export const checkoutConfig = () => ({
   STOREFRONT_API_BASE_URL: process.env.STOREFRONT_API_BASE_URL,
   STOREFRONT_CURRENCY: process.env.STOREFRONT_CURRENCY,
   CHECKOUT_PRICING_MODE: process.env.CHECKOUT_PRICING_MODE,
+  CHECKOUT_SUBMISSION_MODE: process.env.CHECKOUT_SUBMISSION_MODE,
   NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY:
     process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY,
 });

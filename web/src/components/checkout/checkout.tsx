@@ -11,6 +11,7 @@ import {
 } from '@stripe/react-stripe-js';
 import { loadStripe } from '@stripe/stripe-js/pure';
 import type { Stripe } from '@stripe/stripe-js';
+import { normalizeUSPhone, PHONE_HELP } from '../../lib/checkout/phone';
 import { LOCK } from '../../lib/cart/client';
 import {
   CheckoutClient,
@@ -20,7 +21,6 @@ import {
 } from '../../lib/checkout/client';
 import {
   EMAIL,
-  PHONE,
   paymentMessages,
   pickupAllowed,
   recoveryMessage,
@@ -228,9 +228,11 @@ export function Checkout({
       : p
         ? paymentMessages[p.status]
         : snapshot
-          ? canPay
-            ? 'Review your information before paying.'
-            : 'Checkout is currently unavailable. If you submitted a payment, check its status before trying anything else.'
+          ? snapshot.paymentSubmissionAllowed !== true && !p
+            ? 'Payments are temporarily unavailable.'
+            : canPay
+              ? 'Review your information before paying.'
+              : 'Checkout is currently unavailable. If you submitted a payment, check its status before trying anything else.'
           : error
             ? 'Checkout is currently unavailable.'
             : 'Checking your Cart…';
@@ -286,6 +288,7 @@ export function Checkout({
           <PaymentForm
             snapshot={snapshot}
             busy={busy}
+            submitting={interacting}
             canPay={canPay}
             canAct={seconds > 0}
             onSubmit={(contact, pickup, stripe, elements) =>
@@ -325,6 +328,7 @@ export function Checkout({
 interface FormProps {
   snapshot: CheckoutSnapshot;
   busy: boolean;
+  submitting?: boolean;
   canPay: boolean;
   canAct: boolean;
   onSubmit: (
@@ -335,10 +339,11 @@ interface FormProps {
   ) => Promise<boolean>;
   onAction: (stripe: Stripe) => Promise<boolean>;
 }
-function PaymentForm({
+export function PaymentForm({
   snapshot,
   busy,
   canPay,
+  submitting = false,
   canAct,
   onSubmit,
   onAction,
@@ -363,10 +368,19 @@ function PaymentForm({
     const timeout = setTimeout(() => setLoadError(true), 10000);
     return () => clearTimeout(timeout);
   }, [stripe]);
+  const submissionAllowed = snapshot.paymentSubmissionAllowed === true;
   const sending = useRef(false);
   const valid = () => !!form.current?.reportValidity();
   const send = async () => {
-    if (sending.current || busy || !canPay || !stripe || !elements || !valid())
+    if (
+      !submissionAllowed ||
+      sending.current ||
+      busy ||
+      !canPay ||
+      !stripe ||
+      !elements ||
+      !valid()
+    )
       return false;
     sending.current = true;
     try {
@@ -404,7 +418,8 @@ function PaymentForm({
         }}
         aria-label="Customer checkout"
       >
-        <fieldset disabled={busy}>
+        {/* Background status reads must not remove keyboard focus from fields. */}
+        <fieldset disabled={submitting}>
           <legend>Contact and pickup</legend>
           <label htmlFor="checkout-name">Name</label>
           <input
@@ -433,21 +448,27 @@ function PaymentForm({
               setContact({ ...contact, email: e.target.value });
             }}
           />
-          <label htmlFor="checkout-phone">Mobile phone</label>
+          <label htmlFor="checkout-phone">
+            Mobile phone — United States (+1)
+          </label>
           <input
             id="checkout-phone"
             type="tel"
             autoComplete="tel"
             required
-            pattern={PHONE.source}
             aria-describedby="phone-help"
             value={contact.phone}
-            onChange={(e) => setContact({ ...contact, phone: e.target.value })}
+            onChange={(e) => {
+              try {
+                normalizeUSPhone(e.target.value);
+                e.target.setCustomValidity('');
+              } catch (error) {
+                e.target.setCustomValidity((error as Error).message);
+              }
+              setContact({ ...contact, phone: e.target.value });
+            }}
           />
-          <p id="phone-help">
-            Include + and your country code, followed by 8–15 digits. No spaces
-            or punctuation.
-          </p>
+          <p id="phone-help">{PHONE_HELP}</p>
           <label htmlFor="checkout-pickup">Pickup date</label>
           <select
             id="checkout-pickup"
@@ -495,16 +516,18 @@ function PaymentForm({
           </p>
         )}
         <div className="checkout-elements" aria-busy={busy}>
-          <ExpressCheckoutElement
-            options={expressOptions}
-            onClick={(e) => {
-              if (!busy && valid()) e.resolve();
-            }}
-            onConfirm={async (e) => {
-              if (!(await send())) e.paymentFailed({ reason: 'fail' });
-            }}
-            onLoadError={() => setLoadError(true)}
-          />
+          {submissionAllowed && (
+            <ExpressCheckoutElement
+              options={expressOptions}
+              onClick={(e) => {
+                if (!busy && valid()) e.resolve();
+              }}
+              onConfirm={async (e) => {
+                if (!(await send())) e.paymentFailed({ reason: 'fail' });
+              }}
+              onLoadError={() => setLoadError(true)}
+            />
+          )}
           <PaymentElement
             options={{
               layout: 'tabs',
@@ -517,14 +540,30 @@ function PaymentForm({
         <button
           className="checkout-pay"
           disabled={
-            busy || !stripe || !elements || !ready || loadError || !canPay
+            !submissionAllowed ||
+            busy ||
+            !stripe ||
+            !elements ||
+            !ready ||
+            loadError ||
+            !canPay
+          }
+          aria-describedby={
+            !submissionAllowed ? 'checkout-payment-unavailable' : undefined
           }
           type="submit"
         >
-          {busy
-            ? 'Checking payment…'
-            : `Pay ${money(snapshot.summary!.total, snapshot.summary!.currency)}`}
+          {!submissionAllowed
+            ? `Pay ${money(snapshot.summary!.total, snapshot.summary!.currency)}`
+            : busy
+              ? 'Checking payment…'
+              : `Pay ${money(snapshot.summary!.total, snapshot.summary!.currency)}`}
         </button>
+        {!submissionAllowed && (
+          <p id="checkout-payment-unavailable">
+            Payments are temporarily unavailable.
+          </p>
+        )}
         <p>Payment details are entered securely with Stripe.</p>
       </form>
       <CheckoutSummary snapshot={snapshot} pickup={pickup} />
