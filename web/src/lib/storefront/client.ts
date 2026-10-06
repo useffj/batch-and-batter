@@ -1,6 +1,9 @@
+import { identifier, positive } from '../cart/contract';
 // Public DTO presentation boundary; no backend runtime or credentials are imported.
 export type DropState = 'SCHEDULED' | 'OPEN' | 'PAUSED' | 'SOLD_OUT' | 'CLOSED';
 export interface StorefrontDrop {
+  id: string;
+  quantityLimit: number;
   name: string;
   description: string;
   status: DropState;
@@ -8,7 +11,13 @@ export interface StorefrontDrop {
   timezone: string;
   pickupLocation: string;
   pickupInstructions: string;
-  products: { name: string; priceCents: number; available: number }[];
+  products: {
+    id: string;
+    name: string;
+    priceCents: number;
+    available: number;
+    cookieUnits: number;
+  }[];
   pickupDates: {
     date: string;
     startTime: string;
@@ -67,6 +76,8 @@ export function parseDropResponse(value: unknown): StorefrontDrop | null {
   )
     throw new Error('Invalid public data');
   return {
+    id: identifier(d.id),
+    quantityLimit: positive(d.quantityLimit),
     name: text(d.name, 300),
     description: text(d.description, 4000, true),
     status: d.status as DropState,
@@ -84,6 +95,8 @@ export function parseDropResponse(value: unknown): StorefrontDrop | null {
       if (reserved > total - sold || available !== total - reserved - sold)
         throw new Error('Invalid public data');
       return {
+        id: identifier(p.id),
+        cookieUnits: positive(p.cookieUnits),
         name: text(p.name, 300),
         priceCents: integer(p.priceCents),
         available,
