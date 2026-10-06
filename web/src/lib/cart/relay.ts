@@ -25,7 +25,7 @@ const keyPattern = /^v1\.\d{13}\.[A-Za-z0-9_-]{43}$/;
 const cookieName = (config: Config) =>
   config.NODE_ENV === 'production' ? '__Host-bb-cart' : 'bb-cart-local';
 const random = () => randomBytes(32).toString('base64url');
-function session(request: Request, config: Config): Session | undefined {
+export function session(request: Request, config: Config): Session | undefined {
   const values = (request.headers.get('cookie') ?? '')
     .split(';')
     .map((v) => v.trim())
@@ -120,7 +120,7 @@ export async function boundedJson(
     await reader.cancel().catch(() => undefined);
   }
 }
-function sameOrigin(request: Request) {
+export function sameOrigin(request: Request) {
   const origin = request.headers.get('origin');
   // Trust only the actual Host, never caller-supplied forwarded host/origin.
   const url = new URL(request.url);
