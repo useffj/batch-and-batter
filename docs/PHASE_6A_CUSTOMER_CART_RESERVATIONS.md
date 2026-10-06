@@ -1,6 +1,14 @@
 # Phase 6A — customer Cart and existing reservations
 
-Local implementation only, on `codex/phase-6a-customer-cart-reservations`.
+**Current disposition (human approved, 2026-10-05): Phase 6A — Customer Cart + Existing Reservation Experience: COMPLETE / LIVE ACCEPTED IN DEV.**
+
+**PHASE 6A LIVE CART ACCEPTANCE: PASSED.** See the separate live acceptance record below. Backend reservation ownership was previously implemented; the customer Cart UI is now implemented and live accepted. Stripe checkout/payment UI is not part of Phase 6A, and production commerce launch is not complete.
+
+## Historical implementation and repository-finalization scope
+
+The implementation, validation and deployment-gate sections preceding the live acceptance record preserve the earlier review checkpoint. Their local-only restrictions and future gates describe that checkpoint, not the current DEV acceptance disposition. Subsequent deployment and controlled live mutations were separately human authorized.
+
+Local implementation was performed on `codex/phase-6a-customer-cart-reservations`.
 Starting main and origin/main: `a882316233a7210d47543becfd60b8d92102ffc7`.
 Human review approved repository finalization: commit, branch push and PR to main.
 Deployment, Amplify builds, AWS/Stripe mutation, payment enablement, and live
@@ -346,3 +354,172 @@ do not constitute live acceptance.
 - `web/src/lib/cart/cart.test.ts`, `web/src/lib/cart/lifecycle.test.ts`, `web/src/lib/storefront/storefront.test.ts`: contract, ambiguity, concurrency, security, timer and storefront regressions.
 - `tools/stripe-acceptance/artifact.test.mjs`: allow only the new Cart routes and strengthen payment/credential exclusion; no harness execution or payment code change.
 - This document: contracts, design, review, validation and deployment boundary.
+
+## Live acceptance record — human approved 2026-10-05
+
+**PHASE 6A LIVE CART ACCEPTANCE: PASSED.**
+
+**Phase 6A — Customer Cart + Existing Reservation Experience: COMPLETE / LIVE ACCEPTED IN DEV.**
+
+This separate record follows human approval of the repository implementation,
+Amplify deployment and controlled live Cart lifecycle acceptance. Acceptance used
+one controlled DEV Drop and exactly two planned Carts through the actual
+`https://batchandbatter.com` UI in a fresh Chrome Incognito context. Dates below
+use America/Denver for the acceptance day and pickup; reservation timestamps
+retain their authoritative UTC values.
+
+### Accepted baseline and artifact boundary
+
+| Item                     | Accepted value                                                                   |
+| ------------------------ | -------------------------------------------------------------------------------- |
+| Main HEAD under test     | `d7cd2c845bba8f794453d0b0a7f09af83ee1266c`                                       |
+| Amplify app / branch     | `d1aw7cfglvejmo` / `main`                                                        |
+| Amplify Job              | 3                                                                                |
+| Artifact SHA-256         | `f3ed72232fed0c153474be3610e24ac6ee08aafef51afbba3545a7e66dcdb494`               |
+| PostCSS disposition      | PACKAGED BUT NOT REQUEST-REACHABLE under the existing narrow temporary exception |
+| PAYMENT_START_ENABLED    | false before, during and after acceptance                                        |
+| Automatic Amplify builds | Disabled at app and branch levels                                                |
+
+The independent Job 3 artifact review, rather than the earlier Job 2 acceptance,
+supports this artifact's PostCSS disposition. The exception remains temporary
+and artifact-specific; the advisory records and reevaluation triggers in
+[Dependency risks](DEPENDENCY_RISKS.md) remain in force. This is not payment-launch
+or blanket production security approval.
+
+### Controlled test Drop
+
+| Item                            | Value                                                                                |
+| ------------------------------- | ------------------------------------------------------------------------------------ |
+| Drop ID                         | `01M47AGGWT4RX031TN2NRTHDB4`                                                         |
+| Product ID                      | `01M37BHFTSSQRH5D9S9WYCEFV8`                                                         |
+| Product                         | Development Test Cookie; only product in the acceptance Drop                         |
+| DropProduct price / cookieUnits | 525 cents / 1 cookie unit                                                            |
+| Quantity limit                  | 12 cookie units                                                                      |
+| Pickup                          | October 8, 2026, 4–7 PM America/Denver; DEV acceptance only, no customer fulfillment |
+| Opening                         | `2026-10-06T00:42:12.144Z`; OPEN revision `2026-10-06T00:42:24.930Z`                 |
+| Initial inventory               | 20 total / 0 reserved / 0 sold / 20 available                                        |
+| Final Drop state                | CLOSED; revision `2026-10-06T00:55:49.739Z`                                          |
+| Final inventory                 | 20 total / 0 reserved / 0 sold / 20 available                                        |
+
+The existing Product remained active and unchanged. Price and cookie-unit value
+were configured on the new DropProduct, as required by the governing model.
+The first publication safely rejected an opening time already in the past; the
+same DRAFT was corrected through the accepted admin API to a future opening and
+then published/opened. No second Drop was created and no lifecycle validation
+was bypassed. The closed Drop and both terminal Carts retain their history.
+
+### Cart A — explicit release
+
+Cart ID: `01M47ANQH46AC4ZFC2KY0D1YNB`.
+
+- First Add to Cart created one Cart with one cookie. Authoritative Cart pricing
+  displayed $5.25, the reservation countdown was active, and checkout stayed disabled.
+- The live `__Host-bb-cart` session cookie was HttpOnly, Secure, SameSite=Strict,
+  host-only, and scoped to Path `/`, with the expected seven-day lifetime. Raw
+  capability was not exposed to the inspected browser-visible surfaces.
+- Initial authoritative inventory became 20 total / 1 reserved / 0 sold / 19 available.
+- Refresh restored the same Cart with the same `shoppingExpiresAt`:
+  `2026-10-06T00:52:01.549Z`. Refresh did not extend the deadline.
+- Quantity two produced the authoritative $10.50 total and inventory
+  20 total / 2 reserved / 0 sold / 18 available, without creating another Cart.
+- A second tab in the same context restored the same Cart. Changing quantity
+  back to one synchronized to the other tab. Web Locks and BroadcastChannel
+  behaved correctly; no duplicate mutation occurred. Quantity edits and tab
+  changes did not extend the reservation deadline.
+- Final-line removal caused exactly one backend DELETE. Cart A became CANCELLED
+  at `2026-10-06T00:46:09.190Z`; the secure session cleared and no replacement Cart
+  was created. A subsequent refresh did not restore an active Cart.
+- Authoritative inventory returned to 20 total / 0 reserved / 0 sold / 20 available.
+  The later stale expiry delivery left Cart A terminal without releasing twice.
+
+### Cart B — natural expiry
+
+Cart ID: `01M47ATPY1FASHV65ETFA8E7CV`.
+
+Authoritative deadline: `2026-10-06T00:54:44.770Z`.
+
+- One cookie was reserved, giving inventory 20 total / 1 reserved / 0 sold /
+  19 available. Quantity was never edited and the Cart was not manually removed.
+- Refresh and background/resume preserved the same Cart and deadline. Resume
+  triggered authoritative GET revalidation; the timer reflected elapsed time.
+- Countdown zero visibly entered “Checking reservation status…” and an automatic
+  GET occurred. The conservative display reached zero just before the backend
+  deadline: the GET started at `2026-10-06T00:54:44.485Z` and still returned ACTIVE
+  with `expired: false`. The UI did not fabricate terminal release.
+- The first sampled post-deadline GET, started at `2026-10-06T00:54:55.409Z`,
+  returned `expired: true` and `cart.status: EXPIRED`.
+- The established expiry worker terminalized Cart B naturally at
+  `2026-10-06T00:54:45.396Z`, on first delivery, with outcome `expired`. No manual
+  intervention, expiry-triggered UI DELETE, silent re-reservation or replacement
+  Cart occurred.
+- Release-confirmed UX appeared only after authoritative terminal state. The
+  Cart session cleared, and inventory returned to 20 total / 0 reserved / 0 sold /
+  20 available. Durable expiry responsibility cleared naturally.
+
+### ACTIVE + expired observation boundary
+
+The transient `expired: true` with `cart.status: ACTIVE` state was **NOT observed
+live**, because the expiry worker completed before the first sampled
+post-deadline GET. **This is not an acceptance defect.**
+
+The release-pending customer wording for ACTIVE + expired remains covered by the
+previously passed automated regression: “Your reservation time has expired.
+We’re confirming that your cookies have been released.” This record does not
+claim live observation of that state or wording.
+
+### Payment and security boundary
+
+Checkout remained disabled throughout. Acceptance caused no payment/start call,
+Stripe.js load, PaymentIntent, paid Order or Stripe mutation. The reviewed window
+contained zero payment-worker events and zero webhook events caused by acceptance.
+`PAYMENT_START_ENABLED` remained false before, during and after acceptance.
+
+There was no observed exposure of raw Cart capability, cookie values,
+credentials, admin token, Stripe secrets or sensitive request bodies in the
+reviewed browser surfaces and Amplify/runtime, API Gateway and backend logs.
+Capability was absent from inspected JavaScript-visible cookies, localStorage,
+sessionStorage, DOM, client-visible JSON and URL. Cookie metadata was inspected
+without including its value in evidence. Sanitized network evidence excludes
+cookie and authorization headers and cookie arrays. No sensitive values are
+included in this document.
+
+### Final recovery, operations and storefront state
+
+- Both planned Carts were terminal: Cart A CANCELLED and Cart B EXPIRED.
+- All seven queues/DLQs were empty; all 32 alarms were OK; recovery heartbeats
+  were current. No unresolved workflow or reservation responsibility remained.
+- No unexpected external Cart activity was observed. Exactly two Cart creations,
+  two Cart A quantity updates and one explicit backend DELETE were recorded.
+- The acceptance Drop was closed only after both planned responsibilities were
+  conclusively settled. Final state was CLOSED, the storefront pointer was
+  released, and inventory remained 20 total / 0 reserved / 0 sold / 20 available.
+- A fresh browser context returned to the approved no-Drop illustration and
+  supporting copy, with no Add to Cart control and no active Cart.
+
+Sanitized local evidence was retained outside the repository in
+`/tmp/phase6a-live-acceptance/`, including the acceptance summary, authoritative
+state observations, browser expiry-response summary, sanitized request trace,
+log summaries, health checks and final no-Drop screenshot. Temporary evidence
+paths are local review aids, not durable repository dependencies.
+
+### Limitations and final phase status
+
+Acceptance covers one controlled DEV Drop, two controlled Carts and Chrome
+Incognito. It is not exhaustive browser coverage or exhaustive concurrency/load
+testing. The ACTIVE + expired transient was not observed live, as explained
+above. The current PostCSS exception remains temporary and artifact-specific.
+These scope limitations are retained and are not acceptance failures.
+
+| Area                                                       | Disposition                     |
+| ---------------------------------------------------------- | ------------------------------- |
+| Phase 6A — Customer Cart + Existing Reservation Experience | COMPLETE / LIVE ACCEPTED IN DEV |
+| Phase 6A live Cart acceptance                              | PASSED; human approved          |
+| Backend reservation ownership                              | Previously implemented          |
+| Customer Cart UI                                           | Implemented and live accepted   |
+| Stripe checkout/payment UI                                 | NOT part of Phase 6A            |
+| Production commerce launch                                 | NOT complete                    |
+
+This documentation-only closeout records the approved results. It does not
+change source code, infrastructure, dependencies, deployment configuration,
+Product configuration or payment admission, and does not authorize additional
+AWS, Stripe, Drop or Cart mutations, deployment, commit or push.
