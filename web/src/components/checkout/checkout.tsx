@@ -11,7 +11,11 @@ import {
 } from '@stripe/react-stripe-js';
 import { loadStripe } from '@stripe/stripe-js/pure';
 import type { Stripe } from '@stripe/stripe-js';
-import { normalizeUSPhone, PHONE_HELP } from '../../lib/checkout/phone';
+import {
+  normalizeUSPhone,
+  phoneEntry,
+  PHONE_HELP,
+} from '../../lib/checkout/phone';
 import { LOCK } from '../../lib/cart/client';
 import {
   CheckoutClient,
@@ -359,7 +363,8 @@ export function PaymentForm({
   });
   const [pickup, setPickup] = useState(''),
     [ready, setReady] = useState(false),
-    [loadError, setLoadError] = useState(false);
+    [loadError, setLoadError] = useState(false),
+    [phoneError, setPhoneError] = useState('');
   useEffect(() => {
     if (stripe) {
       setLoadError(false);
@@ -368,6 +373,27 @@ export function PaymentForm({
     const timeout = setTimeout(() => setLoadError(true), 10000);
     return () => clearTimeout(timeout);
   }, [stripe]);
+  const updatePhone = (input: HTMLInputElement, value: string) => {
+    try {
+      const national = phoneEntry(value);
+      input.value = national;
+      setContact({ ...contact, phone: national });
+      let message = '';
+      try {
+        normalizeUSPhone(national);
+      } catch (error) {
+        message = (error as Error).message;
+      }
+      input.setCustomValidity(message);
+      setPhoneError(message);
+    } catch (error) {
+      // Rejected edits/pastes never become accepted phone content.
+      input.value = contact.phone;
+      const message = (error as Error).message;
+      input.setCustomValidity(message);
+      setPhoneError(message);
+    }
+  };
   const submissionAllowed = snapshot.paymentSubmissionAllowed === true;
   const sending = useRef(false);
   const valid = () => !!form.current?.reportValidity();
@@ -451,24 +477,37 @@ export function PaymentForm({
           <label htmlFor="checkout-phone">
             Mobile phone — United States (+1)
           </label>
-          <input
-            id="checkout-phone"
-            type="tel"
-            autoComplete="tel"
-            required
-            aria-describedby="phone-help"
-            value={contact.phone}
-            onChange={(e) => {
-              try {
-                normalizeUSPhone(e.target.value);
-                e.target.setCustomValidity('');
-              } catch (error) {
-                e.target.setCustomValidity((error as Error).message);
+          <div className="checkout-phone-entry">
+            <span aria-hidden="true">+1</span>
+            <input
+              id="checkout-phone"
+              type="tel"
+              inputMode="numeric"
+              autoComplete="tel-national"
+              required
+              pattern="[2-9][0-9]{2}[2-9][0-9]{6}"
+              aria-describedby="phone-help"
+              aria-invalid={phoneError ? true : undefined}
+              value={contact.phone}
+              onChange={(e) =>
+                updatePhone(e.currentTarget, e.currentTarget.value)
               }
-              setContact({ ...contact, phone: e.target.value });
-            }}
-          />
-          <p id="phone-help">{PHONE_HELP}</p>
+              onPaste={(e) => {
+                e.preventDefault();
+                const input = e.currentTarget;
+                const pasted = e.clipboardData.getData('text');
+                const value = /^\d+$/.test(pasted)
+                  ? input.value.slice(0, input.selectionStart ?? 0) +
+                    pasted +
+                    input.value.slice(input.selectionEnd ?? input.value.length)
+                  : pasted;
+                updatePhone(input, value);
+              }}
+            />
+          </div>
+          <p id="phone-help" aria-live="polite">
+            {phoneError || PHONE_HELP}
+          </p>
           <label htmlFor="checkout-pickup">Pickup date</label>
           <select
             id="checkout-pickup"

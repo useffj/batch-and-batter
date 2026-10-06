@@ -234,3 +234,12 @@ button:focus-visible,
     order: 1;
   }
 }
+
+.checkout-phone-entry {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.checkout-phone-entry > span {
+  flex: none;
+}

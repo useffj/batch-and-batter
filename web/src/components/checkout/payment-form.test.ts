@@ -169,18 +169,66 @@ it('associates the fixed U.S. country context and formatting help with the phone
   expect(html).toContain('Mobile phone — United States (+1)');
   expect(html).toContain('for="checkout-phone"');
   expect(html).toContain('aria-describedby="phone-help"');
-  expect(html).toContain('(303) 555-0123');
+  expect(html).toContain('Enter a 10-digit U.S. phone number.');
+  expect(html).toContain('<span aria-hidden="true">+1</span>');
+  expect(html).toContain('inputMode="numeric"');
+  expect(html).toContain('autoComplete="tel-national"');
 });
 it('phone field reports unsupported prefixes and clears validity after correction', () => {
   const phone = form(false).all.find((x) => x.props.id === 'checkout-phone')!;
   const setCustomValidity = vi.fn();
   const change = phone.props.onChange as (event: {
-    target: { value: string; setCustomValidity: typeof setCustomValidity };
+    currentTarget: {
+      value: string;
+      setCustomValidity: typeof setCustomValidity;
+    };
   }) => void;
-  change({ target: { value: '+443035550123', setCustomValidity } });
+  change({ currentTarget: { value: '+443035550123', setCustomValidity } });
   expect(setCustomValidity).toHaveBeenLastCalledWith(
     'Only U.S. phone numbers with country code +1 are supported.',
   );
-  change({ target: { value: '(303) 555-0123', setCustomValidity } });
+  change({ currentTarget: { value: '(303) 555-0123', setCustomValidity } });
   expect(setCustomValidity).toHaveBeenLastCalledWith('');
 });
+
+it.each(['(303) 555-0123', '303-555-0123', '+1 303 555 0123', '3035550123'])(
+  'paste %s leaves exactly ten visible digits',
+  (value) => {
+    const phone = form(false).all.find((x) => x.props.id === 'checkout-phone')!;
+    const input = {
+      value: '',
+      selectionStart: 0,
+      selectionEnd: 0,
+      setCustomValidity: vi.fn(),
+    };
+    const preventDefault = vi.fn();
+    (phone.props.onPaste as (e: unknown) => void)({
+      currentTarget: input,
+      preventDefault,
+      clipboardData: { getData: () => value },
+    });
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(input.value).toBe('3035550123');
+    expect(input.setCustomValidity).toHaveBeenLastCalledWith('');
+  },
+);
+it.each(['30355501234', 'abc3035550123', '+443035550123'])(
+  'rejects paste %s without truncation or reinterpretation',
+  (value) => {
+    const phone = form(false).all.find((x) => x.props.id === 'checkout-phone')!;
+    const input = {
+      value: '',
+      selectionStart: 0,
+      selectionEnd: 0,
+      setCustomValidity: vi.fn(),
+    };
+    (phone.props.onPaste as (e: unknown) => void)({
+      currentTarget: input,
+      preventDefault: vi.fn(),
+      clipboardData: { getData: () => value },
+    });
+    expect(input.value).toBe('');
+    expect(input.setCustomValidity).toHaveBeenCalledWith(expect.any(String));
+    expect(input.setCustomValidity).not.toHaveBeenCalledWith('');
+  },
+);

@@ -1,11 +1,49 @@
 # Phase 9A — customer checkout contract review
 
-Status: hosted checkout UI acceptance is **NOT PASSED**. Repository finalization (commit, branch push and PR) is human approved. Deployment, payment enablement, AWS/Stripe mutation and live Cart/Drop mutation remain unauthorized.
+Status: hosted checkout UI acceptance is **NOT PASSED**: complete live keyboard
+exit and visible-focus evidence remains incomplete. Repository finalization
+(commit, branch push and PR) is human approved. Deployment, Amplify builds,
+payment enablement and AWS/Stripe/live Cart/Drop mutation remain unauthorized.
 
-Starting main and origin/main: `304f49b53fc6dc212e4999953442b9afee7aee83`.
-Branch: `codex/phase-9a-checkout-submission-lock`.
-Job 5 artifact acceptance passed. Accepted serving deployment remains Amplify Job 5, artifact SHA-256
-`483260775eb55528fa425e4574670d028d2771b4ceb687a5893c2b19ef944260`.
+Starting main: `a28bcc8bbb22e39d671b9b714e483cbeca947047`.
+Branch: `codex/phase-9a-simple-phone-entry`.
+Current accepted deployment/artifact baseline: Job 6, SHA-256
+`e8620d88a8de27d7a4f04df52d4624dd006b3281ece1d887b88728a9fe60e6a2`.
+Job 6 artifact acceptance passed; hosted UI acceptance remains NOT PASSED.
+Historical Job 4/5 results below remain unchanged.
+
+## Simple national phone entry follow-up
+
+The intended phone control has one accessible label, “Mobile phone — United
+States (+1)”, and a separate non-editable +1 prefix hidden from accessibility APIs
+to avoid duplicate announcement. The editable telephone field uses a numeric
+keyboard hint and national-number autocomplete. It displays only national digits,
+never visual punctuation formatting. Complete accepted entries contain exactly ten
+digits; before payment-start the existing client normalizer produces +1 E.164.
+Backend validation is unchanged.
+
+Formatted paste/autofill such as `(303) 555-0123`, `303-555-0123` or
+`+1 303 555 0123` is sanitized to `3035550123`. Digit paste respects the selection.
+Partial digits remain editable but cannot validate for submission. Excess digits,
+letters and unsupported international prefixes are rejected rather than truncated
+or silently reinterpreted; the previous value remains, with custom validity and
+associated visible, politely announced error text until corrected. The normal
+instruction is “Enter a 10-digit U.S. phone number.”
+
+No country selector or dependency is added. NANP formatting does not independently
+distinguish U.S. numbers from other +1 territories. Contact data remains transient;
+submission locking, existing-payment recovery and polling focus behavior remain
+unchanged. A later approved deployment and complete hosted keyboard/visible-focus
+verification are still required.
+
+Local validation for this follow-up: 302 frontend tests, 2 frontend
+production-exclusion tests, 902 backend tests, 7 backend artifact tests and 34
+infrastructure tests passed. Frontend/backend/infrastructure typechecks, frontend
+lint, production build, repository formatting, offline infrastructure synthesis
+and `git diff --check` passed; backend dependency audit reported zero
+vulnerabilities. Existing submission-lock, same-payment recovery and polling
+regression tests remain passing. These automated results do not close the
+outstanding hosted keyboard/visible-focus evidence requirement.
 
 ## Local checkout submission lock follow-up
 
@@ -72,7 +110,7 @@ mocked Stripe components, with no external financial calls. Real Stripe iframe
 inspection and complete hosted keyboard/focus verification remain bounded and
 require a fresh hosted review.
 
-Fresh repository-finalization validation: 283 frontend tests passed, plus 902
+Earlier repository-finalization validation: 283 frontend tests passed, plus 902
 backend regression tests, 7 backend artifact tests, 2 frontend production-exclusion
 tests and 34 infrastructure tests. Offline infrastructure synthesis also passed. Typecheck, lint, production
 build, repository formatting and `git diff --check` passed. The production browser
@@ -101,7 +139,7 @@ projection, browser-bundle exposure, locked UI/Express behavior, keyboard/focus,
 network/log safety and backend admission remaining false. Job 5 is not acceptance
 evidence for this new code. Hosted acceptance remains **NOT PASSED**.
 
-## U.S. phone input follow-up
+## Earlier U.S. phone input follow-up (superseded visible-entry UX)
 
 The phone field labels the fixed country context “United States (+1)” and accepts
 10-digit input with ordinary punctuation/spacing or an already prefixed +1 value.
