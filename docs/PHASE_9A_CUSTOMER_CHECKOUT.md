@@ -1,5 +1,149 @@
 # Phase 9A — customer checkout contract review
 
+## Final human-reviewed hosted UI disposition — 2026-10-06
+
+**PHASE 9A HOSTED CHECKOUT UI ACCEPTANCE: PASSED — PAYMENT SUBMISSION LOCKED.**
+
+This separate final disposition records human review of the Job 7 hosted evidence.
+It supersedes the earlier NOT PASSED hosted-UI dispositions below without erasing
+those observations or the implementation and acceptance history. No application
+code change is required by this decision. This closeout is documentation-only;
+commit, push, deployment, configuration changes, payment enablement and live
+AWS/Stripe/Cart/Drop mutations are not authorized as part of it.
+
+Accepted main: `7a293a77bf63ddfefd5f0f8a5064ba08bccdda06`.
+Accepted deployment/artifact: **Amplify Job 7**.
+Artifact SHA-256:
+`1bcb038d98f3766eb19f6e1774f1c7ab6d1cbc346383ecc2b67f9e8db37dfcdd`.
+The accepted Job 7 artifact-security review was not repeated for this hosted UI
+review because the serving revision and configuration remained unchanged.
+
+### Keyboard and focus interpretation
+
+Observed forward traversal:
+
+Name → Email → Phone → Pickup → SMS consent → Stripe Card number → Expiration →
+CVC → Country → ZIP → parent document → Stripe Card number again.
+
+Observed reverse traversal: **Shift+Tab from Stripe returned to SMS consent**.
+Keyboard focus was therefore demonstrably able to leave the Stripe component:
+forward traversal reached the parent document, and reverse exit succeeded using
+standard keyboard navigation. Stripe was not demonstrated to trap keyboard focus.
+The observed browser/Stripe/automation cycle is not a confirmed application defect.
+
+Human review determined that requiring forward Tab to reach a subsequent
+application-owned control was too strict for this locked checkout state. Pay is a
+native disabled control, intentionally excluded from sequential keyboard focus.
+Express Checkout is intentionally not mounted while submission is locked. There
+is therefore no guaranteed focusable application-owned payment control following
+the Payment Element. This qualification does not claim that forward traversal to
+other application navigation controls was demonstrated.
+
+**Future enabled-mode acceptance item:** when `CHECKOUT_SUBMISSION_MODE=enabled`
+and Pay is a legitimate interactive/focusable target, verify Stripe Payment
+Element → forward keyboard exit → enabled Pay / appropriate next application
+control. This belongs to separately controlled payment-enabled sandbox acceptance
+and does not block the locked hosted-UI acceptance recorded here.
+
+Hosted application accessibility evidence **PASSED**: visible focus on
+application-owned controls; keyboard-usable customer fields, pickup selection and
+SMS consent; native validation identifying and focusing the invalid pickup field
+with understandable feedback; and background polling preserving phone-field focus
+and continued typing. Locked Pay was visibly and semantically disabled. This is
+not exhaustive accessibility certification of Stripe-hosted iframe internals or
+final Phase 25 accessibility certification.
+
+### Phone and locked-payment evidence
+
+The final hosted phone UX **PASSED**: a fixed noneditable +1 prefix beside ten
+visible national digits, no automatic punctuation, sanitization of formatted and
+already-prefixed +1 pastes, and rejection of short, long, letter-containing and
+unsupported international-prefix input. Accepted deployed-code evidence confirmed
+normalization to the existing backend +1 E.164 contract without starting payment.
+The NANP country-allocation limitation remains: +1 syntax does not independently
+prove that a number belongs to a U.S. allocation rather than another NANP territory.
+
+Before and after the hosted acceptance:
+
+- `CHECKOUT_SUBMISSION_MODE=locked`.
+- `PAYMENT_START_ENABLED=false`.
+- Automatic builds remained disabled.
+
+Pay was visibly and semantically disabled; pointer and keyboard interaction
+produced no payment. No actionable Express Checkout control was mounted. Refresh
+preserved the same Cart and shopping deadline, fixed +1 UX and submission lock.
+No payment deadline was created, and checkout use did not move the Cart into
+PAYMENT_PENDING or PAYMENT_COMMITTING. No financial workflow began.
+
+| Acceptance-window financial activity | Count |
+| ------------------------------------ | ----: |
+| Payment-start requests               |     0 |
+| ConfirmationTokens                   |     0 |
+| PaymentIntents                       |     0 |
+| Paid Orders                          |     0 |
+| Task-caused payment-worker events    |     0 |
+| Task-caused Stripe webhook events    |     0 |
+
+These results are supported by the locked UI, observed browser request evidence,
+authoritative commerce state and reviewed API/worker/webhook logs. Global Stripe
+inventory was not queried, and no card details or wallet payment were entered.
+
+### Cleanup, health and exposure
+
+The single controlled DEV Drop `01M48W19BV19C26RYEVHGZ2WRX` ended **CLOSED**.
+The single customer Cart `01M48W52P901FVANTF369HCZSK` ended **CANCELLED** after
+removing its final item through the normal UI. Final inventory was **20 total / 0
+reserved / 0 sold / 20 available**. The session cleared, no replacement Cart was
+created, the storefront pointer was released, and no unexpected external activity
+was observed.
+
+Final operational health: all seven queues/DLQs empty, all 32 alarms OK, recovery
+heartbeats current, and no unresolved Cart or payment responsibility. The delayed
+shopping-expiry message drained after the original deadline before final health
+was accepted.
+
+Targeted responsive evidence at **320 / 375 / 390 / 1280 px** showed no horizontal
+overflow and a usable national-number field beside its fixed prefix. localStorage,
+sessionStorage and first-party IndexedDB were empty. Contact data was absent from
+the URL, and no Cart-capability exposure was observed. Reviewed application,
+runtime and API logs had no sensitive findings. Responsive evidence was targeted,
+not exhaustive per-width accessibility certification.
+
+An initial inspection snapshot displayed a Stripe URL containing the public
+Stripe publishable-key configuration. That value was not a Stripe secret or
+restricted key. Subsequent evidence redacted URLs. Future acceptance evidence
+must continue redacting publishable-key-bearing URLs even though the publishable
+key is browser-public by design. No actual key value is recorded here.
+
+### Phase status and remaining gates
+
+| Scope                                   | Final disposition                  |
+| --------------------------------------- | ---------------------------------- |
+| Phase 9A local implementation           | COMPLETE                           |
+| Phase 9A deployment/artifact acceptance | PASSED — Job 7                     |
+| Phase 9A hosted checkout UI acceptance  | PASSED — PAYMENT SUBMISSION LOCKED |
+| Governing Phase 9                       | NOT COMPLETE                       |
+
+Still outstanding, under separate approval and acceptance:
+
+- Payment-enabled hosted acceptance, including the enabled-mode keyboard recheck.
+- An ordinary sandbox payment through the customer site.
+- Customer-site requires_action / 3DS acceptance.
+- Decline/abandonment acceptance as separately approved.
+- Express Checkout / Apple Pay / Google Pay configuration and device acceptance.
+- Governing later Phase 10/11 gates.
+- Production pricing authority.
+- CSP hardening.
+- Broader accessibility certification, including final Phase 25 requirements.
+
+Live payment and wallet acceptance remain separate. This human-reviewed locked-UI
+disposition does not mark governing Phase 9 fully complete.
+
+## Historical implementation and acceptance record
+
+The statuses and baselines below describe their respective earlier review stages.
+The final human-reviewed disposition above is the current locked-UI status.
+
 Status: hosted checkout UI acceptance is **NOT PASSED**: complete live keyboard
 exit and visible-focus evidence remains incomplete. Repository finalization
 (commit, branch push and PR) is human approved. Deployment, Amplify builds,
