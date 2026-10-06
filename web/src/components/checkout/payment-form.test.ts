@@ -7,6 +7,10 @@ import type { CheckoutSnapshot } from '../../lib/checkout/contract';
 // semantics with controlled hook state; this is not a browser/iframe certification.
 const harness = vi.hoisted(() => ({
   index: 0,
+  ready: true,
+  loadError: false,
+  stripeAvailable: true,
+  elementsAvailable: true,
   valid: vi.fn(() => true),
   stripe: { createConfirmationToken: vi.fn() },
   elements: { submit: vi.fn() },
@@ -14,7 +18,11 @@ const harness = vi.hoisted(() => ({
 vi.mock('react', async (original) => ({
   ...(await original<typeof import('react')>()),
   useState: (initial: unknown) => [
-    harness.index++ === 2 ? true : initial,
+    harness.index === 2
+      ? (harness.index++, harness.ready)
+      : harness.index++ === 3
+        ? harness.loadError
+        : initial,
     vi.fn(),
   ],
   useRef: (initial: unknown) => ({
@@ -23,8 +31,8 @@ vi.mock('react', async (original) => ({
   useEffect: vi.fn(),
 }));
 vi.mock('@stripe/react-stripe-js', () => ({
-  useStripe: () => harness.stripe,
-  useElements: () => harness.elements,
+  useStripe: () => (harness.stripeAvailable ? harness.stripe : null),
+  useElements: () => (harness.elementsAvailable ? harness.elements : null),
   PaymentElement: () => null,
   ExpressCheckoutElement: () => null,
   Elements: () => null,
@@ -51,14 +59,19 @@ function nodes(node: ReactNode): Element[] {
   if (!isValidElement<Record<string, unknown>>(node)) return [];
   return [node, ...nodes(node.props.children as ReactNode)];
 }
-function form(allowed: boolean, busy = false, submitting = false) {
+function form(
+  allowed: boolean,
+  refreshing = false,
+  submitting = false,
+  canPay = true,
+) {
   harness.index = 0;
   const onSubmit = vi.fn().mockResolvedValue(true);
   const tree = PaymentForm({
     snapshot: { ...snapshot, paymentSubmissionAllowed: allowed },
-    busy,
+    refreshing,
     submitting,
-    canPay: true,
+    canPay,
     canAct: true,
     onSubmit,
     onAction: vi.fn(),
@@ -75,6 +88,10 @@ function form(allowed: boolean, busy = false, submitting = false) {
 beforeEach(() => {
   vi.clearAllMocks();
   harness.index = 0;
+  harness.ready = true;
+  harness.loadError = false;
+  harness.stripeAvailable = true;
+  harness.elementsAvailable = true;
 });
 it('locked Pay uses native disabled semantics and an associated visible explanation, without fake loading', () => {
   const f = form(false, true);
@@ -230,5 +247,60 @@ it.each(['30355501234', 'abc3035550123', '+443035550123'])(
     expect(input.value).toBe('');
     expect(input.setCustomValidity).toHaveBeenCalledWith(expect.any(String));
     expect(input.setCustomValidity).not.toHaveBeenCalledWith('');
+  },
+);
+
+it('background refresh leaves eligible Pay enabled and delegates activation', async () => {
+  const f = form(true, true);
+  expect(f.pay.props.disabled).toBe(false);
+  expect(f.pay.props.tabIndex).toBeUndefined();
+  expect(renderToStaticMarkup(f.tree)).not.toContain('Checking payment');
+  (f.form.props.onSubmit as (e: unknown) => void)({ preventDefault: vi.fn() });
+  await Promise.resolve();
+  expect(f.onSubmit).toHaveBeenCalledOnce();
+});
+it('submission disables Pay and rejects form and Express activation', async () => {
+  const f = form(true, false, true);
+  expect(f.pay.props.disabled).toBe(true);
+  (f.form.props.onSubmit as (e: unknown) => void)({ preventDefault: vi.fn() });
+  const express = f.all.find((x) => x.type === ExpressCheckoutElement)!;
+  const resolve = vi.fn();
+  (express.props.onClick as (e: unknown) => void)({ resolve });
+  await (express.props.onConfirm as (e: unknown) => Promise<void>)({
+    paymentFailed: vi.fn(),
+  });
+  expect(resolve).not.toHaveBeenCalled();
+  expect(f.onSubmit).not.toHaveBeenCalled();
+});
+it('duplicate activation cannot delegate twice while submission is pending', async () => {
+  const f = form(true, true);
+  let finish!: (value: boolean) => void;
+  f.onSubmit.mockImplementation(
+    () =>
+      new Promise<boolean>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const submit = f.form.props.onSubmit as (e: unknown) => void;
+  submit({ preventDefault: vi.fn() });
+  submit({ preventDefault: vi.fn() });
+  expect(f.onSubmit).toHaveBeenCalledOnce();
+  finish(true);
+  await Promise.resolve();
+});
+it.each(['stripe', 'elements', 'ready', 'loadError', 'checkout'])(
+  'hard blocker %s disables Pay and rejects activation',
+  async (blocker) => {
+    harness.stripeAvailable = blocker !== 'stripe';
+    harness.elementsAvailable = blocker !== 'elements';
+    harness.ready = blocker !== 'ready';
+    harness.loadError = blocker === 'loadError';
+    const f = form(true, false, false, blocker !== 'checkout');
+    expect(f.pay.props.disabled).toBe(true);
+    (f.form.props.onSubmit as (e: unknown) => void)({
+      preventDefault: vi.fn(),
+    });
+    await Promise.resolve();
+    expect(f.onSubmit).not.toHaveBeenCalled();
   },
 );

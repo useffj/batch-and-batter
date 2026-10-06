@@ -109,11 +109,12 @@ export function Checkout({
 }) {
   const [snapshot, setSnapshot] = useState<CheckoutSnapshot | null>(null);
   const [interacting, setInteracting] = useState(false);
-  const [busy, setBusy] = useState(true),
+  const [refreshing, setRefreshing] = useState(true),
     [error, setError] = useState(''),
     [seconds, setSeconds] = useState(0);
   const client = useRef<CheckoutClient | null>(null),
-    flight = useRef(false),
+    flight = useRef<Promise<boolean> | null>(null),
+    actionPending = useRef(false),
     current = useRef<CheckoutSnapshot | null>(null),
     sampled = useRef(0);
   const heading = useRef<HTMLHeadingElement>(null),
@@ -142,41 +143,50 @@ export function Checkout({
         : 0,
     );
   }
-  async function run(work: () => Promise<CheckoutSnapshot>, focus = false) {
-    if (flight.current) return false;
-    flight.current = true;
-    setBusy(true);
+  function run(work: () => Promise<CheckoutSnapshot>, focus = false) {
+    if (flight.current) return flight.current;
+    if (!focus) setRefreshing(true);
     setError('');
-    try {
-      accept(await work());
-      return true;
-    } catch (e) {
-      setError(e instanceof CheckoutFailure ? e.message : recoveryMessage);
-      // Disable stale payable state whenever the current result is unknown.
-      if (current.current) accept({ ...current.current, available: false });
+    const result = (async () => {
       try {
-        if (client.current) accept(await client.current.restore());
-      } catch {
-        /* explicit status check remains */
+        accept(await work());
+        return true;
+      } catch (e) {
+        setError(e instanceof CheckoutFailure ? e.message : recoveryMessage);
+        // Disable stale payable state whenever the current result is unknown.
+        if (current.current) accept({ ...current.current, available: false });
+        try {
+          if (client.current) accept(await client.current.restore());
+        } catch {
+          /* explicit status check remains */
+        }
+        return false;
+      } finally {
+        flight.current = null;
+        if (!focus) setRefreshing(false);
+        if (focus) heading.current?.focus();
       }
-      return false;
-    } finally {
-      flight.current = false;
-      setBusy(false);
-      if (focus) heading.current?.focus();
-    }
+    })();
+    flight.current = result;
+    return result;
   }
   async function interact(work: () => Promise<CheckoutSnapshot>) {
-    if (flight.current) return false;
+    if (actionPending.current) return false;
+    actionPending.current = true;
     setInteracting(true);
     try {
+      // Finish the current read before acting. submit/authenticate still perform
+      // their own authoritative rereads; a captured snapshot cannot admit payment.
+      if (flight.current) await flight.current;
       return await run(work, true);
     } finally {
+      actionPending.current = false;
       setInteracting(false);
     }
   }
   check.current = () => {
-    if (client.current) void run(() => client.current!.restore());
+    if (client.current && !actionPending.current)
+      void run(() => client.current!.restore());
   };
   useEffect(() => {
     let store: Storage | null = null;
@@ -291,7 +301,7 @@ export function Checkout({
         >
           <PaymentForm
             snapshot={snapshot}
-            busy={busy}
+            refreshing={refreshing}
             submitting={interacting}
             canPay={canPay}
             canAct={seconds > 0}
@@ -321,7 +331,12 @@ export function Checkout({
         </p>
       )}
       <div className="checkout-actions">
-        <button type="button" disabled={busy} onClick={() => check.current()}>
+        <button
+          type="button"
+          disabled={interacting}
+          aria-busy={refreshing}
+          onClick={() => check.current()}
+        >
           Check payment status
         </button>
         <a href="/">Return to the store</a>
@@ -331,7 +346,7 @@ export function Checkout({
 }
 interface FormProps {
   snapshot: CheckoutSnapshot;
-  busy: boolean;
+  refreshing: boolean;
   submitting?: boolean;
   canPay: boolean;
   canAct: boolean;
@@ -345,7 +360,7 @@ interface FormProps {
 }
 export function PaymentForm({
   snapshot,
-  busy,
+  refreshing,
   canPay,
   submitting = false,
   canAct,
@@ -401,10 +416,12 @@ export function PaymentForm({
     if (
       !submissionAllowed ||
       sending.current ||
-      busy ||
+      submitting ||
       !canPay ||
       !stripe ||
       !elements ||
+      !ready ||
+      loadError ||
       !valid()
     )
       return false;
@@ -425,7 +442,7 @@ export function PaymentForm({
           </p>
         )}
         <button
-          disabled={busy || !stripe || !canAct}
+          disabled={submitting || !stripe || !canAct}
           onClick={() => {
             if (stripe) void onAction(stripe);
           }}
@@ -554,12 +571,21 @@ export function PaymentForm({
             check your connection and refresh.
           </p>
         )}
-        <div className="checkout-elements" aria-busy={busy}>
+        <div className="checkout-elements" aria-busy={refreshing || submitting}>
           {submissionAllowed && (
             <ExpressCheckoutElement
               options={expressOptions}
               onClick={(e) => {
-                if (!busy && valid()) e.resolve();
+                if (
+                  !submitting &&
+                  canPay &&
+                  stripe &&
+                  elements &&
+                  ready &&
+                  !loadError &&
+                  valid()
+                )
+                  e.resolve();
               }}
               onConfirm={async (e) => {
                 if (!(await send())) e.paymentFailed({ reason: 'fail' });
@@ -580,7 +606,7 @@ export function PaymentForm({
           className="checkout-pay"
           disabled={
             !submissionAllowed ||
-            busy ||
+            submitting ||
             !stripe ||
             !elements ||
             !ready ||
@@ -594,7 +620,7 @@ export function PaymentForm({
         >
           {!submissionAllowed
             ? `Pay ${money(snapshot.summary!.total, snapshot.summary!.currency)}`
-            : busy
+            : submitting
               ? 'Checking payment…'
               : `Pay ${money(snapshot.summary!.total, snapshot.summary!.currency)}`}
         </button>
