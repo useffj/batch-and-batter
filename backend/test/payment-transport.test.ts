@@ -268,9 +268,10 @@ test('handler initialization failure logs final RETRY for every record', async (
     { itemIdentifier: record().messageId },
   ]);
   const transport = logs.map((x) => JSON.parse(x)).filter((x) => x.operation);
-  assert.equal(transport.length, 2);
-  assert.equal(transport[1].disposition, 'RETRY');
-  assert.equal(transport[1].lambdaRequestId, context.awsRequestId);
+  assert.equal(transport.length, 3);
+  assert.equal(transport[1].operation, 'workerSetup');
+  assert.equal(transport[2].disposition, 'RETRY');
+  assert.equal(transport[2].lambdaRequestId, context.awsRequestId);
   assert.ok(!logs.join('').includes('RAW_SETUP_SECRET'));
 });
 test('handler setup failure survives failing metrics and log sink', async (t) => {

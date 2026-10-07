@@ -1,3 +1,4 @@
+import { paymentDiagnostic } from './payment-diagnostics';
 import { FinancialWorkflow } from './payment-settlement';
 import { StripeInbox } from './stripe-webhook';
 import { createPaymentWorker } from './payment-worker';
@@ -56,11 +57,12 @@ export async function handler(
       }),
     );
     return result;
-  } catch {
+  } catch (error) {
     bestEffortTelemetry(() =>
       paymentMetrics('worker', { WorkerBatchFailure: event.Records.length }),
     );
     return paymentTransport(event, context, async () => {
+      paymentDiagnostic('workerSetup', error, 'RETHROW');
       throw new Error('WORKER_SETUP_FAILED');
     });
   }

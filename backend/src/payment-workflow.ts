@@ -1,3 +1,7 @@
+import {
+  paymentDiagnostic,
+  paymentDiagnosticState,
+} from './payment-diagnostics';
 import { monitoringProjection } from './payment-metrics';
 // Dependency-injected coordinator: provider credentials and deployment wiring stay in entrypoints.
 import {
@@ -343,7 +347,8 @@ export class PaymentWorkflow {
         new TransactWriteCommand({ TransactItems: actions }),
         { abortSignal: AbortSignal.timeout(1500) },
       );
-    } catch {
+    } catch (error) {
+      paymentDiagnostic('workflowAdvance', error, 'RETHROW');
       throw new WorkflowError('PAYMENT_BUSY');
     }
     // Losing this optimization never deletes durable work.
@@ -462,6 +467,7 @@ export class PaymentWorkflow {
     const state = await this.load(message);
     if (!state) return 'STALE_WORK';
     const { e, a, cart, work } = state;
+    paymentDiagnosticState(e, a.paymentAttemptId);
     requireExecutable(e);
     if (Date.parse(work.deadline) > this.now()) return 'NOT_DUE';
     if (
@@ -575,7 +581,8 @@ export class PaymentWorkflow {
             ? { confirmationTokenId: e.confirmationTokenId }
             : {}),
         });
-      } catch {
+      } catch (error) {
+        paymentDiagnostic('providerConfirm', error, 'REREAD');
         // Declines throw in the SDK. Never consume its raw error; retrieve current authority.
         p = await this.provider.retrieveIntent(e.intentId);
         if (

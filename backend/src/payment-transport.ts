@@ -1,3 +1,7 @@
+import {
+  sanitizedPaymentError,
+  withPaymentDiagnostics,
+} from './payment-diagnostics';
 import { paymentMessageSchema } from './payment-execution-domain';
 import { WorkflowError } from './payment-workflow';
 
@@ -122,13 +126,17 @@ export async function paymentTransport(
     bestEffortTelemetry(() =>
       write({ operation: 'paymentTransportDelivery', ...fields }),
     );
+    let errorFields: Record<string, unknown> = {};
     let outcome: string;
     let disposition: 'ACK' | 'RETRY';
     try {
-      const returned = await process(record);
+      const returned = await withPaymentDiagnostics(fields, write, () =>
+        process(record),
+      );
       outcome = outcomes.has(returned) ? returned : 'RETURNED';
       disposition = 'ACK';
     } catch (error) {
+      errorFields = sanitizedPaymentError(error);
       outcome =
         error instanceof WorkflowError &&
         error.code === 'LEGACY_PAYMENT_CONTRACT'
@@ -142,6 +150,7 @@ export async function paymentTransport(
         operation: 'paymentTransportDisposition',
         ...fields,
         outcome,
+        ...errorFields,
         disposition,
       }),
     );

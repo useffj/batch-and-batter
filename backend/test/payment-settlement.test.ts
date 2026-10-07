@@ -1774,3 +1774,201 @@ test('explicit DEV ledger binding preserves historical recovery and exactly-once
   );
   await assert.rejects(isolated.completed(f.cart().paymentAttemptId));
 });
+
+for (const winner of [0, 1]) {
+  test(
+    `controlled confirmation replay interleaving, winner ${winner}, settles once`,
+    { timeout: 5000 },
+    async () => {
+      const f = await fixture();
+      await f.run(); // CREATE
+      await f.run(); // BIND
+      const deferred = () => {
+        let resolve!: () => void;
+        const promise = new Promise<void>((r) => {
+          resolve = r;
+        });
+        return { promise, resolve };
+      };
+      const entered = [deferred(), deferred()];
+      const release = [deferred(), deferred()];
+      const confirm = f.provider.confirmIntent.bind(f.provider);
+      let index = 0;
+      f.provider.confirmIntent = async (command) => {
+        const i = index++;
+        const result = await confirm(command);
+        entered[i].resolve();
+        await release[i].promise;
+        return result;
+      };
+      const logs: Record<string, unknown>[] = [];
+      const queue = 'arn:aws:sqs:us-east-2:123456789012:concurrency';
+      const worker = createPaymentWorker(f.w, f.inbox, queue, (e) =>
+        logs.push(e),
+      );
+      const invoke = (id: string) =>
+        worker(
+          {
+            Records: [
+              {
+                messageId: id,
+                eventSource: 'aws:sqs',
+                eventSourceARN: queue,
+                body: JSON.stringify(f.message()),
+              },
+            ],
+          },
+          { awsRequestId: `invocation-${id}` },
+        );
+      const first = invoke('first');
+      await entered[0].promise; // First owns the durable DISPATCHED command.
+      const stale = f.message();
+      const second = invoke('second');
+      await entered[1].promise; // Both observe the same authorized Intent.
+      const runs = [first, second];
+      release[winner].resolve();
+      assert.deepEqual(await runs[winner], { batchItemFailures: [] });
+      await f.run(); // Advance beyond the competing authorization transition.
+      release[1 - winner].resolve();
+      assert.equal((await runs[1 - winner]).batchItemFailures.length, 1);
+      assert.ok(logs.some((e) => e.errorCode === 'PAYMENT_BUSY'));
+      assert.ok(
+        logs.some(
+          (e) =>
+            e.operation === 'financialTransition' &&
+            e.errorClassification === 'TransactionCanceledException',
+        ),
+      );
+      const confirms = f.provider.calls.filter((c) => c.kind === 'confirm');
+      assert.equal(confirms.length, 2);
+      assert.equal(new Set(confirms.map((c) => c.key)).size, 1);
+      assert.equal(f.provider.confirmKeys.size, 1);
+      const transition = logs.find(
+        (e) => e.operation === 'financialTransition',
+      )!;
+      assert.equal(transition.phase, 'CONFIRM');
+      assert.equal(
+        transition.lambdaRequestId,
+        `invocation-${winner === 0 ? 'second' : 'first'}`,
+      );
+      assert.match(String(transition.commandIdSha256), /^[a-f0-9]{64}$/);
+      for (const secret of [
+        f.request.customer.email,
+        f.request.confirmationTokenId,
+        confirms[0].key!,
+      ])
+        assert.ok(!JSON.stringify(logs).includes(secret));
+      // Force both workers to reach their transaction with the same snapshot.
+      const compete = async () => {
+        const atWrite = [deferred(), deferred()];
+        const proceed = [deferred(), deferred()];
+        let writes = 0;
+        f.s.before = async () => {
+          const i = writes++;
+          if (i < 2) {
+            atWrite[i].resolve();
+            await proceed[i].promise;
+          }
+        };
+        const pointer = f.message();
+        const a = f.w.run(pointer);
+        await atWrite[0].promise;
+        const b = f.w.run(pointer);
+        await atWrite[1].promise;
+        const tasks = [a, b].map((p) =>
+          p.then(
+            (value) => ({ value }),
+            (error) => ({ error }),
+          ),
+        );
+        proceed[winner].resolve();
+        const won = await tasks[winner];
+        proceed[1 - winner].resolve();
+        const lost = await tasks[1 - winner];
+        f.s.before = undefined;
+        assert.ok('value' in won);
+        if ('error' in lost) assert.equal(lost.error.code, 'PAYMENT_BUSY');
+        else
+          assert.ok(
+            ['STALE_WORK', 'COMPLETED', 'SETTLED'].includes(lost.value),
+          );
+      };
+      await compete();
+      assert.equal(
+        f.provider.calls.filter((c) => c.kind === 'capture').length,
+        1,
+      );
+      await compete();
+      assert.equal(await f.w.run(stale), 'STALE_WORK');
+      assert.equal(f.cart().status, 'CONVERTED');
+      assert.equal(f.attempt().status, 'CAPTURED');
+      assert.equal(
+        f.s.row('commerce', orderKey(f.cart().orderId))!.status,
+        'PAID',
+      );
+      assert.equal(f.inventory().sold, 2);
+      assert.equal(f.inventory().reserved, 0);
+      assert.equal(
+        [...f.s.rows.values()].filter((r) => r.eventType === 'PAID').length,
+        1,
+      );
+      assert.ok(f.s.row('operations', paidEventKey(f.cart().orderId)));
+    },
+  );
+}
+
+test('transition diagnostics distinguish transaction failure from failed authoritative reread without changing retry', async () => {
+  const f = await fixture();
+  await f.authorize();
+  const originalAttempt = f.w.attempt.bind(f.w);
+  const denied = Object.assign(new Error('SECRET_RAW_READ_ERROR'), {
+    name: 'AccessDeniedException',
+  });
+  f.s.before = () => {
+    f.w.attempt = async () => {
+      throw denied;
+    };
+    throw Object.assign(new Error('SECRET_RAW_TRANSACTION_ERROR'), {
+      name: 'TransactionCanceledException',
+      CancellationReasons: [
+        { Code: 'ConditionalCheckFailed', Message: 'SECRET_CUSTOMER' },
+      ],
+    });
+  };
+  const logs: Record<string, unknown>[] = [];
+  const queue = 'arn:aws:sqs:us-east-2:123456789012:diagnostics';
+  const worker = createPaymentWorker(f.w, f.inbox, queue, (e) => logs.push(e));
+  const result = await worker(
+    {
+      Records: [
+        {
+          messageId: 'reread',
+          eventSource: 'aws:sqs',
+          eventSourceARN: queue,
+          body: JSON.stringify(f.message()),
+        },
+      ],
+    },
+    { awsRequestId: 'read-invocation' },
+  );
+  assert.equal(result.batchItemFailures.length, 1);
+  assert.ok(
+    logs.some(
+      (e) =>
+        e.operation === 'financialTransition' &&
+        e.errorClassification === 'TransactionCanceledException',
+    ),
+  );
+  assert.ok(
+    logs.some(
+      (e) =>
+        e.operation === 'transitionReread' &&
+        e.errorClassification === 'AccessDeniedException',
+    ),
+  );
+  assert.equal(logs.at(-1)!.disposition, 'RETRY');
+  assert.ok(!JSON.stringify(logs).includes('SECRET_'));
+  assert.equal(f.inventory().sold, 0);
+  f.w.attempt = originalAttempt;
+  f.s.before = undefined;
+});

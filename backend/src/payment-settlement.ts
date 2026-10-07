@@ -1,3 +1,7 @@
+import {
+  paymentDiagnostic,
+  paymentDiagnosticState,
+} from './payment-diagnostics';
 import { monitoringProjection } from './payment-metrics';
 // Local-only financial coordinator. No environment/client creation or deployed entrypoint imports.
 import {
@@ -433,9 +437,17 @@ export class FinancialWorkflow extends PaymentWorkflow {
       await this.client.send(
         new TransactWriteCommand({ TransactItems: actions }),
       );
-    } catch {
+    } catch (error) {
+      paymentDiagnostic('financialTransition', error, 'REREAD', {
+        expectedRevision: revision,
+      });
       // Lost commit response must not reset timestamps or dispatch from stale authority.
-      const current = await this.attempt(a.paymentAttemptId);
+      const current = await this.attempt(a.paymentAttemptId).catch(
+        (error: unknown) => {
+          paymentDiagnostic('transitionReread', error, 'RETHROW');
+          throw error;
+        },
+      );
       if (
         current?.execution?.revision !== revision ||
         JSON.stringify(current.execution) !== JSON.stringify(e)
@@ -756,6 +768,7 @@ export class FinancialWorkflow extends PaymentWorkflow {
     return this.reconcile(s);
   }
   async reconcile(s: State) {
+    paymentDiagnosticState(s.e, s.a.paymentAttemptId);
     requireExecutable(s.e);
     if (s.e.releaseEvidence)
       return this.transition(s, { ...s.e, stage: 'RESOLVE_FAILURE' });
@@ -782,7 +795,8 @@ export class FinancialWorkflow extends PaymentWorkflow {
     let p: IntentSnapshot;
     try {
       p = await this.provider.retrieveIntent(s.e.intentId!);
-    } catch {
+    } catch (error) {
+      paymentDiagnostic('providerRead', error, 'REREAD');
       return this.readFailure(s);
     }
     if (!(await this.association(s, p)))
@@ -1115,6 +1129,7 @@ export class FinancialWorkflow extends PaymentWorkflow {
     if (m.kind === 'PAYMENT') return this.deadline(m);
     const s = await this.load(m);
     if (!s) return 'STALE_WORK';
+    paymentDiagnosticState(s.e, s.a.paymentAttemptId);
     if (
       this.now() < Date.parse(s.work.deadline) ||
       (s.e.nextCheckAt && this.now() < Date.parse(s.e.nextCheckAt))
@@ -1521,6 +1536,7 @@ export class FinancialWorkflow extends PaymentWorkflow {
         );
         return 'SETTLED';
       } catch (error) {
+        paymentDiagnostic('settlementWrite', error, 'REREAD');
         try {
           if (await this.completed(a.paymentAttemptId)) return 'COMPLETED';
         } catch (validationError) {
