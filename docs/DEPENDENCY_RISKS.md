@@ -213,3 +213,41 @@ nodes (1 high / 1 moderate). Existing PostCSS, braces and CDK exceptions are nei
 expanded nor erased. A future checkout deployment creates a NEW Amplify artifact
 and request surface requiring independent PostCSS and source-map reachability
 reevaluation. This local source-map fix does not make the remaining audit clean.
+
+## DEV worker diagnostics artifact exception — 2026-10-07
+
+**HUMAN APPROVED — temporary DEV-only risk acceptance; infrastructure audit remains failing.**
+
+Jackson approved the worker-only diagnostics deployment in AWS account
+`302154194958`, region `us-east-2`, for candidate ZIP SHA-256
+`409bfe6323f3f1e9f5947c33394621f58be4851fb52983e2cb3b2ef380cd6c29`.
+Reviewed application patch SHA-256:
+`b0822522982cc58a9a0ce9310a7c25a6d842f3bff8592aff7aae344ae21e8850`.
+Worker-only proposed template SHA-256:
+`8e45d034f781380400cd0bb2d88211c1c02310178de197c3eb381909b011ca77`.
+
+Only PaymentWorker code may change. The other four functions retain accepted code.
+Preserve actual account/binding `acct_1UL8LdDz3QSwRsAl`, historical namespace
+`dev:acct_1UL8xeDXKfaUH9bm`, compatible readers/recovery, and payment admission
+false. The compatible recovery ZIP is
+`6697aafd6f62df7224ee22845578f44be908f430ed53bee74fce4f6cf690997c`;
+recovery must retain the current identity/ledger configuration. No payment,
+message replay, commerce creation, Stripe configuration change or Amplify build
+is authorized. Stop for unexpected change-set effects.
+
+This explicit extension covers only the three existing bundled brace-expansion
+advisories and locked dependency versions listed above. Expiration remains
+October 14, 2026, 5 p.m. America/Denver (`2026-10-14T23:00:00Z`). All existing
+controls and earlier termination conditions remain in force, including a verified
+compatible fixed release, new advisory, changed exposure, artifact or scope.
+No suppression, dependency change or release-gate bypass is authorized.
+Fresh checks on October 7 found the same three advisories (audit exit 1) and
+unchanged official CDK 2.272.0 package integrity. Runtime bundle inspection
+found neither brace-expansion nor minimatch; tooling risk remains. Passing CI
+is distinct from this approved exception and does not mean the audit passed.
+
+The successful hosted $5.25 purchase remains preserved. The lowercase `useff`
+name deviation is accepted: submitted and stored values matched. Local controlled
+concurrency tests reproduced safe contention/idempotent replay without duplicate
+capture or settlement. The historical worker exception cause remains unproven;
+this change does not resolve it retroactively or claim all hosted scenarios passed.
