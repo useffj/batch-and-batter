@@ -1,3 +1,4 @@
+import { CartError } from './cart-domain';
 import { localPaymentApi } from './payment-api';
 import { PaymentRepository } from './payment-repository';
 import { PaymentCustomer, PaymentWorkflow } from './payment-workflow';
@@ -6,15 +7,21 @@ import {
   lazyReader,
   paymentClient,
   paymentDispatch,
+  paymentScope,
   paymentStartEnabled,
 } from './payment-runtime';
 import type { ApiEvent } from './api';
 // No credentials are loaded by construction. Missing account is a closed bootstrap state.
-export function createPaymentHttp() {
+function createServices() {
+  let scope: string;
+  try {
+    scope = paymentScope();
+  } catch {
+    throw new CartError('PAYMENT_UNAVAILABLE');
+  }
   const client = paymentClient(),
     reader = lazyReader(),
     dispatch = paymentDispatch();
-  const scope = `dev:${process.env.STRIPE_ACCOUNT_ID ?? ''}`;
   const catalog = process.env.CATALOG_TABLE_NAME ?? '';
   const commerce = process.env.COMMERCE_TABLE_NAME ?? '';
   const operations = process.env.OPERATIONS_TABLE_NAME ?? '';
@@ -50,5 +57,10 @@ export function createPaymentHttp() {
     dispatch,
   );
   const customer = new PaymentCustomer(workflow, reader);
-  return (event: ApiEvent) => localPaymentApi(event, repository, customer);
+  return { repository, payment: customer };
+}
+export function createPaymentHttp() {
+  let services: ReturnType<typeof createServices> | undefined;
+  return (event: ApiEvent) =>
+    localPaymentApi(event, () => (services ??= createServices()));
 }

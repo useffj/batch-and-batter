@@ -6,9 +6,14 @@ import { idSchema } from './domain';
 import { startPaymentSchema } from './payment-domain';
 import type { PaymentRepository } from './payment-repository';
 import type { ApiEvent, ApiResponse } from './api';
+export interface PaymentHttpServices {
+  repository: Pick<PaymentRepository, 'start' | 'get'>;
+  payment?: PaymentCustomer;
+}
 export async function localPaymentApi(
   event: ApiEvent,
-  repository: Pick<PaymentRepository, 'start' | 'get'>,
+  source:
+    Pick<PaymentRepository, 'start' | 'get'> | (() => PaymentHttpServices),
   payment?: PaymentCustomer,
 ): Promise<ApiResponse> {
   const start = event.routeKey === 'POST /carts/{cartId}/payment/start';
@@ -37,6 +42,11 @@ export async function localPaymentApi(
         headers,
         body: JSON.stringify({ code: 'NOT_FOUND' }),
       };
+    // Resolve runtime configuration inside the same sanitized HTTP/logging boundary.
+    const services =
+      typeof source === 'function' ? source() : { repository: source, payment };
+    const { repository } = services;
+    payment = services.payment;
     const tokenHash = secretHash(header('x-cart-token'));
     const cartId = idSchema.parse(event.pathParameters?.cartId);
     if (get && payment) {

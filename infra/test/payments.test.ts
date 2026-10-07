@@ -433,3 +433,29 @@ test('resolving false versus true changes only the application admission environ
   enabled[id].Properties.Environment.Variables.PAYMENT_START_ENABLED = 'false';
   assert.deepEqual(enabled, disabled);
 });
+
+test('API worker and webhook receive the same independently bound DEV ledger configuration', () => {
+  for (const prefix of ['ApplicationApi', 'PaymentWorker', 'StripeWebhook']) {
+    const env = fn(prefix).Environment.Variables;
+    assert.deepEqual(env.STRIPE_ACCOUNT_ID, { Ref: 'StripeSandboxAccountId' });
+    assert.deepEqual(env.STRIPE_LEDGER_NAMESPACE, {
+      Ref: 'DevPaymentLedgerNamespace',
+    });
+    assert.deepEqual(env.STRIPE_LEDGER_ACCOUNT_ID, {
+      Ref: 'DevPaymentLedgerAccountId',
+    });
+    assert.equal(env.STRIPE_ENVIRONMENT, 'dev');
+  }
+  for (const name of ['DevPaymentLedgerNamespace', 'DevPaymentLedgerAccountId'])
+    assert.equal(t.toJSON().Parameters[name].Default, '');
+  for (const prefix of ['CartExpiryWorker', 'CartExpiryReconciler']) {
+    assert.equal(
+      fn(prefix).Environment.Variables.STRIPE_LEDGER_NAMESPACE,
+      undefined,
+    );
+    assert.equal(
+      fn(prefix).Environment.Variables.STRIPE_LEDGER_ACCOUNT_ID,
+      undefined,
+    );
+  }
+});

@@ -16,10 +16,18 @@ import { dropId } from './fixtures';
 import { pid, tokenHash } from './cart-store';
 import { PaymentCustomer } from '../src/payment-workflow';
 import { ProviderError } from '../src/payment-provider';
+import { paymentIdentity } from '../src/payment-runtime';
+import { PaymentRepository } from '../src/payment-repository';
 import { createPaymentWorker } from '../src/payment-worker';
 
-async function fixture(products = 1, captureFixture = false) {
-  const f = await paymentFixture(true, undefined, products, captureFixture);
+async function fixture(products = 1, captureFixture = false, scope?: string) {
+  const f = await paymentFixture(
+    true,
+    undefined,
+    products,
+    captureFixture,
+    scope,
+  );
   const logs: unknown[] = [];
   const w = new FinancialWorkflow(
     f.client,
@@ -1702,4 +1710,67 @@ test('authorization racing abandonment deadline follows capture authority rather
   await f.run();
   assert.equal(f.cart().status, 'CONVERTED');
   assert.equal(f.inventory().sold, 5);
+});
+
+// All provider operations below are in-memory fixture calls, never Stripe requests.
+test('explicit DEV ledger binding preserves historical recovery and exactly-once paid settlement with admission disabled', async () => {
+  const { scope } = paymentIdentity({
+    STRIPE_ENVIRONMENT: 'dev',
+    STRIPE_ACCOUNT_ID: 'acct_actualfixture',
+    STRIPE_LEDGER_ACCOUNT_ID: 'acct_actualfixture',
+    STRIPE_LEDGER_NAMESPACE: 'dev:acct_historicalfixture',
+  });
+  const f = await fixture(1, true, scope);
+  const disabled = new PaymentRepository(
+    f.client,
+    'catalog',
+    'commerce',
+    'operations',
+    { fixture: 'DEVELOPMENT_ONLY_ZERO_TAX_ZERO_FEE', currency: 'usd' },
+    {
+      now: () => f.s.now,
+      id: () => {
+        throw new Error('new admission forbidden');
+      },
+    },
+    f.provider,
+    scope,
+    false,
+  );
+  const before = structuredClone(f.attempt());
+  assert.equal((await disabled.start(f.request)).status, 201);
+  assert.deepEqual(f.attempt(), before);
+  await assert.rejects(disabled.start({ ...f.request, key: f.s.keyValue() }), {
+    code: 'PAYMENTS_DISABLED',
+  });
+  await f.authorize();
+  const intent = f.attempt().execution.intentId;
+  assert.ok(f.s.row('commerce', associationKey(scope, intent)));
+  assert.equal(
+    f.s.row('commerce', associationKey('dev:acct_actualfixture', intent)),
+    undefined,
+  );
+  await f.run();
+  await f.run();
+  assert.equal(await f.run(), 'SETTLED');
+  assert.equal(await f.w.completed(f.cart().paymentAttemptId), true);
+  assert.equal(
+    (await f.customer.get(f.cart().cartId, tokenHash)).payment.status,
+    'paid',
+  );
+  await f.run();
+  assert.equal(f.provider.calls.filter((c) => c.kind === 'capture').length, 1);
+  assert.equal(f.inventory().reserved, 0);
+  assert.equal(f.inventory().sold, 5);
+  assert.ok(f.s.row('operations', paidEventKey(f.cart().orderId)));
+  const isolated = new FinancialWorkflow(
+    f.client,
+    'commerce',
+    'operations',
+    f.provider,
+    'dev:acct_unrelated',
+    'catalog',
+    () => f.s.now,
+  );
+  await assert.rejects(isolated.completed(f.cart().paymentAttemptId));
 });
