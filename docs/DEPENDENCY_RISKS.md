@@ -92,6 +92,61 @@ Upgrade promptly when an official compatible `aws-cdk-lib` release bundles `brac
 
 **This exception MUST be reevaluated before production payment launch.** It is temporary development risk acceptance, not a clean audit or a production security approval.
 
+## DEV identity/ledger rollout exception renewal — 2026-10-07
+
+**HUMAN APPROVED — temporary DEV-only risk acceptance; audit remains failing.**
+Jackson approved this renewal for checkpoint
+`ce9978f847e92bdb4eb1fe36b06395bb8fbbba99` and its reviewed three-stage
+identity/ledger rollout in AWS account `302154194958`, region `us-east-2`.
+The approval-record commit adds documentation only; it does not change the
+reviewed application code, dependency versions, candidate bytes or rollout scope.
+
+- **Exact scope:** the three CDK bundled brace-expansion advisories listed above,
+  at `aws-cdk-lib@2.269.0 -> minimatch@10.2.5 -> brace-expansion@5.0.9`.
+  No other advisory, environment, dependency version or rollout is accepted.
+- **Candidate ZIP SHA-256:**
+  `6697aafd6f62df7224ee22845578f44be908f430ed53bee74fce4f6cf690997c`.
+- **Expires:** October 14, 2026, 5 p.m. America/Denver
+  (`2026-10-14T23:00:00Z`), with no automatic extension.
+- **Earlier termination:** a verified compatible fixed official release, any new
+  advisory, changed exposure, artifact or rollout scope. Recheck before execution;
+  stop on a termination condition. Do not silently transfer acceptance to new bytes.
+- **Authority:** repository finalization and the reviewed three-stage DEV rollout
+  are approved, subject to required CI, fresh operational checks, inspection of
+  each actual change set, and verification of each stage before advancing.
+  `PaymentStartEnabled=false` throughout. No payment test, new Drop/Cart or
+  production authorization is granted.
+
+The reviewed workflow uses trusted, pinned official dependencies and fixed backend
+asset directories. CDK synthesis is tooling exposure; the vulnerable packages were
+absent from all five backend bundles and their esbuild inputs. The actual staged
+update uses reviewed fixed templates/ZIPs through AWS CLI, not ordinary CDK asset
+selection. These observations do not make the dependency safe: crafted repository
+or tooling patterns can still exhaust CPU/stack resources.
+
+All proposed controls remain required: credential-isolated, time/memory-bounded
+synthesis; trusted source and no untrusted pattern/plugin input; unchanged artifact
+hashes; reviewed change sets; current operator/alert responsibility; healthy queues,
+alarms and recovery heartbeats; and no unresolved commerce responsibility. Keep the
+historical namespace, compatible readers, worker, webhook, expiry/reconciliation
+and durable recovery intact across stages. The temporary legacy binding preserves
+an existing mismatch and is not a new account approval. Follow the staged recovery
+constraints in `PAYMENT_RECOVERY_RUNBOOK.md`; never pair legacy code with the
+corrected account or use a code-only rollback after the correction.
+
+Retain full infrastructure audit output and its nonzero exit status. Existing CI
+runs infrastructure typecheck/tests/synthesis but does not run infrastructure audit;
+passing CI is therefore separate from this explicit risk acceptance. No CI/release
+check, dependency, audit severity or advisory is suppressed or modified. Any
+additional finding requires a stop and human review.
+
+Remove this exception when an official compatible package bundles
+`brace-expansion >=5.0.12` and resolves the assessed findings. Upgrade normally,
+repeat audit and relevant validation, and review affected artifact/template changes.
+This record grants no production risk acceptance and does not assert deployment
+success; deployment identifiers and acceptance results belong in the resulting
+operator evidence.
+
 ## Hosting B artifact-specific PostCSS acceptance — 2026-10-05
 
 Human review accepted Hosting B1 and B2B as PASSED under a **TEMPORARY, NARROWLY SCOPED** exception. This supplements, rather than erases, the earlier local-trace evidence and advisory table.

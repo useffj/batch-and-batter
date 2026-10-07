@@ -1,10 +1,41 @@
 // Normal dev deployment entrypoint. Never inherit prior payment admission.
 const { spawnSync } = require('node:child_process');
-function deployArgs(args) {
+const paymentConfig = require('../config/dev-payment.json');
+const parameterKeys = [
+  'StripeSandboxAccountId',
+  'DevPaymentLedgerNamespace',
+  'DevPaymentLedgerAccountId',
+];
+function validatePaymentConfig(config) {
+  const allowed = ['Environment', ...parameterKeys];
   if (
+    !config ||
+    typeof config !== 'object' ||
+    Array.isArray(config) ||
+    Object.keys(config).length !== allowed.length ||
+    Object.keys(config).some((key) => !allowed.includes(key)) ||
+    allowed.some(
+      (key) => !Object.hasOwn(config, key) || typeof config[key] !== 'string',
+    ) ||
+    config.Environment !== 'dev' ||
+    !/^acct_[A-Za-z0-9]+$/.test(config.StripeSandboxAccountId) ||
+    !/^dev:acct_[A-Za-z0-9]+$/.test(config.DevPaymentLedgerNamespace) ||
+    config.DevPaymentLedgerNamespace.length > 100 ||
+    config.DevPaymentLedgerAccountId !== config.StripeSandboxAccountId
+  ) {
+    throw new Error('INVALID_DEV_PAYMENT_CONFIG');
+  }
+}
+function deployArgs(args, config = paymentConfig) {
+  validatePaymentConfig(config);
+  if (
+    !Array.isArray(args) ||
     args.length > 1 ||
     (args.length === 1 &&
-      !/^--payment-start-enabled=(false|true)$/.test(args[0]))
+      ![
+        '--payment-start-enabled=false',
+        '--payment-start-enabled=true',
+      ].includes(args[0]))
   ) {
     throw new Error(
       'Usage: npm run deploy:dev -- [--payment-start-enabled=false|true]',
@@ -19,6 +50,12 @@ function deployArgs(args) {
     'batch-and-batter-dev',
     '--previous-parameters',
     'true',
+    '--context',
+    'environment=dev',
+    ...parameterKeys.flatMap((key) => [
+      '--parameters',
+      `batch-and-batter-dev:${key}=${config[key]}`,
+    ]),
     '--parameters',
     `batch-and-batter-dev:PaymentStartEnabled=${value}`,
   ];

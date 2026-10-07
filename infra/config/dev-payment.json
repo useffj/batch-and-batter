@@ -1,0 +1,6 @@
+{
+  "Environment": "dev",
+  "StripeSandboxAccountId": "acct_1UL8LdDz3QSwRsAl",
+  "DevPaymentLedgerNamespace": "dev:acct_1UL8xeDXKfaUH9bm",
+  "DevPaymentLedgerAccountId": "acct_1UL8LdDz3QSwRsAl"
+}

@@ -50,6 +50,20 @@ export function addPayments(
     description:
       'Nonsecret sandbox account ID; required before payment enablement.',
   });
+  const ledgerNamespace = new CfnParameter(stack, 'DevPaymentLedgerNamespace', {
+    type: 'String',
+    default: '',
+    allowedPattern: '^$|^dev:acct_[A-Za-z0-9]+$',
+    description:
+      'Immutable DEV payment ledger namespace; not a Stripe account identity.',
+  });
+  const ledgerAccount = new CfnParameter(stack, 'DevPaymentLedgerAccountId', {
+    type: 'String',
+    default: '',
+    allowedPattern: '^$|^acct_[A-Za-z0-9]+$',
+    description:
+      'Actual Stripe account bound to the DEV ledger namespace; must equal StripeSandboxAccountId.',
+  });
   const key = new kms.Key(stack, 'StripeParameterKey', {
     enableKeyRotation: true,
     removalPolicy: RemovalPolicy.RETAIN,
@@ -122,6 +136,8 @@ export function addPayments(
         PAYMENT_QUEUE_ARN: queue.queueArn,
         STRIPE_ENVIRONMENT: 'dev',
         STRIPE_ACCOUNT_ID: account.valueAsString,
+        STRIPE_LEDGER_NAMESPACE: ledgerNamespace.valueAsString,
+        STRIPE_LEDGER_ACCOUNT_ID: ledgerAccount.valueAsString,
       },
     });
     return { fn, role };
@@ -224,6 +240,14 @@ export function addPayments(
   application.addEnvironment('PAYMENT_START_ENABLED', admission.valueAsString);
   application.addEnvironment('STRIPE_ENVIRONMENT', 'dev');
   application.addEnvironment('STRIPE_ACCOUNT_ID', account.valueAsString);
+  application.addEnvironment(
+    'STRIPE_LEDGER_NAMESPACE',
+    ledgerNamespace.valueAsString,
+  );
+  application.addEnvironment(
+    'STRIPE_LEDGER_ACCOUNT_ID',
+    ledgerAccount.valueAsString,
+  );
   application.addEnvironment(
     'STRIPE_READ_KEY_PARAMETER',
     secret(appRole, 'payment-read-key'),

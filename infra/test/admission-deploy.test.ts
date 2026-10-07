@@ -5,9 +5,9 @@ import { readFileSync } from 'node:fs';
 const { deployArgs } = require(
   resolve(process.cwd(), 'scripts/deploy-dev.cjs'),
 ) as {
-  deployArgs: (args: string[]) => string[];
+  deployArgs: (args: unknown, config?: unknown) => string[];
 };
-test('normal dev deployment explicitly relocks false while preserving all other parameters', () => {
+test('normal dev deployment explicitly relocks false with explicit DEV account and ledger configuration', () => {
   const expected = [
     'cdk',
     'deploy',
@@ -16,6 +16,14 @@ test('normal dev deployment explicitly relocks false while preserving all other 
     'batch-and-batter-dev',
     '--previous-parameters',
     'true',
+    '--context',
+    'environment=dev',
+    '--parameters',
+    'batch-and-batter-dev:StripeSandboxAccountId=acct_1UL8LdDz3QSwRsAl',
+    '--parameters',
+    'batch-and-batter-dev:DevPaymentLedgerNamespace=dev:acct_1UL8xeDXKfaUH9bm',
+    '--parameters',
+    'batch-and-batter-dev:DevPaymentLedgerAccountId=acct_1UL8LdDz3QSwRsAl',
     '--parameters',
     'batch-and-batter-dev:PaymentStartEnabled=false',
   ];
@@ -45,4 +53,65 @@ test('deployment helper rejects ambiguous values and parameter/profile bypasses 
   ]) {
     assert.throws(() => deployArgs(args));
   }
+});
+
+const validConfig = {
+  Environment: 'dev',
+  StripeSandboxAccountId: 'acct_actual',
+  DevPaymentLedgerNamespace: 'dev:acct_historical',
+  DevPaymentLedgerAccountId: 'acct_actual',
+};
+test('configuration validation rejects unexpected/missing keys, invalid types, environment and bindings', () => {
+  const invalid: unknown[] = [
+    null,
+    [],
+    'dev',
+    1,
+    { ...validConfig, Extra: 'bad' },
+    { ...validConfig, PaymentStartEnabled: 'true' },
+    { ...validConfig, Environment: 'production' },
+    { ...validConfig, DevPaymentLedgerAccountId: 'acct_other' },
+    { ...validConfig, DevPaymentLedgerNamespace: 'live:acct_historical' },
+    {
+      ...validConfig,
+      DevPaymentLedgerNamespace: 'dev:acct_' + 'a'.repeat(100),
+    },
+  ];
+  for (const key of Object.keys(validConfig)) {
+    const missing = { ...validConfig } as Record<string, unknown>;
+    delete missing[key];
+    invalid.push(missing);
+    for (const value of [
+      undefined,
+      null,
+      1,
+      true,
+      {},
+      [],
+      '',
+      'invalid',
+      ' dev',
+      'acct_bad\n',
+    ])
+      invalid.push({ ...validConfig, [key]: value });
+  }
+  for (const config of invalid)
+    assert.throws(() => deployArgs([], config), /INVALID_DEV_PAYMENT_CONFIG/);
+  assert.ok(
+    deployArgs([], validConfig).includes(
+      'batch-and-batter-dev:DevPaymentLedgerNamespace=dev:acct_historical',
+    ),
+  );
+});
+test('only explicit literal admission arguments are accepted', () => {
+  for (const args of [
+    null,
+    {},
+    'true',
+    [true],
+    [undefined],
+    ['--payment-start-enabled=true\n'],
+    ['--payment-start-enabled=true '],
+  ])
+    assert.throws(() => deployArgs(args, validConfig));
 });

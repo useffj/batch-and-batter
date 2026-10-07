@@ -193,3 +193,159 @@ secrets, ConfirmationTokens, command/idempotency identities, keys, customer
 contact fields, card data, or provider exception payloads. No workflow, retry,
 visibility, redrive, concurrency, batch-size, IAM, admission, capture or
 reconciliation configuration changes are part of this phase.
+
+## DEV account identity and ledger namespace correction (local, not deployed)
+
+Human approval on 2026-10-07 designates `acct_1UL8LdDz3QSwRsAl` as the actual
+DEV Stripe sandbox. Historical payment acceptances used that sandbox, although
+the prior configuration/approval named `acct_1UL8xeDXKfaUH9bm`. The deployed read
+and worker keys, hosted publishable key, and webhook signing secret were verified
+against the actual sandbox without exposing credentials. This correction does
+not rotate or replace them, migrate data, or authorize a payment/deployment.
+
+Reviewed nonsecret DEV configuration lives in `infra/config/dev-payment.json`:
+
+- `Environment=dev` is validated locally and pinned in CDK context.
+
+- `StripeSandboxAccountId=acct_1UL8LdDz3QSwRsAl` is the actual Stripe account.
+- `DevPaymentLedgerNamespace=dev:acct_1UL8xeDXKfaUH9bm` preserves existing ledger
+  identities and compatible subsequent DEV operations.
+- `DevPaymentLedgerAccountId=acct_1UL8LdDz3QSwRsAl` explicitly binds that namespace
+  to the actual account. It must match `StripeSandboxAccountId`.
+
+The deploy helper supplies these three parameters explicitly and still defaults
+`PaymentStartEnabled=false`. This is a future deployment change, not a deployed
+state claim. The two new parameters default empty in generic synthesis so an
+unconfigured deployment fails closed. Runtime requires DEV, a valid actual
+account, a valid DEV namespace, and a matching account binding. The namespace is
+not an account alias or alternate webhook authorization. Webhook validation uses
+the actual account; direct-account events without an account field continue to
+rely on the independently verified endpoint signing secret and test-mode checks.
+
+Scope consumers: API admission execution, ConfirmationToken ownership guard,
+Intent associations, workflow/recovery authority, capture evidence, settlement
+identity, customer recovery, and webhook receipt/inbox deduplication all retain
+the configured namespace. Reconciliation routes existing work keys without
+reinterpreting the account. Cart/request idempotency scopes are unchanged.
+No runtime derives account authorization from historical record namespaces.
+
+Before a separately authorized deployment, review the configuration and shared
+backend artifact diff. Expect API, payment worker and webhook environment updates,
+two new CloudFormation parameters, and shared Lambda code asset updates. No IAM,
+queue, table, secret, Stripe, Amplify, frontend or payment-admission change is
+intended. Recheck disabled admission, empty unresolved responsibility, alarms,
+queues and recovery heartbeats. After deployment repeat read-only identity,
+historical lookup and operations checks. No payment is part of this validation.
+
+Keep the namespace immutable. Do not repair account mismatches by changing stored
+records or by broadening accepted webhook accounts. Rollback must preserve both
+the namespace and existing-payment recovery; do not roll back to code that derives
+the ledger namespace solely from the corrected actual account. Keep admission
+false and use a reviewed compatible rollback or forward fix.
+
+### Available artifacts and matching configurations (2026-10-07 read-only inspection)
+
+All five deployed functions (`batch-and-batter-dev-api`, `payment-worker`,
+`stripe-webhook`, `expiry-worker`, and `expiry-reconciler`, with the same prefix)
+returned the same downloaded deployment ZIP SHA-256:
+`5233e95cda7dabd026ce8a517fe718e37e2cf28bae463642038eaf59787c88d1`.
+Each is `$LATEST`; no published Lambda versions were returned. The API, financial
+worker and webhook bundles do not contain explicit ledger-namespace support.
+Their matching current identity is `STRIPE_ACCOUNT_ID=acct_1UL8xeDXKfaUH9bm`,
+with neither new ledger variable configured. API admission was read as false.
+Expiry worker/reconciler need no Stripe identity configuration and remain running.
+
+This is a verified currently downloadable legacy artifact, not a retained rollback
+version or a new approved deployment. Its old account-derived namespace matches
+historical records, but its account configuration retains the known identity
+mismatch. Do not pair it with the corrected actual account value. No previously
+deployed explicit-ledger-compatible artifact was identified in the five functions,
+their published versions, or repository history. Job 9 is a frontend artifact and
+is not a backend recovery artifact.
+
+The new artifact is only the uncommitted local build, not a published Lambda
+version or deployed release. The reviewed local runtime file SHA-256 values are:
+
+| File                         | SHA-256                                                          |
+| ---------------------------- | ---------------------------------------------------------------- |
+| handler.js                   | d062c3c2e24adfa1356fc2e7c94e47f005f6486d4e10493cd0546e374255aefd |
+| payment-worker-handler.js    | e257693fb07e6a4603184abf8e0361f25d0e5ca212c7629e941a585b7f036f96 |
+| stripe-webhook-handler.js    | a0e23fd14e397a9cae8dc94838c6490f7e940257e31271d2058d969c03aeb77a |
+| expiry-worker-handler.js     | e700b43cae1d32e5540944cc09e7faad69b12f34cfc4a2db42fdae4efc43f5d2 |
+| expiry-reconciler-handler.js | 8786be670eb3f6992488d07ef665998b0fd9621a5ab7265928c5de0157fc286f |
+
+These identify individual local files, not a deployment ZIP. Rebuild and verify
+fingerprints after any further code changes. Its final matching parameters are
+the reviewed JSON values above plus `PaymentStartEnabled=false`.
+
+### Recovery-preserving rollout proposal; separate approval required
+
+Do not run the normal deployment helper as the initial transition: it selects the
+final corrected account. Lambda code/config updates across functions are not an
+atomic fleet switch. Old code paired temporarily with the corrected account would
+derive a different namespace; new code without its ledger settings fails closed.
+The following staged transition needs separately reviewed templates/artifacts and
+explicit human authorization, including the temporary legacy binding in stage 1.
+No staging artifacts or change sets have been created during this local task.
+
+1. Resolve the dependency audit gate. Require disabled admission, no unresolved
+   commerce responsibility, healthy queues/alarms/heartbeats, and supervision.
+   Before mutation, retain and checksum the currently available legacy ZIP and
+   full deployed template/parameters, plus an immutable reviewed new build. Do not
+   assume `$LATEST` or an expiring download URL remains a rollback archive.
+2. **Configuration preparation, legacy code unchanged:** use a reviewed template
+   that preserves the verified legacy code asset for every function. Add ledger
+   namespace `dev:acct_1UL8xeDXKfaUH9bm` and ledger account binding
+   `acct_1UL8xeDXKfaUH9bm` to API/worker/webhook; leave the existing account value
+   `acct_1UL8xeDXKfaUH9bm` and admission false. Old code ignores the new fields.
+   This temporarily preserves the existing mislabelled configuration, not a new
+   approval of that ID as the actual Stripe sandbox. Verify the full configuration
+   on all three functions before proceeding. Reject any code/IAM/resource drift.
+3. **Compatible code introduction, parameters unchanged:** deploy the reviewed
+   explicit-ledger code while retaining the stage-1 parameter set. Both old and new
+   instances use exactly the historical namespace during this transition. Keep
+   expiry worker/reconciler, queue mappings and webhook ingress enabled. Verify
+   all five artifacts, historical reads, receipt/settlement compatibility, and
+   recovery health before changing account identity. Do not admit a payment.
+4. **Correct identity, compatible code unchanged:** now change both
+   `StripeSandboxAccountId` and `DevPaymentLedgerAccountId` together to
+   `acct_1UL8LdDz3QSwRsAl` on each identity-bearing function. Preserve the namespace
+   and admission false. This is the final JSON/helper configuration. Review the
+   configuration-only diff; verify all three identities/bindings, all five code
+   fingerprints, historical lookup, keys/webhook association, queues, alarms,
+   heartbeats and unresolved responsibility. Stop for review without payment.
+
+Before stage 4, reverting code to the retained legacy artifact is only compatible
+with the complete legacy account parameter set; it preserves the old mismatch and
+is an emergency return to the pre-correction state, not successful correction.
+After stage 4 begins, prefer roll-forward with the explicit-ledger-compatible build
+and final configuration. Do not independently revert readers, worker, or webhook.
+If returning to the legacy artifact is unavoidable, a separately reviewed reverse
+transition must first restore the complete stage-1 identity/binding set on the
+compatible code fleet, verify its health, and only then restore the retained legacy
+code. Never remove the ledger configuration while new code is still running.
+
+At every stop, leave admission false and retain durable work, queues, consumers,
+webhook verification, deadlines, and reconciliation. Diagnose/roll forward through
+compatible artifacts; never delete records/work, reset inventory, rotate keys, or
+disable recovery to make rollout checks pass. A failed checkpoint prevents the
+next stage. The normal helper is for the final configuration, not the bridge.
+
+### Local HTTP and deployment preflight behavior
+
+Payment runtime construction occurs inside the normal payment HTTP error boundary.
+Missing/malformed/mismatched identity configuration returns HTTP 503,
+`PAYMENT_UNAVAILABLE`, a generic message and `Cache-Control: no-store`. Logs retain
+operation/status/code only; no configuration or secret details are emitted.
+Failed service construction is not cached and does not initialize provider clients.
+
+Before invoking CDK, the helper requires the exact four JSON keys, string values,
+DEV environment/namespace, valid account format, and matching account binding. It
+pins `environment=dev`, preserves unspecified previous stack parameters, accepts
+only zero arguments or one literal admission flag, and defaults to false. No
+configuration file value can override payment admission.
+
+The single registry/package availability check in this task found latest official
+`aws-cdk-lib@2.272.0` still bundles `brace-expansion@5.0.9`. Dependencies remain
+unchanged. The existing three-advisory audit blocker is not waived; an official
+bundle with at least 5.0.12 and validated compatibility is still required.

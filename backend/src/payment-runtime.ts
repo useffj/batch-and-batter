@@ -42,14 +42,23 @@ export function secretLoader(
     }
   };
 }
-export function paymentScope() {
-  const account = process.env.STRIPE_ACCOUNT_ID ?? '';
+export function paymentIdentity(env: NodeJS.ProcessEnv = process.env) {
+  const account = env.STRIPE_ACCOUNT_ID ?? '';
+  const scope = env.STRIPE_LEDGER_NAMESPACE ?? '';
+  const ledgerAccount = env.STRIPE_LEDGER_ACCOUNT_ID ?? '';
   if (
-    process.env.STRIPE_ENVIRONMENT !== 'dev' ||
-    !/^acct_[A-Za-z0-9]+$/.test(account)
+    env.STRIPE_ENVIRONMENT !== 'dev' ||
+    !/^acct_[A-Za-z0-9]+$/.test(account) ||
+    !/^dev:acct_[A-Za-z0-9]+$/.test(scope) ||
+    scope.length > 100 ||
+    ledgerAccount !== account
   )
     throw new ProviderError('PROVIDER_INVALID');
-  return `dev:${account}`;
+  // The namespace preserves ledger identity; it never grants Stripe account access.
+  return { accountId: account, scope };
+}
+export function paymentScope() {
+  return paymentIdentity().scope;
 }
 export const paymentClient = () =>
   DynamoDBDocumentClient.from(new DynamoDBClient({ maxAttempts: 1 }));

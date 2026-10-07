@@ -3,7 +3,11 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { paymentFixture } from './payment-execution-fixture';
 import { PaymentRepository } from '../src/payment-repository';
-import { paymentStartEnabled, secretLoader } from '../src/payment-runtime';
+import {
+  paymentIdentity,
+  paymentStartEnabled,
+  secretLoader,
+} from '../src/payment-runtime';
 import { localPaymentApi } from '../src/payment-api';
 import { webhookEntrypoint } from '../src/stripe-webhook-handler';
 import {
@@ -232,8 +236,14 @@ test('post-commit dispatch sends workflow and deadline; failures leave accepted 
   await repository(f).start(f.request);
   assert.equal(sent.length, 2);
 });
-test('disabled admission leaves admitted customer GET and continuation operative', async () => {
-  const f = await paymentFixture();
+test('disabled admission leaves admitted customer GET and continuation operative with historical ledger binding', async () => {
+  const { scope } = paymentIdentity({
+    STRIPE_ENVIRONMENT: 'dev',
+    STRIPE_ACCOUNT_ID: 'acct_actualfixture',
+    STRIPE_LEDGER_ACCOUNT_ID: 'acct_actualfixture',
+    STRIPE_LEDGER_NAMESPACE: 'dev:acct_historicalfixture',
+  });
+  const f = await paymentFixture(true, undefined, 1, false, scope);
   f.provider.outcome = 'requires_action';
   await f.bind();
   await f.run();

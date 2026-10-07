@@ -118,6 +118,7 @@ export async function paymentFixture(
   dispatch?: ConstructorParameters<typeof PaymentWorkflow>[6],
   products = 1,
   captureFixture = false,
+  scope = 'dev:acct_localfixture',
 ) {
   const s = new CartStore().seed(products, captureFixture ? 20 : 100);
   if (captureFixture)
@@ -137,7 +138,6 @@ export async function paymentFixture(
   >[0];
   const provider = new FixtureProvider();
   provider.tokenNow = s.now;
-  const scope = 'dev:acct_localfixture';
   const repo = new PaymentRepository(
     client,
     'catalog',

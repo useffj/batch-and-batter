@@ -3,7 +3,7 @@ import { StripeInbox, createStripeWebhook } from './stripe-webhook';
 import {
   paymentClient,
   paymentDispatch,
-  paymentScope,
+  paymentIdentity,
   secretLoader,
 } from './payment-runtime';
 import { paymentMetrics } from './payment-metrics';
@@ -42,7 +42,7 @@ const load = secretLoader(
   process.env.STRIPE_WEBHOOK_SECRET_PARAMETER ?? '',
 );
 export const handler = webhookEntrypoint(load, (secret) => {
-  const scope = paymentScope();
+  const { scope, accountId } = paymentIdentity();
   return createStripeWebhook(
     new StripeInbox(
       paymentClient(),
@@ -54,7 +54,7 @@ export const handler = webhookEntrypoint(load, (secret) => {
     {
       signingSecret: secret,
       scope,
-      accountId: process.env.STRIPE_ACCOUNT_ID ?? '',
+      accountId,
       toleranceSeconds: 300,
     },
   );

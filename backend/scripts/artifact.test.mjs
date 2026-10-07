@@ -127,12 +127,13 @@ test('dedicated expiry bundles load in isolation without source or installed SDK
   }
 });
 
-test('deployed app defaults admission off before secret/provider or transactional writes', () => {
-  const output = execFileSync(
-    process.execPath,
-    [
-      '-e',
-      `
+for (const identity of ['configured', 'missing', 'malformed', 'mismatched'])
+  test(`deployed app fails closed with ${identity} identity and default admission off`, () => {
+    const output = execFileSync(
+      process.execPath,
+      [
+        '-e',
+        `
     const http = require('node:http');
     const targets = [];
     const server = http.createServer((req, res) => {
@@ -155,24 +156,50 @@ test('deployed app defaults admission off before secret/provider or transactiona
       } finally { server.close(); }
     });
   `,
-    ],
-    {
-      cwd: fileURLToPath(root),
-      encoding: 'utf8',
-      env: {
-        PATH: process.env.PATH,
-        AWS_REGION: 'us-east-2',
-        AWS_ACCESS_KEY_ID: 'synthetic',
-        AWS_SECRET_ACCESS_KEY: 'synthetic',
-        AWS_EC2_METADATA_DISABLED: 'true',
-        CATALOG_TABLE_NAME: 'catalog',
-        COMMERCE_TABLE_NAME: 'commerce',
-        OPERATIONS_TABLE_NAME: 'operations',
+      ],
+      {
+        cwd: fileURLToPath(root),
+        encoding: 'utf8',
+        env: {
+          PATH: process.env.PATH,
+          AWS_REGION: 'us-east-2',
+          AWS_ACCESS_KEY_ID: 'synthetic',
+          AWS_SECRET_ACCESS_KEY: 'synthetic',
+          AWS_EC2_METADATA_DISABLED: 'true',
+          CATALOG_TABLE_NAME: 'catalog',
+          COMMERCE_TABLE_NAME: 'commerce',
+          OPERATIONS_TABLE_NAME: 'operations',
+          ...(identity === 'missing'
+            ? {}
+            : {
+                STRIPE_ENVIRONMENT: 'dev',
+                STRIPE_ACCOUNT_ID: 'acct_artifactActual',
+                STRIPE_LEDGER_ACCOUNT_ID:
+                  identity === 'mismatched'
+                    ? 'acct_other'
+                    : 'acct_artifactActual',
+                STRIPE_LEDGER_NAMESPACE:
+                  identity === 'malformed'
+                    ? 'invalid-private-config'
+                    : 'dev:acct_artifactHistorical',
+              }),
+        },
       },
-    },
-  );
-  const result = JSON.parse(output.trim().split('\n').at(-1));
-  assert.equal(result.r.statusCode, 503);
-  assert.equal(JSON.parse(result.r.body).code, 'PAYMENTS_DISABLED');
-  assert.deepEqual(result.targets, ['DynamoDB_20120810.GetItem']);
-});
+    );
+    const result = JSON.parse(output.trim().split('\n').at(-1));
+    assert.equal(result.r.statusCode, 503);
+    const code =
+      identity === 'configured' ? 'PAYMENTS_DISABLED' : 'PAYMENT_UNAVAILABLE';
+    assert.equal(JSON.parse(result.r.body).code, code);
+    assert.equal(result.r.headers['cache-control'], 'no-store');
+    assert.deepEqual(
+      result.targets,
+      identity === 'configured' ? ['DynamoDB_20120810.GetItem'] : [],
+    );
+    const log = JSON.parse(output.trim().split('\n')[0]);
+    assert.deepEqual(log, { operation: 'beginPayment', statusCode: 503, code });
+    assert.doesNotMatch(
+      output,
+      /acct_artifact|acct_other|invalid-private-config|PROVIDER_INVALID/,
+    );
+  });

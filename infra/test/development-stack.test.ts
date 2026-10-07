@@ -562,6 +562,8 @@ test('Phase 5A2 changes only approved properties of Phase 5A1 resources', () => 
         'PAYMENT_START_ENABLED',
         'STRIPE_ENVIRONMENT',
         'STRIPE_ACCOUNT_ID',
+        'STRIPE_LEDGER_NAMESPACE',
+        'STRIPE_LEDGER_ACCOUNT_ID',
         'STRIPE_READ_KEY_PARAMETER',
         'PAYMENT_QUEUE_URL',
       ])
