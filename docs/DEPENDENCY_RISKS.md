@@ -251,3 +251,39 @@ name deviation is accepted: submitted and stored values matched. Local controlle
 concurrency tests reproduced safe contention/idempotent replay without duplicate
 capture or settlement. The historical worker exception cause remains unproven;
 this change does not resolve it retroactively or claim all hosted scenarios passed.
+
+## DEV authentication-wait correction — 2026-10-07
+
+**HUMAN APPROVED — temporary DEV-only exception; infrastructure audit remains failing.**
+
+Jackson approved API and payment-worker code updates only in account
+`302154194958`, region `us-east-2`, using candidate ZIP SHA-256
+`57a4c98fd6e773bd4b31aa53e248b0151376a85ea7640bb759f613ce5f4f5205`.
+The narrowed template SHA-256 is
+`d382b95ae3ac587bb4d9ba7dff0643fc2776f838b0c9b8722fd1053ff4b44954`.
+Retain deployed webhook, expiry-worker and reconciler artifacts. Preserve actual
+account/binding, historical ledger namespace, recovery configuration and admission
+false. The unchanged webhook durably accepts the same inbox schema; sequential
+API/worker updates remain compatible with existing work and readers.
+
+The same three brace-expansion advisories, locked versions and controls apply.
+Expiration remains October 14, 2026, 5 p.m. America/Denver; a verified compatible
+fixed release, new advisory, changed exposure, artifact or scope terminates the
+exception earlier. Fresh audit still exits 1 with the same three advisories.
+The official CDK 2.272.0 package integrity was verified again; its bundled
+brace-expansion remains 5.0.9. Passing CI does not mean the audit passed.
+
+The inspected obsolete abandonment message and its existing payment DLQ alarm
+are explicitly acknowledged, preserved pre-existing conditions. No deletion is
+permitted to make preflight green. Stop for new failures or unreviewed change-set
+or replacement effects. Preserve the retained compatible API and worker rollback
+artifacts with current identity/ledger configuration and admission false.
+
+The correction leaves authentication-wait work durable for scheduled discovery.
+Background waiting checks now depend on minute-cadence reconciliation; continuation
+and webhook-driven progress retain immediate wake-ups. Other repeated processing
+and retry paths remain outside this narrow correction. Financial/customer
+abandonment remains passed; transport acceptance remains unresolved pending hosted
+verification. This approval does not authorize a payment test, commerce creation,
+DLQ receive/delete/redrive/replay, Stripe change, metrics or tracing/protection
+change, or Amplify build.

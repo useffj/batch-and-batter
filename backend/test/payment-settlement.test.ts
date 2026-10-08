@@ -19,6 +19,9 @@ import { ProviderError } from '../src/payment-provider';
 import { paymentIdentity } from '../src/payment-runtime';
 import { PaymentRepository } from '../src/payment-repository';
 import { createPaymentWorker } from '../src/payment-worker';
+import { ExpiryReconciler } from '../src/expiry-reconciler';
+import { financialWorkMessage } from '../src/payment-routing';
+import type { PaymentMessage } from '../src/payment-execution-domain';
 
 async function fixture(products = 1, captureFixture = false, scope?: string) {
   const f = await paymentFixture(
@@ -29,6 +32,7 @@ async function fixture(products = 1, captureFixture = false, scope?: string) {
     scope,
   );
   const logs: unknown[] = [];
+  const dispatched: PaymentMessage[] = [];
   const w = new FinancialWorkflow(
     f.client,
     'commerce',
@@ -37,7 +41,9 @@ async function fixture(products = 1, captureFixture = false, scope?: string) {
     f.scope,
     'catalog',
     () => f.s.now,
-    undefined,
+    async (message) => {
+      dispatched.push(message);
+    },
     () => 0,
     async () => {},
     (e) => logs.push(e),
@@ -91,6 +97,7 @@ async function fixture(products = 1, captureFixture = false, scope?: string) {
     captured,
     inventory,
     logs,
+    dispatched,
     customer: new PaymentCustomer(w, f.provider),
   };
 }
@@ -1971,4 +1978,202 @@ test('transition diagnostics distinguish transaction failure from failed authori
   assert.equal(f.inventory().sold, 0);
   f.w.attempt = originalAttempt;
   f.s.before = undefined;
+});
+
+async function routeDueWaitingWork(
+  f: Awaited<ReturnType<typeof fixture>>,
+  fail = false,
+) {
+  const messages: PaymentMessage[] = [];
+  const reconciler = new ExpiryReconciler(
+    f.client,
+    'operations',
+    { send: async () => {} },
+    {
+      now: () => f.s.now,
+      monotonic: () => 0,
+      random: () => 0,
+      sleep: async () => {},
+    },
+    {
+      message: financialWorkMessage,
+      send: async (m) => {
+        if (fail) throw new Error('synthetic send failure');
+        messages.push(m);
+      },
+    },
+  );
+  await reconciler.run();
+  return messages;
+}
+
+test('waiting polls remain durable without self-enqueue, missed routing safely expires once', async () => {
+  const f = await fixture();
+  f.provider.outcome = 'requires_action';
+  await f.authorize();
+  const deadline = f.cart().paymentDeadline;
+  const sends = f.dispatched.length;
+  const first = f.message();
+  // Independent wakes can be duplicated or frequent; none extends the worker chain.
+  for (let i = 0; i < 12; i++) {
+    f.s.now += 15000;
+    const due = await routeDueWaitingWork(f);
+    const current = f.message();
+    assert.ok(
+      due.some((m) => m.SK === current.SK && m.revision === current.revision),
+    );
+    await f.w.run(current);
+    assert.equal(await f.w.run(current), 'STALE_WORK');
+    assert.ok(f.s.row('operations', f.message()));
+    assert.equal(f.dispatched.length, sends);
+    assert.equal(f.cart().paymentDeadline, deadline);
+  }
+  f.s.now += 15000;
+  await assert.rejects(routeDueWaitingWork(f, true));
+  assert.ok(f.s.row('operations', f.message()));
+  // A missed minute does not remove responsibility or move the deadline.
+  f.s.now = Date.parse(deadline) + 120000;
+  const due = await routeDueWaitingWork(f);
+  assert.ok(due.some((m) => m.kind === 'PAYMENT'));
+  assert.ok(due.some((m) => m.kind === 'WORKFLOW'));
+  for (const m of due) {
+    if (m.kind === 'STRIPE_EVENT') await f.inbox.process(m, f.w);
+    else await f.w.run(m);
+  }
+  for (let i = 0; i < 8 && f.attempt().status !== 'EXPIRED'; i++) await f.run();
+  assert.equal(f.attempt().status, 'EXPIRED');
+  assert.equal(f.attempt().execution.releaseEvidence, 'CANCELED');
+  assert.equal(f.cart().paymentDeadline, deadline);
+  assert.equal(await f.w.run(first), 'STALE_WORK');
+  for (const m of due) assert.equal(await f.w.run(m), 'STALE_WORK');
+  assert.equal(f.provider.calls.filter((c) => c.kind === 'cancel').length, 1);
+  assert.equal(f.provider.calls.filter((c) => c.kind === 'capture').length, 0);
+  assert.deepEqual(
+    [f.inventory().total, f.inventory().reserved, f.inventory().sold],
+    [100, 0, 0],
+  );
+  assert.equal(
+    f.s.row('operations', paidEventKey(f.cart().orderId)),
+    undefined,
+  );
+});
+
+for (const winner of ['continuation', 'webhook'] as const) {
+  test(`waiting continuation races webhook and deadline, ${winner} wins, settles once`, async () => {
+    const f = await fixture();
+    f.provider.outcome = 'requires_action';
+    await f.authorize();
+    const deadline = f.cart().paymentDeadline;
+    const intent = f.attempt().execution.intentId;
+    const view = await f.customer.get(f.cart().cartId, tokenHash);
+    const p = f.provider.intents.get(intent)!;
+    p.status = 'requires_capture';
+    p.amountCapturableCents = p.amountCents;
+    let entered!: () => void, release!: () => void;
+    const barrier = new Promise<void>((r) => {
+      entered = r;
+    });
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const retrieve = f.provider.retrieveIntent.bind(f.provider);
+    let first = true;
+    f.provider.retrieveIntent = async (id) => {
+      const result = await retrieve(id);
+      if (first) {
+        first = false;
+        entered();
+        await gate;
+      }
+      return result;
+    };
+    await f.inbox.accept({
+      eventId: 'evt_WaitRace',
+      intentId: intent,
+      eventType: 'payment_intent.amount_capturable_updated',
+    });
+    const receipt = f.s.row('operations', {
+      PK: 'EXTERNAL_EVENT#STRIPE#evt_WaitRace',
+      SK: 'META',
+    })!;
+    const webhook = () =>
+      f.inbox.process(paymentMessage(receipt.work, 'STRIPE_EVENT'), f.w);
+    const continuation = () =>
+      f.customer.confirm({
+        cartId: f.cart().cartId,
+        tokenHash,
+        ifMatch: view.etag,
+        key: f.s.keyValue(),
+        continuationGeneration: 1,
+      });
+    const sends = f.dispatched.length;
+    const loser = winner === 'continuation' ? webhook : continuation;
+    const blocked = loser().then(
+      (value) => ({ value }),
+      (error) => ({ error }),
+    );
+    await barrier;
+    await (winner === 'continuation' ? continuation() : webhook());
+    assert.ok(
+      f.dispatched.length > sends,
+      'authentication completion wakes immediately',
+    );
+    f.s.now = Date.parse(deadline);
+    const due = await routeDueWaitingWork(f);
+    for (const m of due) {
+      if (m.kind === 'STRIPE_EVENT') await f.inbox.process(m, f.w);
+      else await f.w.run(m);
+    }
+    release();
+    await blocked;
+    for (let i = 0; i < 10 && f.cart().status !== 'CONVERTED'; i++)
+      await f.run();
+    for (const m of due) {
+      if (m.kind === 'STRIPE_EVENT') await f.inbox.process(m, f.w);
+      else await f.w.run(m);
+    }
+    assert.equal(f.cart().status, 'CONVERTED');
+    assert.equal(f.attempt().execution.intentId, intent);
+    assert.equal(f.provider.intents.size, 1);
+    for (const kind of ['create', 'confirm', 'capture'])
+      assert.equal(f.provider.calls.filter((c) => c.kind === kind).length, 1);
+    assert.equal(f.provider.calls.filter((c) => c.kind === 'cancel').length, 0);
+    assert.equal(f.cart().paymentDeadline, deadline);
+    assert.deepEqual(
+      [f.inventory().total, f.inventory().reserved, f.inventory().sold],
+      [100, 0, 2],
+    );
+    assert.ok(f.s.row('operations', paidEventKey(f.cart().orderId)));
+    assert.equal(
+      (await f.customer.get(f.cart().cartId, tokenHash)).payment.status,
+      'paid',
+    );
+  });
+}
+
+test('minute-cadence reconciliation discovers waiting work without a worker wake', async () => {
+  const f = await fixture();
+  f.provider.outcome = 'requires_action';
+  await f.authorize();
+  const sends = f.dispatched.length;
+  const deadline = f.cart().paymentDeadline;
+  // A due time just after a scheduled tick waits until the next tick.
+  const dueAt = Date.parse(f.message().SK.split('#')[0]);
+  f.s.now = dueAt - 1;
+  assert.equal(
+    (await routeDueWaitingWork(f)).some((m) => m.kind === 'WORKFLOW'),
+    false,
+  );
+  for (let tick = 0; tick < 3; tick++) {
+    f.s.now += 60000;
+    const messages = await routeDueWaitingWork(f);
+    const waits = messages.filter((m) => m.kind === 'WORKFLOW');
+    assert.equal(waits.length, 1);
+    await f.w.run(waits[0]);
+    assert.equal(f.attempt().execution.stage, 'WAIT_FOR_CUSTOMER_ACTION');
+    assert.equal(f.dispatched.length, sends);
+    assert.equal(f.cart().paymentDeadline, deadline);
+    assert.equal(f.inventory().reserved, 2);
+    assert.equal(f.inventory().sold, 0);
+  }
 });
