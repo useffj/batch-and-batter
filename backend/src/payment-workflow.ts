@@ -351,6 +351,11 @@ export class PaymentWorkflow {
       paymentDiagnostic('workflowAdvance', error, 'RETHROW');
       throw new WorkflowError('PAYMENT_BUSY');
     }
+    // Customer-action polling must not extend the worker's SQS invocation chain.
+    // The independent reconciler discovers the durable due-work row instead.
+    // Continuation/webhooks still wake non-wait transitions immediately.
+    if (execution.stage === 'WAIT_FOR_CUSTOMER_ACTION')
+      return execution.workflow;
     // Losing this optimization never deletes durable work.
     try {
       await this.dispatch?.(paymentMessage(execution.workflow));
