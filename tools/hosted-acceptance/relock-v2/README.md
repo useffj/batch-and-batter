@@ -1,9 +1,11 @@
 # Admission relock controller, version 2
 
-Status: local harness correction only. The October 7 duplicate-activation
-scenario remains **NOT PASSED**. This directory has no cloud client, executable
-hosted runner, credential loading, fixture creation or payment functionality.
-Browser gesture capture and human-readiness coordination are not implemented.
+Status: controller, transport adapter, CLI executor and Runner Phase 1A are
+locally validated. The October 7 duplicate-activation scenario remains
+**NOT PASSED**. The runner is simulation-only; no executable hosted runner,
+fixture creation or payment functionality is provided. Executor capabilities
+remain separate and are not invoked by the runner. Browser gesture capture and
+human-readiness coordination are not implemented.
 
 ## Source and provenance
 
@@ -546,3 +548,284 @@ verification of this normalization correction before maintained-runner work.
 No AWS CLI, live credentials, AWS/Stripe operations or hosted scenario were used.
 Historical validation records were preserved. Hosted duplicate-activation
 acceptance remains **NOT PASSED**.
+
+## Runner Phase 1A — local orchestration foundation
+
+`runner.py` is a library-only, one-use simulation orchestrator. It imports no
+controller, transport, executor or cloud SDK and has no executable entry point,
+CLI, live mode, admission enablement or Pay-instruction API. Existing controller,
+adapter and executor interfaces are unchanged. This phase does not integrate them.
+
+The normal lifecycle is `NOT_STARTED → PREFLIGHT_PENDING → READY → ACTIVE →
+CLEANUP_REQUIRED → COMPLETED`. Stop from any pre-cleanup state enters
+`STOP_REQUESTED`, then `CLEANUP_REQUIRED`. Cleanup runs once even after a stop or
+exception, including a stop before preflight; fakes must tolerate partial setup.
+A stop or critical failure ends in `FAILED`, never `COMPLETED`. A noncritical
+stop returns outcome `STOPPED` without raising; a critical failure raises. This
+uses the existing terminal states while distinguishing cancellation in the outcome.
+A late stop may invalidate `COMPLETED` to `FAILED`; failure cannot transition
+back to success. Invalid
+transitions and reuse raise explicitly. `READY` is a simulation transition, not
+operator readiness or authorization.
+
+One sticky `threading.Event` subclass is shared with all callbacks. `set()` records
+a component stop, `clear()` raises, and the public signal cannot be replaced.
+Stop reasons are deduplicated nonsecret codes; the first critical reason is
+retained under concurrent requests. State, phase claims, callback-entry admission
+and stop requests share one lock. A claim is pending work, not entry permission.
+Both preflight and active callbacks pass through `_admit_entry` after claiming.
+The linearization point is the entry record appended under that lock after
+checking stop; stop latches its Event and records its reason under the same lock.
+If stop completes first, the pending callback is not admitted or invoked. Cleanup
+intentionally bypasses the entry gate and runs once even when stop is set.
+
+If entry admission wins first, that callback is in flight. The lock is released
+before arbitrary callback execution, allowing responsive stop handling. Scheduling
+can delay the first instruction of user callback code until after a later stop;
+the admitted callback must observe the Event before further work. Entry admission
+is not the exact instruction where user code starts, hard real-time cancellation,
+or safe live Pay publication. Holding the lock throughout a callback would block
+stop handling and is deliberately avoided.
+
+`Runner` requires explicit `SimulationSteps(preflight, active, cleanup)` fakes.
+Every callback receives the same stop signal and must return `None`; returned
+configuration or verification data is rejected. These are trusted local Python
+callbacks, not a sandbox capable of proving arbitrary injected code is harmless.
+There are no default live dependencies or temporary live bypasses. Cleanup also
+receives the latched signal on normal completion, closing further activity.
+
+Reports are immutable in-memory snapshots, not durable authorization or current
+monitor state. `SIMULATED_COMPLETED` and `STOPPED` describe orchestration only;
+`relock_verified`, `hosted_authorized` and `pay_instruction_issued` remain false.
+Critical failures raise `RunnerFailure` with the sanitized report. The original
+exception remains its cause and `RunnerFailure.primary_exception`, even if
+cleanup subsequently fails. `RunnerFailure.secondary_exceptions` is an immutable
+tuple retaining secondary cleanup exception objects, including their tracebacks.
+These fields are trusted local diagnostics, separate from the sanitized public
+report; never serialize them or display their tracebacks without sanitization.
+The first critical reason remains authoritative. If a critical stop precedes the
+first Python exception in cleanup, that exception becomes `primary_exception`
+(the first exception), while the original stop remains `report.primary_failure`.
+Cleanup failure always prevents successful completion. Later critical
+reports invalidate the current state but cannot rewrite previously returned
+snapshots.
+
+### Phase 1A validation
+
+Before editing, local `main` was clean at
+`1535cd4ae838f86459b6f4a5187a1ccf2b87612c`, with the existing harness tracked.
+Post-merge CI run
+[37994477310](https://github.com/useffj/batch-and-batter/actions/runs/37994477310)
+completed successfully for that commit: `validate`, `validate-backend` and
+`validate-infra` passed. This CI result is separate from the local Python suite.
+
+```sh
+python3 -B -m unittest discover -s tools/hosted-acceptance/relock-v2 -p 'test_*.py' -v
+```
+
+Initial Phase 1A result (before the corrections below): **196 passed, 0 failed, 0 skipped** in 1.135 seconds:
+**166 existing tests + 30 runner tests**. Runner tests use injected fakes, a
+controllable simulation counter, and event/barrier synchronization rather than
+sleeps. The runner makes no time-based decisions and adds no second deadline
+clock. Thread synchronization has bounded failure timeouts. Tests cover lifecycle
+transitions, sticky/concurrent stops, first-failure preservation, exception and
+cleanup failures, one-use execution, immutable reports, denied live-shaped inputs,
+and absence of Pay/admission APIs. Network, subprocess and SDK tripwires guard
+runner tests. The existing suite retains its four harmless local Python process
+tests; no AWS CLI, AWS/Stripe operation or hosted execution occurred.
+
+### Unimplemented integration requirements
+
+Hosted execution remains prohibited. A subsequent authorized integration must
+provide the actual verified-enablement timestamp handoff to one authoritative
+relock controller, durable single-window authorization, independent monitoring
+and monitor-health checks, critical escalation, protected evidence persistence,
+guarded disabled-state verification, operator readiness, and safe Pay-instruction
+publication/revocation. Phase 1A supplies none of these live controls. Indefinitely
+blocked callbacks cannot be recovered by this synchronous runner; independent
+safety monitoring remains necessary. No simulation cleanup result proves relock.
+
+Disposition: **LOCALLY VALIDATED**. Next action: focused read-only review of
+Runner Phase 1A and its stop/cleanup contract before separately authorizing
+Runner Phase 1B. Hosted duplicate-activation acceptance remains **NOT PASSED**.
+
+### Runner Phase 1A targeted corrections — local validation
+
+Corrected the pending-claim versus callback-entry stop race and preservation of
+secondary cleanup diagnostics. The existing same-thread test is now correctly
+named as reentrancy coverage. Added 11 test methods: four controlled entry races
+(preflight/active, stop-first/entry-first), two genuinely concurrent one-use tests
+(success/failure), four diagnostic-preservation cases, and a noncritical-stop
+terminal-state assertion. Entry-race tests assert actual callback counts and
+admission records, sticky primary failure, exactly one cleanup, and no retries.
+The competing-start tests synchronize two threads and keep the winning execution
+active until the losing call is rejected. Existing blocked-callback tests retain
+coverage of responsive stop handling.
+
+Fresh full-suite command:
+
+```sh
+python3 -B -m unittest discover -s tools/hosted-acceptance/relock-v2 -p 'test_*.py' -v
+```
+
+Result: **207 passed, 0 failed, 0 skipped**, in 1.138 seconds:
+**166 unchanged controller/adapter/executor tests + 41 runner tests**. Previous
+baseline was 196. All tests remained local: runner callbacks are fakes with
+external-I/O tripwires, bounded Event/barrier waits and no arbitrary sleeps.
+Synthetic secret markers are absent from public reports; original and secondary
+exception identities remain accessible to trusted callers. No AWS CLI, AWS/Stripe
+API or hosted operation occurred. No existing component interface changed.
+
+Disposition: **LOCALLY VALIDATED**, pending focused read-only review of these
+corrections before Phase 1B scoping. Independent monitoring, protected persistence
+and the other integration obligations above remain unimplemented. Hosted
+duplicate-activation acceptance remains **NOT PASSED**.
+
+## Phase 1B-1A — durable local authorization store
+
+`authorization.py` is a separate standard-library SQLite component. It is not
+connected to Runner, AdmissionWindow, the transport or the CLI executor. It cannot
+issue Pay instructions, create fixtures in the application, change admission or
+verify AWS state. No cloud service, dependency or recurring cost is added.
+
+Callers supply an absolute designated database path and expected store/host IDs.
+The parent must already exist with owner-only `0700` permissions. `initialize()`
+is a distinct exclusive-create operation; ordinary operations use SQLite
+`mode=rw` and never recreate a missing database. Initialization failures leave any
+created file for inspection rather than deleting/replacing it. The stored IDs
+are caller-supplied identity labels, not hardware attestation or human approval.
+
+The default storage policy supports Darwin local APFS/HFS volumes, checked using
+`statfs` (Darwin's `statvfs` does not retain the needed local-volume flag). Other
+platforms/filesystems fail closed. A trusted injected storage policy is available
+for separately reviewed environments; it must not misrepresent unsupported
+storage as safe. Symlink ancestors/files, hard-linked databases, wrong ownership,
+non-`0600` database/auxiliary files, non-`0700` parent directories and WAL/SHM
+artifacts are rejected. This is a designated single-host filesystem contract,
+not cross-host exclusion. Another machine or independently initialized database
+is outside the guarantee. Stable trusted paths are required: checks do not prevent
+a privileged/owning user replacing files between validation and SQLite access.
+Synced-folder replication and malicious storage rollback are not detected reliably.
+
+Schema version 1 contains:
+
+- `metadata`: singleton schema version and persistent store/host identity.
+- `authorizations`: ID, scope digest, resource key, consumption, execution ID and
+  latest transition sequence; store/host/schema identity is inherited through the
+  single store metadata record.
+- `executions`: unique execution and authorization IDs, unique resource, owner
+  instance label, `CLAIMED` state and sequence.
+- `ownership`: exclusive resource-to-execution mapping.
+- `events`: ordered `PROVISIONED` and `CLAIMED` transitions.
+
+`provision_test_fixture()` is explicitly for synthetic local authorizations.
+`claim()` only consumes an existing matching record; it never issues authorization.
+A scope digest binds declared scope but does not prove human approval. No live
+issuance mechanism exists. Caller-provided IDs/digests must remain nonsecret.
+
+Each operation opens and closes its own connection. Claims use `BEGIN IMMEDIATE`,
+foreign keys, unique constraints, rollback journaling, `synchronous=FULL` and
+Darwin full-fsync support. Lock waits are bounded to 250 ms; there is no application
+retry. Schema definitions, metadata, SQLite integrity, foreign keys and record/
+event consistency are validated under the transaction. Consumption, execution,
+ownership and claim event commit together. No arbitrary callback or external
+operation runs within that transaction. Initialization also synchronizes the
+parent directory after creation. Durability still depends on filesystem/hardware
+honoring synchronization; local tests do not simulate physical power loss.
+
+Claims survive connection closure, restart and owner death. No PID, lease,
+heartbeat or wall-clock timeout releases ownership. **Authorization release and
+verified closure are NOT IMPLEMENTED.** Consumption is permanent through this API;
+claimed resources remain blocked. There is no `CLOSED_DISABLED` transition,
+external recovery evidence or automatic replacement authorization.
+
+Failures return sanitized codes. Missing/corrupt/incompatible stores, identity or
+scope mismatches, malformed/ambiguous state and storage failures deny claims.
+Transaction/commit errors report uncertain outcome: a caller must reopen and
+inspect, never assume that failure means unconsumed. No deletion, reset or repair
+is attempted. A commit acknowledged as failed after actually committing leaves
+consumption and ownership intact. Public inspection returns only the synthetic
+record model, not exception messages or configuration payloads. This is not the
+Phase 1B evidence exporter or a tamper-proof audit log.
+
+### Phase 1B-1A validation
+
+Work branch: `codex/authorization-store-1b-1a`, based on reviewed main commit
+`1535cd4ae838f86459b6f4a5187a1ccf2b87612c`. Existing Runner 1A files are preserved.
+
+```sh
+python3 -B -m unittest discover -s tools/hosted-acceptance/relock-v2 -p 'test_*.py' -v
+```
+
+Fresh result: **237 passed, 0 failed, 0 skipped**, in 2.325 seconds:
+**207 existing tests + 30 authorization tests**. Tests cover explicit creation,
+reopen/missing-store behavior, scope/identity/schema rejection, once-only claims,
+thread contention, independent spawned-process contention, abrupt process exit
+after commit, restart, resource contention across distinct authorizations,
+rollback before commit and ambiguous failure after commit, busy handling,
+permissions/ownership, symlinks/hardlinks, corruption and inconsistent sequences.
+Concurrency assertions require one winner, one persisted execution and one owner;
+children use bounded synchronization and are joined or terminated on test exit.
+Only harmless local Python children are used. Network operations are blocked in
+authorization tests; no AWS CLI, AWS/Stripe operation or hosted execution occurred.
+Early targeted runs exposed a temporary-path alias and the Darwin `statvfs` flag
+limitation; these were corrected before the successful full-suite run.
+
+Disposition: **LOCALLY VALIDATED**, pending focused read-only review of storage,
+claim atomicity, fail-closed behavior and crash semantics. Closure, monitoring,
+escalation providers and live integration remain excluded. Hosted duplicate-
+activation acceptance remains **NOT PASSED**.
+
+### Phase 1B-1A allocator integrity correction
+
+The earlier validator checked committed event rows but omitted SQLite's persisted
+`sqlite_sequence` allocator. An isolated pre-correction reproduction changed the
+counter from 1 to 100: SQLite integrity checking passed, a claim returned success
+with event 101, and the next read failed with `AMBIGUOUS_SEQUENCE`.
+
+The application invariant is consecutive event IDs `1..N`. This is supported by
+its existing append-only writes: one automatically numbered event per transaction,
+no event deletion, no conflict-ignore insertion, and whole-transaction rollback
+on failure. SQLite AUTOINCREMENT by itself does **not** universally promise
+consecutive IDs. Future write paths must preserve this application contract or
+seek a separately reviewed design change.
+
+Validation now inspects all `sqlite_sequence` rows. A pristine empty store has
+none. A nonempty store requires exactly one row named `events`, with SQLite
+integer storage type and an integer counter equal to N within signed 64-bit
+positive range. Missing, duplicate, unexpected, null, negative, noninteger, low
+or high counters fail with `AMBIGUOUS_ALLOCATOR`. A row containing zero in an
+empty store is also rejected: no approved successful write path produces it.
+A failed first provisioning transaction restores the absent allocator row.
+No repair, normalization, counter reset or deletion is attempted.
+
+Provisioning and claims validate both before mutation and after mutation, before
+commit, on the same connection and within the same `BEGIN IMMEDIATE` transaction.
+Post-mutation failure rolls back events, allocator changes, authorization state,
+execution and ownership together. Commit uncertainty remains conservative;
+exceptions after a real commit do not establish rollback. Schema version 1 and
+all existing component interfaces remain unchanged; no migration is required.
+
+Validation command:
+
+```sh
+python3 -B -m unittest discover -s tools/hosted-acceptance/relock-v2 -p 'test_*.py' -v
+```
+
+Fresh result: **244 passed, 0 failed, 0 skipped**, in 2.746 seconds. Added seven
+allocator test methods, several with multiple corruption cases, to the prior
+237-test baseline. Coverage includes the original bypass, low/missing/duplicate/
+unexpected metadata, invalid types, null/negative and integer-boundary values,
+empty-store validation, valid sequence progression, provisioning rejection,
+reopen rejection, and post-mutation rollback in both write paths. Raw before/after
+snapshots include every application table and `sqlite_sequence`, demonstrating
+no added consumption, execution, ownership or event and no counter repair on
+rejection. The integer-maximum corruption case is tested against a small store;
+no claim is made to construct a store with 2^63-1 events.
+
+All existing thread/process, crash/restart, ambiguous-commit and component tests
+passed. No external service or real project database was used. The documented
+single-host, trusted-path and physical-durability limitations remain unchanged.
+Disposition: **LOCALLY VALIDATED**, pending focused read-only correction review
+before recovery/closure scoping. No release, closure or monitoring was added.
+Hosted duplicate-activation acceptance remains **NOT PASSED**.
