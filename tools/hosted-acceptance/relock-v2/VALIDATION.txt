@@ -1,0 +1,63 @@
+Batch & Batter — relock-v2 local validation, October 9, 2026
+
+Result: 31 tests passed; 0 failed. Previous hosted scenario remains NOT PASSED.
+
+Command from repository root:
+python3 -B -m unittest discover -s tools/hosted-acceptance/relock-v2 -p 'test_*.py' -v
+
+Final unittest result: Ran 31 tests in 0.020s; OK.
+An earlier 28-test run also passed; three additional configuration-verification
+failure tests were then added and the complete relevant suite rerun.
+
+Deadline assertions (all relative to verified enablement, monotonic nanoseconds):
+- Normal: procedure entry100s, disable dispatch100s (<120s).
+- Scheduler delay5.1ms: dispatch100.0051s (<120s).
+- Scheduler delay19s: dispatch119s (<120s).
+- Boundary: dispatch119.999999999s passes;120s and130s are CRITICAL,
+  with false-only cleanup still attempted and verified separately.
+- Slow configuration read45s: dispatch100s, disabled verified145s;
+  no configuration read precedes the first disable dispatch.
+- Adapter pre-dispatch delay21s: entry100s, dispatch121s; CRITICAL.
+- Distinct timestamps: entry100s, dispatch102s, verified109s in latency test.
+- Stop at7s: instruction gate revoked and disable dispatched at7s.
+- Forward/backward UTC steps3600s do not change monotonic elapsed100s.
+
+Failure and control coverage:
+Update failure (including later recovery), all three attempts failing, missing
+dispatch marker, incomplete/failed/slow readback, read errors, full configuration
+drift, stale revision conflict, enablement ambiguity, active-wait interruption,
+preset stop, duplicate run rejection, exact code/account/namespace guards,
+complete unchanged environment and false-only recovery. A failed run remains
+critical even when subsequent recovery verifies admission false.
+
+Cloud isolation:
+The controller imports only Python standard-library value/time/threading tools.
+There is no AWS/Stripe SDK, subprocess invocation, credential read, HTTP client
+or live entry point. Test transports and clocks are in memory. Tests install
+fail-closed tripwires on sockets, subprocesses, process spawning and real sleeps,
+and explicitly verify those tripwires. Historical common.py and historical
+execution scripts were read as text only, not imported or executed. No real AWS
+or Stripe request was made; no fixture/payment/deployment was initiated.
+
+Preservation:
+Historical SHA256SUMS unchanged (02ea4b7e9ffe7e63283802b0700df8421a7814043317974a2883e438a4aa247f).
+All132 covered historical files match their manifest before and after work.
+No tracked application, frontend, backend, infrastructure or acceptance-criteria
+file was modified. New working files are confined to this versioned directory.
+
+Remaining limitations:
+No live adapter integration or real propagation measurement. This is not a
+drop-in replacement for the historical command-line runner. The future adapter
+must invoke the dispatch callback at the actual local update boundary, retain
+RevisionId CAS, honor timeouts, and have no hidden reads/retries. Existing
+authorization, durable one-window markers, five-minute reservation checkpoints,
+health/commerce monitoring, evidence persistence and normal cleanup must remain
+in the separately reviewed caller. Arbitrary process suspension/death or an
+unbounded adapter cannot be guaranteed to dispatch before120s; deadline misses
+are critical and never converted to passing outcomes. Event persistence is a
+future runner responsibility, including on critical exceptions.
+
+Recommended next controlled action:
+Review the v2 controller and adapter integration contract locally. Browser
+gesture capture and human-readiness coordination still require separate scoped
+corrections before any newly authorized hosted scenario can be proposed.
