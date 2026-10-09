@@ -829,3 +829,118 @@ single-host, trusted-path and physical-durability limitations remain unchanged.
 Disposition: **LOCALLY VALIDATED**, pending focused read-only correction review
 before recovery/closure scoping. No release, closure or monitoring was added.
 Hosted duplicate-activation acceptance remains **NOT PASSED**.
+
+## Phase 1B-1B-A — synthetic closure-evidence evaluator
+
+`closure_evidence.py` is a pure standard-library evaluator, independent of Runner,
+SQLite and external transports. It has no executable entry point, ownership
+release, live authorization, AWS/Stripe access or monitoring functionality.
+
+Frozen typed records model `ExecutionInventory`, `OperationIntent`,
+`OperationResolution`, `ParticipantQuiescence`, `DisabledObservation`,
+`ControllerResult`, `CleanupDisposition` and `EvaluationRequest`. Every record carries an evidence ID,
+schema version 1, a `synthetic:` source label, execution/resource/authorization
+bindings, scope digest, execution version and positive causal sequence. Collection
+fields must be immutable tuples of unique identifiers. Configuration evidence uses
+synthetic identity/digest/revision labels rather than raw configuration payloads.
+Integer fields (`schema_version`, `execution_version`, `sequence` and `cutoff`)
+require actual integers, excluding booleans, in `1..2^63-1`; schema version is
+further restricted to exactly 1. Unsupported values, including `10**5000`, are
+rejected before digest serialization without conversion, clamping or input echo.
+
+The request is the declared expected context. All supplied records must match it;
+no wrong-execution, wrong-resource, stale-version or post-cutoff record is silently
+ignored. Exactly one inventory, observation, controller result and cleanup record is required.
+Intent/resolution identities must exactly cover the inventory, and each intent
+must have one matching, later resolution. Only FINAL COMPLETED/TERMINAL_RESULT or
+FINAL NOT_DISPATCHED/DISPATCH_PREVENTED declarations satisfy operation resolution.
+Unknown, timeout, process-death or potentially delayed outcomes block eligibility.
+These labels describe synthetic facts; the evaluator does not independently prove
+that dispatch was prevented or an external result was terminal.
+
+Every declared participant needs one quiescence record: authority REVOKED, work
+ACCOUNTED, no pending operations and exact references to its resolved operations.
+Quiescence follows those resolutions. The inventory cutoff equals the inventory's
+sequence, and all intents, resolutions and quiescence precede it. The disabled
+observation follows the cutoff, reconciliation and quiescence, referencing their
+exact evidence IDs; it must match the requested configuration identity/digest,
+include a nonempty revision, and declare SUCCESSFUL update state and DISABLED
+admission. A typed `ControllerResult` references that exact observation and follows
+it. Its disposition is DISABLED_VERIFIED with no critical codes, or
+CRITICAL_DISABLED_VERIFIED with nonempty historical critical codes. Cleanup must
+resolve `controller_result_ref` to this actual typed record in the supplied evidence
+set, follow it, reference the same observation and declare RESOLVED responsibility.
+Missing, incompatible, self-referential, conflicting or ambiguous result references
+block eligibility. The controller record shares every request binding, including
+execution, resource, authorization, scope, version and synthetic source.
+
+The request follows all evidence. For example: intent 1, resolution 2, quiescence 3,
+inventory/cutoff 4, observation 5, controller result 6, cleanup 7, request 8.
+Distinct records cannot share a sequence number. No wall-clock comparison or
+cross-process monotonic-clock inference is used. Typed reference resolution proves
+only internal synthetic consistency, not authenticated live controller provenance
+or actual AWS disabled state. Revision labels also remain synthetic declarations.
+
+Results are `SYNTHETIC_ELIGIBLE` or `SYNTHETIC_BLOCKED`, with sorted blocking codes,
+execution identity/version, a deterministic SHA-256 consistency reference and
+historical critical codes combined from controller and cleanup records. Malformed inputs return a generic blocked result without
+reflecting their payloads. Historical critical failures can remain present in an
+eligible synthetic result; there is no acceptance-PASSED or release-authority field.
+Inputs must contain synthetic nonsecret identifiers, never customer or payment data.
+
+Identical evidence IDs/content are idempotent within an evaluation; conflicting
+content is rejected. The digest is input-order independent and ignores identical
+duplicate records, while including conflicting records. Tuple ordering remains
+part of record content. A digest is not a signature or proof of provenance. The
+stateless evaluator provides no durable replay prevention, no proof of current
+execution version beyond the request, and no proof that undisclosed operations or
+participants do not exist. Caller-supplied synthetic declarations establish only
+internal consistency, never independently trustworthy live safety.
+
+### Phase 1B-1B-A validation
+
+Verified clean main at `8ab68f3da7306071e8f3f833d44023821212cd32`, merged PR #52,
+and successful post-merge CI run
+[38000667774](https://github.com/useffj/batch-and-batter/actions/runs/38000667774)
+(all three jobs) before creating `codex/synthetic-closure-evidence-1b-1b-a`.
+
+```sh
+python3 -B -m unittest discover -s tools/hosted-acceptance/relock-v2 -p 'test_*.py' -v
+```
+
+Initial local result: **268 passed, 0 failed, 0 skipped**, in 2.781 seconds:
+244 existing tests plus 24 evaluator tests. Tests assert eligible and blocked
+statuses and specific reasons, inventory completeness, bindings, participant
+quiescence, delayed/unknown operations, causal references, malformed evidence,
+duplicate/conflicting records, historical failure preservation, deterministic
+results and unchanged inputs. Evaluator tests block SQLite connections, file opens,
+network and subprocess operations and SDK imports. Existing approved local child
+process tests remain separate. No AWS/Stripe or hosted operations occurred.
+
+Disposition: **LOCALLY VALIDATED**, pending focused read-only evaluator review.
+No existing component contract or SQLite schema changed. Atomic closure, release,
+monitoring and live integration remain unimplemented. Hosted duplicate-activation
+acceptance remains **NOT PASSED**.
+
+### Phase 1B-1B-A reference and integer corrections
+
+The original evaluator accepted a nonempty controller-result label without resolving
+it, and allowed integers large enough to fail JSON serialization. The typed record
+and pre-serialization bounds above correct both defects without changing existing
+controller, runner or authorization-store contracts.
+
+Fresh full-suite result using the same command: **277 passed, 0 failed, 0 skipped**,
+in 2.745 seconds. Nine added test methods cover the original unrelated/self/request
+reference bypasses, missing and incompatible records, every controller binding,
+causal order, conflicting identities, identical duplicates, historical critical
+codes and binding-sensitive deterministic digests. Numeric tests enumerate every
+integer field across all evidence types and the request, checking zero, negative,
+boolean, maximum-plus-one and `10**5000` inputs. They assert sanitized blocked
+results, repeatability and input immutability. A valid maximum-boundary fixture
+retains eligibility and a deterministic digest; schema version remains exactly 1.
+All 268 preceding tests passed. No external services or hosted operations were used.
+
+Disposition: **LOCALLY VALIDATED**, pending focused read-only correction review.
+Synthetic eligibility grants no live authorization. SQLite closure, ownership
+release, durable replay protection, monitoring and live integration remain excluded.
+Hosted duplicate-activation acceptance remains **NOT PASSED**.
