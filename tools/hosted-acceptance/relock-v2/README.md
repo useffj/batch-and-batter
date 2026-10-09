@@ -22,14 +22,14 @@ adding dependencies or changing application packages or CI.
 
 Historical checksums at correction start:
 
-| File | SHA-256 |
-| --- | --- |
-| admission-window.py | 6c4e5cc3dc02dcf61850c86c6560d91890aaf5017ba3ad5a19be6bf5177f9b00 |
-| common.py | 142c9d87136f61d8a25bbe3d8a5051912758b758b98e29e8f15ae62d98070f00 |
-| checkout-gate.py | 84829f458c49eea77bdb5fe2bb5cb6fd2b03ab80b0abf3e091815258f01b8ccc |
-| test-admission.py | 8b6084c74791240845b365393d9102e7d9d7d621dd1ef889100d303a7c75a323 |
+| File                          | SHA-256                                                          |
+| ----------------------------- | ---------------------------------------------------------------- |
+| admission-window.py           | 6c4e5cc3dc02dcf61850c86c6560d91890aaf5017ba3ad5a19be6bf5177f9b00 |
+| common.py                     | 142c9d87136f61d8a25bbe3d8a5051912758b758b98e29e8f15ae62d98070f00 |
+| checkout-gate.py              | 84829f458c49eea77bdb5fe2bb5cb6fd2b03ab80b0abf3e091815258f01b8ccc |
+| test-admission.py             | 8b6084c74791240845b365393d9102e7d9d7d621dd1ef889100d303a7c75a323 |
 | validate-admission-request.py | e1b3cfb8cf662a5195b09579e06bb33ca3c883846cc71f33c3e771196ee075fb |
-| SHA256SUMS | 02ea4b7e9ffe7e63283802b0700df8421a7814043317974a2883e438a4aa247f |
+| SHA256SUMS                    | 02ea4b7e9ffe7e63283802b0700df8421a7814043317974a2883e438a4aa247f |
 
 ## Deadline and cleanup contract
 
@@ -426,7 +426,6 @@ preflight, independent monitoring, evidence persistence and escalation. Browser
 gesture capture and human readiness remain separate gates. Hosted duplicate-
 activation acceptance remains **NOT PASSED**.
 
-
 ### Executor safety correction — local validation
 
 The post-callback budget check uses the original deadline, with no external I/O,
@@ -495,7 +494,6 @@ Disposition: **LOCALLY VALIDATED**. Next recommended assignment: a focused
 read-only review of these two corrections before maintained-runner development.
 Hosted duplicate-activation acceptance remains **NOT PASSED**. Historical
 validation evidence and PROJECT_HANDOFF.md were not changed.
-
 
 ### Profile-header normalization correction — local validation
 

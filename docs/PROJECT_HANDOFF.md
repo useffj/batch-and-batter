@@ -25,21 +25,21 @@ Cart reservation and several bounded hosted payment paths have acceptance eviden
 
 ## 4. CURRENT REPOSITORY STATE
 
-| Item | Recorded state |
-| --- | --- |
-| Repository | `/Users/jksn/Developer/batch-and-batter` |
-| Reviewed pre-publication branch / HEAD | `main` / `0203b250e48489f2af63c7d7b6481d7b6c272c96` |
-| Pre-publication working-tree inspection | `?? docs/PROJECT_HANDOFF.md` and `?? tools/hosted-acceptance/`; tracked tree clean |
-| This update | Publishes only `docs/PROJECT_HANDOFF.md` under explicit approval; harness files remain untracked |
-| Toolchain | Node 24.19.0; npm 11.11.0; web Next.js 15.5.27; see package/lock files for exact dependencies |
-| DEV identity | AWS account `302154194958`, `us-east-2`, stack `batch-and-batter-dev` |
-| Last observed admission | Disabled, October 7 closeout; **not freshly verified October 9** |
+| Item                                    | Recorded state                                                                                   |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Repository                              | `/Users/jksn/Developer/batch-and-batter`                                                         |
+| Reviewed pre-publication branch / HEAD  | `main` / `0203b250e48489f2af63c7d7b6481d7b6c272c96`                                              |
+| Pre-publication working-tree inspection | `?? docs/PROJECT_HANDOFF.md` and `?? tools/hosted-acceptance/`; tracked tree clean               |
+| This update                             | Publishes only `docs/PROJECT_HANDOFF.md` under explicit approval; harness files remain untracked |
+| Toolchain                               | Node 24.19.0; npm 11.11.0; web Next.js 15.5.27; see package/lock files for exact dependencies    |
+| DEV identity                            | AWS account `302154194958`, `us-east-2`, stack `batch-and-batter-dev`                            |
+| Last observed admission                 | Disabled, October 7 closeout; **not freshly verified October 9**                                 |
 
 Last accepted mixed deployment, verified again in the October 7 replacement closeout:
 
-| Functions | Deployed ZIP SHA-256 |
-| --- | --- |
-| API and payment worker | `57a4c98fd6e773bd4b31aa53e248b0151376a85ea7640bb759f613ce5f4f5205` |
+| Functions                                        | Deployed ZIP SHA-256                                               |
+| ------------------------------------------------ | ------------------------------------------------------------------ |
+| API and payment worker                           | `57a4c98fd6e773bd4b31aa53e248b0151376a85ea7640bb759f613ce5f4f5205` |
 | Stripe webhook, expiry worker, expiry reconciler | `6697aafd6f62df7224ee22845578f44be908f430ed53bee74fce4f6cf690997c` |
 
 Preserve this intentional mixed deployment. HEAD is not proof that all functions run its build. Hosting Job 9 is a separate artifact, SHA-256 `5ca85d05c8945f323f81f277603d2ca8e05094e96c04b3f0d488a42e56b5f151`; it is not a backend rollback artifact. Automatic hosting builds were disabled in the recorded acceptance workflow; current remote settings were not rechecked.
@@ -76,35 +76,35 @@ The [PRD](PRD.md) remains the full scope. Important continuity constraints:
 
 Statuses can coexist. **IMPLEMENTED** means code exists; **LOCALLY VALIDATED** means recorded local checks; **DEPLOYED** requires artifact evidence; **ACCEPTED** requires scoped acceptance. **PLANNED**, **BLOCKED**, and **UNKNOWN** are not completion claims.
 
-| Milestone | Evidence-based status and boundary |
-| --- | --- |
-| Catalog/admin APIs, Drop composition/publish/open/lifecycle | IMPLEMENTED; scheduled lifecycle has DEV ACCEPTED evidence in [5C1/5C2 record](PHASE_5C1_SCHEDULED_DROP_LIFECYCLE.md). Not proof of a full admin dashboard. |
-| Reservation engine, inventory transactions, expiry, customer Cart | IMPLEMENTED / DEPLOYED / ACCEPTED for [Phase 6A](PHASE_6A_CUSTOMER_CART_RESERVATIONS.md). |
-| Payment foundation, provider ingress, durable execution/settlement/recovery | IMPLEMENTED / locally tested / DEPLOYED; acceptance is path-specific, not blanket completion. |
-| Hosted checkout UI and client submission lock | IMPLEMENTED / DEPLOYED; [Phase 9A locked-admission UI ACCEPTED](PHASE_9A_CUSTOMER_CHECKOUT.md), with later financial records below. |
-| DEV account/ledger separation | IMPLEMENTED / DEPLOYED / ACCEPTED stage-3 identity rollout; no ledger migration. |
-| Sanitized worker diagnostics and concurrency coverage | IMPLEMENTED / LOCALLY VALIDATED / DEPLOYED within accepted artifacts; does not retrospectively prove old exception causes. |
-| Authentication-wait recovery correction | IMPLEMENTED / DEPLOYED / ACCEPTED for the scoped path and subsequent abandonment disposition. |
-| Hosted duplicate activation | BLOCKED / NOT PASSED; intended gesture evidence absent. |
-| Relock-v2 controller, transport adapter and AWS CLI executor | IMPLEMENTED / LOCALLY VALIDATED: 44 / 39 / 83 tests respectively; untracked, not deployed or hosted accepted. Final targeted executor review: READY FOR MAINTAINED-RUNNER DEVELOPMENT. |
+| Milestone                                                                                                               | Evidence-based status and boundary                                                                                                                                                              |
+| ----------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Catalog/admin APIs, Drop composition/publish/open/lifecycle                                                             | IMPLEMENTED; scheduled lifecycle has DEV ACCEPTED evidence in [5C1/5C2 record](PHASE_5C1_SCHEDULED_DROP_LIFECYCLE.md). Not proof of a full admin dashboard.                                     |
+| Reservation engine, inventory transactions, expiry, customer Cart                                                       | IMPLEMENTED / DEPLOYED / ACCEPTED for [Phase 6A](PHASE_6A_CUSTOMER_CART_RESERVATIONS.md).                                                                                                       |
+| Payment foundation, provider ingress, durable execution/settlement/recovery                                             | IMPLEMENTED / locally tested / DEPLOYED; acceptance is path-specific, not blanket completion.                                                                                                   |
+| Hosted checkout UI and client submission lock                                                                           | IMPLEMENTED / DEPLOYED; [Phase 9A locked-admission UI ACCEPTED](PHASE_9A_CUSTOMER_CHECKOUT.md), with later financial records below.                                                             |
+| DEV account/ledger separation                                                                                           | IMPLEMENTED / DEPLOYED / ACCEPTED stage-3 identity rollout; no ledger migration.                                                                                                                |
+| Sanitized worker diagnostics and concurrency coverage                                                                   | IMPLEMENTED / LOCALLY VALIDATED / DEPLOYED within accepted artifacts; does not retrospectively prove old exception causes.                                                                      |
+| Authentication-wait recovery correction                                                                                 | IMPLEMENTED / DEPLOYED / ACCEPTED for the scoped path and subsequent abandonment disposition.                                                                                                   |
+| Hosted duplicate activation                                                                                             | BLOCKED / NOT PASSED; intended gesture evidence absent.                                                                                                                                         |
+| Relock-v2 controller, transport adapter and AWS CLI executor                                                            | IMPLEMENTED / LOCALLY VALIDATED: 44 / 39 / 83 tests respectively; untracked, not deployed or hosted accepted. Final targeted executor review: READY FOR MAINTAINED-RUNNER DEVELOPMENT.          |
 | Wallet/device acceptance, customer self-service, refunds/restock, messaging, waitlist, full admin UI, production launch | Original scope remains PLANNED or acceptance UNKNOWN/BLOCKED as applicable; no completion evidence established in this review. Inventory existing code/evidence before planning implementation. |
 
 Current source includes storefront/checkout routes under [web/src/app](../web/src/app/), domain/workflow handlers under [backend/src](../backend/src/), and CDK under [infra/lib](../infra/lib/). Do not restart these completed foundations from the old phase plan.
 
 ## 8. ACCEPTANCE TESTING STATUS
 
-| Scenario | Disposition / proof boundary |
-| --- | --- |
-| Customer Cart reservation/inventory | Phase 6A live DEV PASSED, human approved October 5. |
-| Hosted checkout UI | Phase 9A PASSED October 6 with payment submission locked; not financial acceptance. |
-| October 7 hosted successful purchase | Financial criteria PASSED. Original `acceptance-result.json` explicitly retains exact-fixture variance and human-review exceptions; later summaries call it successful. Do not claim an unqualified exact-fixture pass without a disposition. Historical worker-exception cause remains unproven. |
-| Hosted intended decline | PASSED; canonical cancellation, zero financial effect, one release, normal closure. |
-| Hosted interactive 3DS success | PASSED; one successful capture/settlement/outbox/inventory conversion. Replayed provider HTTP requests with matching idempotency keys were observed; one financial effect does not mean one HTTP request. |
-| Hosted authentication abandonment retest | PASSED by appended exception review; customer-visible expiry, canonical cancellation before release, zero captured funds and correct inventory. Original stop/inconclusive evidence remains preserved. |
-| Obsolete payment DLQ disposition | Operational closeout complete under targeted authorization; no continuing queue-mutation permission. |
-| First duplicate-activation attempt | UNTESTED; setup failed to reach activation within the required reservation boundary; preserved. |
-| October 7 duplicate-activation replacement | **NOT PASSED / INCONCLUSIVE**; no accepted start and no established double-click. |
-| Relock-v2 | Latest recorded October 9 result: 166 passed / 0 failed / 0 skipped (44 controller, 39 adapter, 83 executor). Components locally validated; maintained-runner integration and live propagation remain unverified. Final review did not rerun tests. |
+| Scenario                                   | Disposition / proof boundary                                                                                                                                                                                                                                                                      |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Customer Cart reservation/inventory        | Phase 6A live DEV PASSED, human approved October 5.                                                                                                                                                                                                                                               |
+| Hosted checkout UI                         | Phase 9A PASSED October 6 with payment submission locked; not financial acceptance.                                                                                                                                                                                                               |
+| October 7 hosted successful purchase       | Financial criteria PASSED. Original `acceptance-result.json` explicitly retains exact-fixture variance and human-review exceptions; later summaries call it successful. Do not claim an unqualified exact-fixture pass without a disposition. Historical worker-exception cause remains unproven. |
+| Hosted intended decline                    | PASSED; canonical cancellation, zero financial effect, one release, normal closure.                                                                                                                                                                                                               |
+| Hosted interactive 3DS success             | PASSED; one successful capture/settlement/outbox/inventory conversion. Replayed provider HTTP requests with matching idempotency keys were observed; one financial effect does not mean one HTTP request.                                                                                         |
+| Hosted authentication abandonment retest   | PASSED by appended exception review; customer-visible expiry, canonical cancellation before release, zero captured funds and correct inventory. Original stop/inconclusive evidence remains preserved.                                                                                            |
+| Obsolete payment DLQ disposition           | Operational closeout complete under targeted authorization; no continuing queue-mutation permission.                                                                                                                                                                                              |
+| First duplicate-activation attempt         | UNTESTED; setup failed to reach activation within the required reservation boundary; preserved.                                                                                                                                                                                                   |
+| October 7 duplicate-activation replacement | **NOT PASSED / INCONCLUSIVE**; no accepted start and no established double-click.                                                                                                                                                                                                                 |
+| Relock-v2                                  | Latest recorded October 9 result: 166 passed / 0 failed / 0 skipped (44 controller, 39 adapter, 83 executor). Components locally validated; maintained-runner integration and live propagation remain unverified. Final review did not rerun tests.                                               |
 
 Replacement timeline (October 7, America/Denver): verified enabled **21:13:17.609538**; relock procedure entry **21:15:17.614638** (+120.005100 s, 5.1 ms late); false-update request marker **21:15:19.443467** (+121.833929 s); verified false **21:15:23.668210** (+6.053572 s after entry). The old harness waited the full 120 seconds and then performed reads before update dispatch.
 
@@ -198,17 +198,17 @@ Cloud changes, deployments, admission windows, financial tests and destructive c
 
 ## 15. CRITICAL DECISIONS NOT TO REVERSE
 
-| Decision | Authority |
-| --- | --- |
-| Retain original feature scope and custom AWS + Stripe; no platform redesign | [PRD](PRD.md), [Technical Specification](TECHNICAL_SPEC.md), current human direction |
-| Atomic inventory, immutable reservation/payment deadlines, canonical settlement | [Technical Specification](TECHNICAL_SPEC.md), [Recovery Runbook](PAYMENT_RECOVERY_RUNBOOK.md) |
-| Automatic confirmation/manual capture; recovery owns ambiguous financial outcomes | Spec C3A2 amendment and recovery runbook |
-| Preserve actual account binding separately from immutable historical namespace | [DEV configuration](../infra/config/dev-payment.json), runbook identity amendment, stage-3 acceptance |
-| Preserve accepted mixed artifacts; do not homogenize by ordinary deployment | Authentication-wait acceptance and replacement closeout |
-| Retain 120-second maximum; schedule early rather than weaken it | Replacement closeout and relock-v2 contract (local-only, untracked: `tools/hosted-acceptance/relock-v2/README.md`) |
-| No acceptance claims from merged code/local tests or post-relock rejection | Scoped phase records and replacement closeout |
-| Historical evidence and paid history are preserved | Recovery runbook and dated closeout records |
-| Low idle cost; no unsupported dependency overrides/blanket exception | Spec cost strategy and [Dependency Risks](DEPENDENCY_RISKS.md) |
+| Decision                                                                          | Authority                                                                                                          |
+| --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Retain original feature scope and custom AWS + Stripe; no platform redesign       | [PRD](PRD.md), [Technical Specification](TECHNICAL_SPEC.md), current human direction                               |
+| Atomic inventory, immutable reservation/payment deadlines, canonical settlement   | [Technical Specification](TECHNICAL_SPEC.md), [Recovery Runbook](PAYMENT_RECOVERY_RUNBOOK.md)                      |
+| Automatic confirmation/manual capture; recovery owns ambiguous financial outcomes | Spec C3A2 amendment and recovery runbook                                                                           |
+| Preserve actual account binding separately from immutable historical namespace    | [DEV configuration](../infra/config/dev-payment.json), runbook identity amendment, stage-3 acceptance              |
+| Preserve accepted mixed artifacts; do not homogenize by ordinary deployment       | Authentication-wait acceptance and replacement closeout                                                            |
+| Retain 120-second maximum; schedule early rather than weaken it                   | Replacement closeout and relock-v2 contract (local-only, untracked: `tools/hosted-acceptance/relock-v2/README.md`) |
+| No acceptance claims from merged code/local tests or post-relock rejection        | Scoped phase records and replacement closeout                                                                      |
+| Historical evidence and paid history are preserved                                | Recovery runbook and dated closeout records                                                                        |
+| Low idle cost; no unsupported dependency overrides/blanket exception              | Spec cost strategy and [Dependency Risks](DEPENDENCY_RISKS.md)                                                     |
 
 ## 16. EVIDENCE AND REFERENCE INDEX
 
@@ -222,19 +222,19 @@ Repository references above are relative to this file. Additional implementation
 **External evidence — not committed to this repository.** Base directory:
 `/Users/jksn/.codex/artifacts/batch-and-batter/`
 
-| Path relative to external base | Use |
-| --- | --- |
-| `dev-ledger-stage3-completion-20261007/stage-3-acceptance.json` | Accepted identity rollout and historical preservation |
-| `hosted-single-payment-20261007/acceptance-result.json` | Successful financial result and retained fixture/exception qualifications |
-| `hosted-single-decline-20261007/acceptance-report.txt` | Scoped decline pass and explained retry |
-| `hosted-single-3ds-success-20261007/acceptance-report.txt` | Scoped 3DS pass, provider replay versus effect counts |
-| `authentication-wait-approved-execution-20261007/acceptance.json` | API/worker artifact acceptance; its then-unresolved transport status is historical |
-| `hosted-abandonment-retest-exception-review-20261007/review-disposition.txt` | Later abandonment/transport PASSED disposition |
-| `obsolete-payment-dlq-disposition-retry-20261007/closeout-report.txt` | Later targeted operational closeout |
-| `hosted-duplicate-activation-preparation-20261007/scenario.txt` | Historical bounded scenario contract, not reusable authorization |
-| `hosted-duplicate-activation-execution-20261007/closeout-report.txt` | Original UNTESTED attempt |
-| `hosted-duplicate-activation-replacement-20261007/closeout-report.txt` | NOT PASSED replacement; corrected evidence counts and final health |
-| Same replacement directory: `admission-window.py`, `common.py`, `checkout-gate.py`, `test-admission.py`, `validate-admission-request.py`, `SHA256SUMS` | Historical runner/reference inputs; inspect as text, do not execute or edit |
+| Path relative to external base                                                                                                                         | Use                                                                                |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| `dev-ledger-stage3-completion-20261007/stage-3-acceptance.json`                                                                                        | Accepted identity rollout and historical preservation                              |
+| `hosted-single-payment-20261007/acceptance-result.json`                                                                                                | Successful financial result and retained fixture/exception qualifications          |
+| `hosted-single-decline-20261007/acceptance-report.txt`                                                                                                 | Scoped decline pass and explained retry                                            |
+| `hosted-single-3ds-success-20261007/acceptance-report.txt`                                                                                             | Scoped 3DS pass, provider replay versus effect counts                              |
+| `authentication-wait-approved-execution-20261007/acceptance.json`                                                                                      | API/worker artifact acceptance; its then-unresolved transport status is historical |
+| `hosted-abandonment-retest-exception-review-20261007/review-disposition.txt`                                                                           | Later abandonment/transport PASSED disposition                                     |
+| `obsolete-payment-dlq-disposition-retry-20261007/closeout-report.txt`                                                                                  | Later targeted operational closeout                                                |
+| `hosted-duplicate-activation-preparation-20261007/scenario.txt`                                                                                        | Historical bounded scenario contract, not reusable authorization                   |
+| `hosted-duplicate-activation-execution-20261007/closeout-report.txt`                                                                                   | Original UNTESTED attempt                                                          |
+| `hosted-duplicate-activation-replacement-20261007/closeout-report.txt`                                                                                 | NOT PASSED replacement; corrected evidence counts and final health                 |
+| Same replacement directory: `admission-window.py`, `common.py`, `checkout-gate.py`, `test-admission.py`, `validate-admission-request.py`, `SHA256SUMS` | Historical runner/reference inputs; inspect as text, do not execute or edit        |
 
 Transfer/access to external evidence must be arranged separately for another workstation; repository access alone is insufficient. Do not bulk-copy potentially sensitive evidence into Git.
 
