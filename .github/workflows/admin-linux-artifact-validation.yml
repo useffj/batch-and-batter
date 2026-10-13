@@ -1,0 +1,149 @@
+name: Admin Linux artifact validation
+
+on:
+  push:
+    branches:
+      - codex/admin-linux-artifact-validation
+
+permissions:
+  contents: read
+
+jobs:
+  inspect-linux-artifact:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: web
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+      AWS_EC2_METADATA_DISABLED: 'true'
+      STOREFRONT_API_BASE_URL: https://storefront.invalid
+      STOREFRONT_CURRENCY: USD
+      CHECKOUT_SUBMISSION_MODE: locked
+      ADMIN_ORIGIN: https://admin.invalid
+      ADMIN_API_BASE_URL: https://api.invalid
+      ADMIN_COGNITO_REGION: us-east-2
+      ADMIN_COGNITO_CLIENT_ID: SyntheticClient
+      ADMIN_SESSION_KEY_PARAMETER: /batch-and-batter/dev/admin/session-key
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - name: Install pinned tooling and dependencies
+        run: |
+          npm install --global npm@11.11.0
+          npm ci
+          git diff --exit-code -- package-lock.json
+      - name: Build with synthetic configuration
+        run: |
+          node scripts/prepare-amplify-env.mjs
+          npm run build
+      - name: Audit without concealing nonzero results
+        run: |
+          node <<'JS'
+          const { spawnSync } = require('node:child_process');
+          const fs = require('node:fs');
+          const reports = {};
+          for (const [name, args] of [
+            ['production', ['audit', '--omit=dev', '--json']],
+            ['full', ['audit', '--json']],
+            ['infrastructure', ['--prefix', '../infra', 'audit', '--json']],
+          ]) {
+            const result = spawnSync('npm', args, { encoding: 'utf8' });
+            if (![0, 1].includes(result.status)) throw new Error('Audit execution failed');
+            const data = JSON.parse(result.stdout);
+            if (data.error || !data.metadata?.vulnerabilities) throw new Error('Audit returned incomplete evidence');
+            const advisories = [...new Set(Object.values(data.vulnerabilities).flatMap(v => v.via.filter(x => typeof x === 'object').map(x => x.url)))].sort();
+            reports[name] = { exitCode: result.status, counts: data.metadata.vulnerabilities, advisories };
+          }
+          const summary = JSON.stringify(reports, null, 2);
+          console.log(summary);
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, '## Fresh dependency audits\n```json\n' + summary + '\n```\nNo security exception is granted.\n');
+          if (reports.production.counts.total !== 0) throw new Error('Production vulnerability gate failed');
+          if (reports.full.advisories.some(x => x !== 'https://github.com/advisories/GHSA-vfj7-8cjw-p6xm')) throw new Error('New frontend advisory requires review');
+          JS
+      - name: Inspect Linux native packages and serving output
+        run: |
+          node <<'JS'
+          const assert = require('node:assert/strict');
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const { createRequire } = require('node:module');
+          const { execFileSync } = require('node:child_process');
+          const { createHash } = require('node:crypto');
+          const sharp = require('sharp');
+          const root = process.cwd();
+          function walk(dir) {
+            return fs.readdirSync(dir, { withFileTypes: true }).flatMap(e => {
+              const p = path.join(dir, e.name);
+              return e.isDirectory() ? walk(p) : e.isFile() ? [p] : [];
+            });
+          }
+          function hash(file) { return createHash('sha256').update(fs.readFileSync(file)).digest('hex'); }
+          function version(pkg) { return require(pkg + '/package.json').version; }
+          const nextRequire = createRequire(require.resolve('next'));
+          const viteRequire = createRequire(require.resolve('vite'));
+          assert.equal(process.platform, 'linux');
+          assert.equal(process.arch, 'x64');
+          assert.equal(process.version, 'v24.19.0');
+          assert.equal(execFileSync('npm', ['--version'], { encoding: 'utf8' }).trim(), '11.11.0');
+          assert.equal(version('next'), '15.5.27');
+          assert.equal(version('sharp'), '0.35.5');
+          assert.equal(nextRequire('postcss/package.json').version, '8.5.23');
+          assert.equal(viteRequire('postcss/package.json').version, '8.5.28');
+          const nativePackage = JSON.parse(fs.readFileSync('node_modules/@img/sharp-linux-x64/package.json'));
+          const vipsPackage = JSON.parse(fs.readFileSync('node_modules/@img/sharp-libvips-linux-x64/package.json'));
+          assert.equal(nativePackage.version, '0.35.5');
+          assert.equal(vipsPackage.version, '1.3.4');
+          const outputFiles = walk('.next');
+          const traceFiles = outputFiles.filter(p => p.endsWith('.nft.json'));
+          assert.ok(traceFiles.length > 0);
+          const traced = new Set(traceFiles.flatMap(p => JSON.parse(fs.readFileSync(p)).files.map(f => path.resolve(path.dirname(p), f))));
+          const excluded = /node_modules\/(?:braces|micromatch|fast-glob|@next\/eslint-plugin-next|postcss)\//;
+          assert.equal([...traced].filter(p => excluded.test(p)).length, 0, 'Excluded tooling appears in traces');
+          assert.ok([...traced].some(p => p.includes('/@img/sharp-linux-x64/') && p.endsWith('.node')), 'Linux Sharp binary missing from traces');
+          assert.ok([...traced].some(p => p.includes('/@img/sharp-libvips-linux-x64/')), 'Linux libvips missing from traces');
+          const routes = JSON.parse(fs.readFileSync('.next/server/app-paths-manifest.json'));
+          for (const route of ['/admin/page', '/admin/login/page', '/api/admin/login/route', '/api/admin/logout/route']) assert.ok(routes[route], 'Expected admin route missing');
+          const loader = fs.readFileSync('src/lib/admin/session-key.ts', 'utf8');
+          assert.match(loader, /import 'server-only'/);
+          const browserFiles = walk('.next/static').filter(p => /\.(?:js|json|html|map)$/.test(p));
+          const browserForbidden = /ADMIN_SESSION_KEY|GetParameterCommand|\/batch-and-batter\/dev\/admin\/session-key|SyntheticClient/;
+          for (const p of browserFiles) assert.ok(!browserForbidden.test(fs.readFileSync(p, 'utf8')), 'Server-only marker in browser output');
+          const serverCode = walk('.next/server').filter(p => p.endsWith('.js')).map(p => fs.readFileSync(p, 'utf8')).join('\n');
+          assert.ok(serverCode.includes('/batch-and-batter/dev/admin/session-key'), 'Expected server loader absent');
+          const sensitive = /(?:AKIA|ASIA)[A-Z0-9]{16}|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{20,}|eyJ[A-Za-z0-9_-]{15,}\.[A-Za-z0-9_-]{15,}\.[A-Za-z0-9_-]{15,}/;
+          for (const p of [...outputFiles, '.env.production']) assert.ok(!sensitive.test(fs.readFileSync(p).toString()), 'Credential-pattern scan failed');
+          const envNames = fs.readFileSync('.env.production', 'utf8').trim().split('\n').map(x => x.split('=')[0]);
+          assert.deepEqual(envNames.sort(), ['STOREFRONT_API_BASE_URL', 'STOREFRONT_CURRENCY', 'CHECKOUT_SUBMISSION_MODE', 'ADMIN_ORIGIN', 'ADMIN_API_BASE_URL', 'ADMIN_COGNITO_REGION', 'ADMIN_COGNITO_CLIENT_ID', 'ADMIN_SESSION_KEY_PARAMETER'].sort());
+          assert.equal(fs.statSync('.env.production').mode & 0o777, 0o600);
+          (async () => {
+            const imageChecks = [];
+            const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><rect width="20" height="20" fill="red"/></svg>');
+            for (const format of ['png', 'webp', 'jpeg']) {
+              const image = await sharp(svg).resize(10, 10).toFormat(format).toBuffer();
+              const metadata = await sharp(image).metadata();
+              assert.equal(metadata.width, 10); assert.equal(metadata.height, 10); assert.equal(metadata.format, format);
+              imageChecks.push({ input: 'self-contained SVG', output: format, result: 'PASS' });
+            }
+            const report = {
+              commit: process.env.GITHUB_SHA,
+              runner: { os: fs.readFileSync('/etc/os-release', 'utf8'), architecture: process.arch, image: process.env.ImageOS, imageVersion: process.env.ImageVersion, node: process.version, npm: '11.11.0', glibc: process.report.getReport().header.glibcVersionRuntime },
+              versions: { next: version('next'), nextPostcss: nextRequire('postcss/package.json').version, vitePostcss: viteRequire('postcss/package.json').version, sharp: version('sharp'), linuxSharp: nativePackage.version, linuxLibvipsPackage: vipsPackage.version, native: sharp.versions },
+              imageChecks, traceCount: traceFiles.length, tracedFileCount: traced.size,
+              routes: Object.keys(routes).sort(),
+              browserFileCount: browserFiles.length, browserLoaderMarkers: 0, credentialPatternMatches: 0,
+              excludedToolingTraceMatches: 0, envNames,
+              lockSha256: hash('package-lock.json'),
+              css: Object.fromEntries(walk('.next/static/css').map(p => [path.basename(p), hash(p)])),
+              limitation: 'Representative GitHub Linux build, not an Amplify-generated artifact. Synthetic configuration only. No deployment or security exception.'
+            };
+            const summary = JSON.stringify(report, null, 2);
+            console.log(summary);
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, '## Linux artifact evidence\n```json\n' + summary + '\n```\n');
+          })().catch(() => { console.error('Linux artifact inspection failed'); process.exitCode = 1; });
+          JS
