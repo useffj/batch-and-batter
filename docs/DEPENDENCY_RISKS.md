@@ -341,3 +341,34 @@ exposure and unchanged infrastructure advisories before deployment. Existing
 exception expiration (October 14, 2026, 5 PM America/Denver) is not extended.
 No AWS/backend/payment configuration was changed. Hosted duplicate-activation
 acceptance remains **NOT PASSED**.
+
+## Infrastructure dependency remediation — 1A-DEV6A, 2026-10-13
+
+Updated `aws-cdk-lib` from 2.269.0 to 2.273.0 using the supported published
+package, without overrides. Its bundled `brace-expansion` changes from 5.0.9
+to 5.0.12, resolving GHSA-q2hr-2g5m-vwhr, GHSA-qhr7-859c-m2p7 and
+GHSA-6j4f-fj2g-mc7p. The upstream bundle also updates
+`@aws/cloudformation-validate` from 1.9.0-beta to 1.12.1. No other resolved
+package versions change. Constructs 10.8.1 and CDK CLI 2.1142.0 remain unchanged.
+
+Separate clean baseline and candidate installations used Node 24.19.0 and npm
+11.11.0. Candidate infrastructure full and production audits both return zero
+findings; baseline audits retain the three advisories on one high-severity
+package node. Type checking, all 37 infrastructure tests, and account/region-
+agnostic CDK synthesis with lookups disabled pass for both versions. The existing
+CLI successfully consumes the candidate cloud assembly.
+
+The complete generated development CloudFormation template and asset manifest
+are byte-for-byte identical between baseline main
+`a915f3c42ad97ba86b49fd7d5c98d8436eb365c5` and the candidate. Template SHA-256:
+`6c438b803552d6dce93cbf8e5cac993593cbb894823a286d5e7facb8d8ab368c`.
+No logical IDs, Lambda code references/configuration, IAM permissions, routes,
+tables, queues, event mappings, parameters or asset metadata change. This is an
+offline dependency comparison, not approval to deploy the full synthesized stack;
+accepted mixed Lambda deployment artifacts must still be preserved.
+
+Historical exception records above remain historical. No new security exception
+is granted. The frontend development-only braces finding and actual Amplify
+artifact review remain separate release gates. No AWS deployment, role attachment,
+secret retrieval or payment acceptance is included. Hosted duplicate-activation
+acceptance remains **NOT PASSED**.
