@@ -80,6 +80,7 @@ export function createHandler(
     if (event.routeKey === 'GET /health') return complete(await health());
     if (
       event.routeKey === 'GET /admin/me' ||
+      event.routeKey === 'GET /admin/storefront/assignment' ||
       adminWriteRoutes.includes(event.routeKey) ||
       compositionRoutes.includes(event.routeKey) ||
       event.routeKey === publishRoute ||
@@ -91,6 +92,18 @@ export function createHandler(
       try {
         const identity = requireAdmin(event);
         if (event.routeKey === 'GET /admin/me') return json(200, identity);
+        if (event.routeKey === 'GET /admin/storefront/assignment') {
+          const repository = getRepository();
+          const dropId = await repository.getStorefrontDropId();
+          if (dropId === undefined) return json(200, { dropId: null });
+          if (!(await repository.getDrop(dropId)))
+            return error(
+              409,
+              'BROKEN_STOREFRONT_ASSIGNMENT',
+              'The assigned Drop could not be found.',
+            );
+          return json(200, { dropId });
+        }
         const result = scheduledRoutes.includes(event.routeKey)
           ? await adminScheduled(
               event,

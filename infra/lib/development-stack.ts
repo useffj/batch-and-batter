@@ -345,6 +345,11 @@ export class DevelopmentStack extends Stack {
     });
     for (const [route, method, integrationId] of [
       [
+        '/admin/storefront/assignment',
+        apigateway.HttpMethod.GET,
+        'AdminStorefrontAssignmentIntegration',
+      ],
+      [
         '/admin/drops/{dropId}',
         apigateway.HttpMethod.PATCH,
         'AdminEditScheduledDropIntegration',
