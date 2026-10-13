@@ -287,3 +287,57 @@ abandonment remains passed; transport acceptance remains unresolved pending host
 verification. This approval does not authorize a payment test, commerce creation,
 DLQ receive/delete/redrive/replay, Stripe change, metrics or tracing/protection
 change, or Amplify build.
+
+## Admin DEV2 targeted frontend remediation — 2026-10-13
+
+Local changes based on `95112d9df5dd9cf8463cf74de573118628c3f2ab`; no
+commit, hosting build, AWS provisioning or deployment is authorized by this record.
+Historical exceptions above remain historical and do not authorize this artifact.
+
+- Sharp resolves from 0.35.4 to **0.35.5** through the lockfile, including its
+  matching platform packages and libvips 1.3.4 packages. This satisfies unchanged
+  Next 15.5.27's `^0.34.3 || ^0.35.4` optional-dependency range. No direct Sharp
+  dependency or Next upgrade was needed. The installed macOS binary reports
+  librsvg **2.63.2**, addressing
+  [GHSA-wq5f-xc86-pv6w](https://github.com/advisories/GHSA-wq5f-xc86-pv6w).
+- A parent-scoped override, `next@15.5.27 -> postcss: 8.5.23`, replaces Next's
+  pinned 8.4.31. Vite's separate 8.5.28 resolution remains unchanged. This is a
+  locally compatibility-tested override, not a claim that Next upstream changed
+  or endorses its pinned dependency. Both releases use the PostCSS 8 API; Next's
+  loader uses the processor/process interface and the existing plugin pipeline.
+  The actual production build succeeds, and both emitted CSS assets (storefront
+  and admin) are byte-identical to the pre-change build. Reevaluate/remove the
+  override when upgrading Next or when its supported dependency is patched.
+- PostCSS 8.5.23 addresses GHSA-qx2v-qp2m-jg93 (fixed 8.5.10),
+  GHSA-6g55-p6wh-862q (8.5.12), GHSA-r28c-9q8g-f849 (8.5.18), and
+  [GHSA-fxqj-rqcc-2cmp](https://github.com/advisories/GHSA-fxqj-rqcc-2cmp)
+  (8.5.23). These concern unsafe CSS stringification or source-map file reads.
+  No application CSS-processing behavior or input surface was added.
+
+Fresh frontend audits before changes: full **8 nodes (7 high / 1 moderate),
+6 unique advisories**; production-only **3 nodes (2 high / 1 moderate),
+5 unique advisories**. After changes: production-only **0 findings**, exit 0;
+full **5 high nodes, 1 unique advisory**, exit 1. Remaining chain:
+`eslint-config-next@15.5.27 -> @next/eslint-plugin-next@15.5.27 -> fast-glob@3.3.1
+-> micromatch@4.0.8 -> braces@3.0.3`. GHSA-vfj7-8cjw-p6xm remains unresolved;
+registry latest braces is still 3.0.3. No unsupported lint downgrade, forced audit
+fix or new risk exception was applied. Only Sharp/platform dependencies and
+Next's PostCSS changed versions.
+
+Validation: 420 frontend tests passed; type checking, lint and production build
+passed. Existing admin login/MFA/session/logout/dashboard and storefront tests
+remain intact. An in-memory benign SVG was decoded, resized and round-tripped
+through PNG, WebP and JPEG successfully. The first diagnostic attempted an
+unexported Sharp package.json subpath and failed before image processing; rerunning
+with Sharp's public `versions` API passed. No application change was needed.
+Storefront/admin generated CSS hashes matched the pre-change build exactly.
+
+Local `.next` traces include patched Sharp in `next-server.js.nft.json`; none
+reference the vulnerable PostCSS package or the braces/micromatch/fast-glob chain.
+Production audit is clean for the resolved frontend tree, but this macOS trace
+cannot establish the composition or native dependencies of a future Amplify Linux
+artifact. Independently review that artifact, the remaining development/build
+exposure and unchanged infrastructure advisories before deployment. Existing
+exception expiration (October 14, 2026, 5 PM America/Denver) is not extended.
+No AWS/backend/payment configuration was changed. Hosted duplicate-activation
+acceptance remains **NOT PASSED**.
