@@ -181,3 +181,47 @@ it.each(['', 'ENABLED', 'enabled\nSECRET=value'])(
     expect(() => readFileSync(result.path)).toThrow();
   },
 );
+
+const admin = {
+  ADMIN_ORIGIN: 'https://shop.test',
+  ADMIN_API_BASE_URL: 'https://api.test/dev',
+  ADMIN_COGNITO_REGION: 'us-east-2',
+  ADMIN_COGNITO_CLIENT_ID: 'syntheticClient',
+  ADMIN_SESSION_KEY_PARAMETER: '/batch-and-batter/dev/admin/session-key',
+};
+it('allowlists only the five nonsecret admin settings, excluding keys and passwords', () => {
+  const secret = 'ab'.repeat(32);
+  const result = run({
+    ...storefront,
+    ...admin,
+    ADMIN_SESSION_KEY: secret,
+    NEXT_PUBLIC_ADMIN_SESSION_KEY: secret,
+    COGNITO_PASSWORD: 'private-password',
+  });
+  expect(result.status).toBe(0);
+  const artifact = readFileSync(result.path, 'utf8');
+  for (const [name, value] of Object.entries(admin))
+    expect(artifact).toContain(`${name}=${value}\n`);
+  expect(artifact + result.output).not.toContain(secret);
+  expect(artifact + result.output).not.toContain('private-password');
+  expect(artifact).not.toContain('ADMIN_SESSION_KEY=');
+  expect(artifact.split('\n').filter(Boolean)).toHaveLength(7);
+});
+it.each([
+  ['ADMIN_ORIGIN', 'https://user:password@shop.test'],
+  ['ADMIN_ORIGIN', 'https://shop.test/path'],
+  ['ADMIN_API_BASE_URL', 'http://api.test'],
+  ['ADMIN_API_BASE_URL', 'https://api.test?secret=value'],
+  ['ADMIN_COGNITO_REGION', 'us-east-2\nINJECTED=value'],
+  ['ADMIN_COGNITO_CLIENT_ID', '$SECRET'],
+  ['ADMIN_SESSION_KEY_PARAMETER', '/unapproved/parameter'],
+  ...Object.keys(admin).map((name) => [name, '']),
+])(
+  'rejects unsafe admin setting %s without writing or printing values',
+  (name, value) => {
+    const result = run({ ...storefront, ...admin, [name]: value });
+    expect(result.status).toBe(1);
+    expect(() => readFileSync(result.path)).toThrow();
+    if (value) expect(result.output).not.toContain(value);
+  },
+);

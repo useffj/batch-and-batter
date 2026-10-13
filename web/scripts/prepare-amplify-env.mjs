@@ -59,6 +59,45 @@ function prepare() {
     lines.push(`CHECKOUT_SUBMISSION_MODE=${submissionMode}`);
   if (publishableKey !== undefined)
     lines.push(`NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${publishableKey}`);
+  // Admin values are optional for storefront-only deployments. Validate every
+  // supplied value before writing; never copy the actual session key.
+  const adminNames = [
+    'ADMIN_ORIGIN',
+    'ADMIN_API_BASE_URL',
+    'ADMIN_COGNITO_REGION',
+    'ADMIN_COGNITO_CLIENT_ID',
+    'ADMIN_SESSION_KEY_PARAMETER',
+  ];
+  for (const name of adminNames) {
+    const value = process.env[name];
+    if (value === undefined) continue;
+    let valid =
+      value.length > 0 &&
+      value.length <= 2048 &&
+      !/[\s\x00-\x1f\x7f$'"\\#]/.test(value);
+    if (name === 'ADMIN_ORIGIN' || name === 'ADMIN_API_BASE_URL') {
+      try {
+        const parsed = new URL(value);
+        valid &&=
+          parsed.protocol === 'https:' &&
+          !parsed.username &&
+          !parsed.password &&
+          !parsed.search &&
+          !parsed.hash &&
+          (name !== 'ADMIN_ORIGIN' || parsed.pathname === '/');
+      } catch {
+        valid = false;
+      }
+    } else if (name === 'ADMIN_COGNITO_REGION') {
+      valid &&= /^[a-z]{2}(?:-[a-z]+)+-\d$/.test(value);
+    } else if (name === 'ADMIN_COGNITO_CLIENT_ID') {
+      valid &&= /^[a-zA-Z0-9]{1,128}$/.test(value);
+    } else {
+      valid &&= value === '/batch-and-batter/dev/admin/session-key';
+    }
+    if (!valid) throw new Error('Invalid nonsecret admin SSR configuration.');
+    lines.push(`${name}=${value}`);
+  }
   // Exclusive creation prevents silently overwriting operator-owned local files.
   writeFileSync(resolve('.env.production'), `${lines.join('\n')}\n`, {
     encoding: 'utf8',
@@ -73,6 +112,7 @@ try {
   );
 } catch (error) {
   const allowed = [
+    'Invalid nonsecret admin SSR configuration.',
     'STOREFRONT_API_BASE_URL is required.',
     'STOREFRONT_CURRENCY is required.',
     'STOREFRONT_CURRENCY must be USD.',

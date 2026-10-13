@@ -1,6 +1,6 @@
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { authorize, AdminFailure } from '../../lib/admin/server';
+import { authorize, AdminFailure } from '../../lib/admin/runtime';
 import { Dashboard } from '../../components/admin/dashboard';
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
