@@ -84,7 +84,7 @@ jobs:
             });
           }
           function hash(file) { return createHash('sha256').update(fs.readFileSync(file)).digest('hex'); }
-          function version(pkg) { return require(pkg + '/package.json').version; }
+          function version(pkg) { return JSON.parse(fs.readFileSync(path.join('node_modules', pkg, 'package.json'))).version; }
           const nextRequire = createRequire(require.resolve('next'));
           const viteRequire = createRequire(require.resolve('vite'));
           assert.equal(process.platform, 'linux');
