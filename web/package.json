@@ -38,5 +38,10 @@
     "prettier": "3.9.7",
     "typescript": "5.9.3",
     "vitest": "4.1.11"
+  },
+  "overrides": {
+    "next@15.5.27": {
+      "postcss": "8.5.23"
+    }
   }
 }
