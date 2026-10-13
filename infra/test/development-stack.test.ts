@@ -7,6 +7,7 @@ import { Match, Template } from 'aws-cdk-lib/assertions';
 import { DevelopmentStack } from '../lib/development-stack';
 
 const compositionRoutes = [
+  'GET /admin/storefront/assignment',
   'PATCH /admin/drops/{dropId}',
   'POST /admin/drops/{dropId}/cancel',
   'POST /admin/drops/{dropId}/pause',
@@ -91,7 +92,7 @@ test('three on-demand tables have only the approved string PK/SK foundation', ()
   }
 });
 
-test('application Node 24 Lambda preserves its identity and serves exactly the thirty approved routes', () => {
+test('application Node 24 Lambda preserves its identity and serves exactly the thirty-one approved routes', () => {
   template.resourceCountIs('AWS::Lambda::Function', 5);
   template.hasResourceProperties('AWS::Lambda::Function', {
     Runtime: 'nodejs24.x',
@@ -101,7 +102,7 @@ test('application Node 24 Lambda preserves its identity and serves exactly the t
   template.hasResourceProperties('AWS::ApiGatewayV2::Api', {
     ProtocolType: 'HTTP',
   });
-  template.resourceCountIs('AWS::ApiGatewayV2::Route', 30);
+  template.resourceCountIs('AWS::ApiGatewayV2::Route', 31);
   const functionId = Object.keys(
     template.findResources('AWS::Lambda::Function'),
   )[0];
@@ -375,7 +376,7 @@ test('one secretless client enables only password, SRP and refresh with explicit
   template.hasOutput('AdminAppClientId', { Value: { Ref: clientId } });
 });
 
-test('all nineteen admin routes bind the JWT authorizer to the existing pool, client and HTTP API', () => {
+test('all twenty admin routes bind the JWT authorizer to the existing pool, client and HTTP API', () => {
   template.resourceCountIs('AWS::ApiGatewayV2::Authorizer', 1);
   const poolId = Object.keys(
     template.findResources('AWS::Cognito::UserPool'),
@@ -466,8 +467,8 @@ test('tables, pool including MFA, client and JWT authorizer exactly preserve the
 });
 
 test('every route integration invokes only the existing Lambda through route-scoped API Gateway permissions', () => {
-  template.resourceCountIs('AWS::ApiGatewayV2::Integration', 30);
-  template.resourceCountIs('AWS::Lambda::Permission', 30);
+  template.resourceCountIs('AWS::ApiGatewayV2::Integration', 31);
+  template.resourceCountIs('AWS::Lambda::Permission', 31);
   for (const resource of Object.values(
     template.findResources('AWS::ApiGatewayV2::Integration'),
   )) {
@@ -493,6 +494,7 @@ test('every route integration invokes only the existing Lambda through route-sco
     '/*/*/admin/drops/{dropId}/resume',
     '/*/*/admin/drops/{dropId}/close',
     '/*/*/admin/drops/{dropId}/reconcile-opening',
+    '/*/*/admin/storefront/assignment',
     '/*/*/admin/products',
     '/*/*/admin/products/{productId}',
     '/*/*/admin/drops',
@@ -589,9 +591,9 @@ test('Phase 5A2 changes only approved properties of Phase 5A1 resources', () => 
     added,
     [
       ...Array(32).fill('AWS::CloudWatch::Alarm'),
-      ...Array(6).fill('AWS::ApiGatewayV2::Route'),
-      ...Array(6).fill('AWS::ApiGatewayV2::Integration'),
-      ...Array(6).fill('AWS::Lambda::Permission'),
+      ...Array(7).fill('AWS::ApiGatewayV2::Route'),
+      ...Array(7).fill('AWS::ApiGatewayV2::Integration'),
+      ...Array(7).fill('AWS::Lambda::Permission'),
       ...Array(3).fill('AWS::SQS::Queue'),
       'AWS::KMS::Key',
       'AWS::KMS::Alias',
