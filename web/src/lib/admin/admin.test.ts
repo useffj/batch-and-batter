@@ -9,6 +9,7 @@ import { composition } from './contract';
 import { DropOverview } from '../../components/admin/overview';
 import { Login } from '../../components/admin/login';
 import { Dashboard } from '../../components/admin/dashboard';
+vi.mock('server-only', () => ({}));
 const config: AdminConfig = {
   NODE_ENV: 'production',
   ADMIN_ORIGIN: 'https://shop.test',

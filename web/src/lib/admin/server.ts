@@ -1,3 +1,4 @@
+import 'server-only';
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { NextResponse } from 'next/server';
 import { composition, id, record, text } from './contract';
@@ -294,12 +295,73 @@ async function cognito(
   }
   return result;
 }
+// Validate logout before key retrieval or cookie changes. Local cleanup does
+// not need the encryption key; provider-wide revocation remains best effort.
+export async function logout(
+  request: Request,
+  c: AdminConfig,
+  fetcher: typeof fetch = fetch,
+  resolveConfig: () => Promise<AdminConfig> = async () => c,
+): Promise<NextResponse> {
+  if (request.method !== 'POST')
+    return output({ code: 'REQUEST', message: messages.REQUEST }, 405);
+  let origin: URL;
+  try {
+    origin = new URL(c.ADMIN_ORIGIN ?? '');
+    const local =
+      c.NODE_ENV === 'development' &&
+      ['localhost', '127.0.0.1', '[::1]'].includes(origin.hostname);
+    if (
+      (origin.protocol !== 'https:' &&
+        !(local && origin.protocol === 'http:')) ||
+      origin.username ||
+      origin.password ||
+      origin.search ||
+      origin.hash ||
+      origin.pathname !== '/'
+    )
+      throw new Error();
+  } catch {
+    return output(
+      { code: 'CONFIGURATION', message: messages.CONFIGURATION },
+      503,
+    );
+  }
+  if (
+    request.headers.get('origin') !== origin.origin ||
+    (request.headers.has('sec-fetch-site') &&
+      request.headers.get('sec-fetch-site') !== 'same-origin')
+  )
+    return output({ code: 'REQUEST', message: messages.REQUEST }, 403);
+  let revoked = false;
+  try {
+    const configured = await resolveConfig();
+    const session = read(request.headers.get('cookie') ?? '', configured);
+    await cognito(
+      'GlobalSignOut',
+      { AccessToken: text(session.token, 3600) },
+      configured,
+      fetcher,
+    );
+    revoked = true;
+  } catch {
+    // SSM, decryption and Cognito failures never prevent local cookie removal.
+  }
+  return save(
+    save(output({ signedOut: true, revocationConfirmed: revoked }), c),
+    c,
+    undefined,
+    true,
+  );
+}
+
 export async function adminRelay(
   request: Request,
   action: 'login' | 'challenge' | 'logout' | 'dashboard',
   c: AdminConfig,
   fetcher: typeof fetch = fetch,
 ): Promise<NextResponse> {
+  if (action === 'logout') return logout(request, c, fetcher);
   try {
     const config = settings(c);
     if (request.method !== (action === 'dashboard' ? 'GET' : 'POST'))
@@ -312,27 +374,6 @@ export async function adminRelay(
     )
       throw new AdminFailure('REQUEST', 403);
     const cookie = request.headers.get('cookie') ?? '';
-    if (action === 'logout') {
-      let revoked = false;
-      try {
-        const s = read(cookie, c);
-        await cognito(
-          'GlobalSignOut',
-          { AccessToken: text(s.token, 3600) },
-          c,
-          fetcher,
-        );
-        revoked = true;
-      } catch {
-        /* Local sign-out always completes, including expired sessions. */
-      }
-      return save(
-        save(output({ signedOut: true, revocationConfirmed: revoked }), c),
-        c,
-        undefined,
-        true,
-      );
-    }
     if (action === 'dashboard') {
       const session = await authorize(cookie, c, fetcher);
       const assignment = await api(
