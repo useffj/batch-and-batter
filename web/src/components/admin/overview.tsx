@@ -4,7 +4,12 @@ export function DropOverview({ overview }: { overview: Overview | null }) {
     return (
       <section aria-labelledby="no-drop">
         <h2 id="no-drop">No Drop assigned</h2>
-        <p>There is currently no storefront-assigned Drop.</p>
+        <p>
+          No Drop is currently assigned to the storefront. Once a Drop is
+          assigned through the existing administrative workflow, refresh this
+          overview to see its products, inventory, and pickup information. Drop
+          creation is not available here yet.
+        </p>
       </section>
     );
   const { drop, products, inventory, pickupDates } = overview;
@@ -18,7 +23,10 @@ export function DropOverview({ overview }: { overview: Overview | null }) {
           Assigned Drop · {drop.status.replaceAll('_', ' ')}
         </p>
         <h2 id="drop-title">{drop.name}</h2>
-        <p className="admin-muted">{drop.dropId}</p>
+        <details>
+          <summary>Technical details</summary>
+          <p>Drop ID: {drop.dropId}</p>
+        </details>
         <p>
           Configured timezone: <strong>{drop.timezone}</strong>
         </p>
@@ -52,7 +60,10 @@ export function DropOverview({ overview }: { overview: Overview | null }) {
                   · In this Drop:{' '}
                   {product.assignedActive ? 'Active' : 'Inactive'}
                 </p>
-                <p className="admin-muted">{product.id}</p>
+                <details>
+                  <summary>Technical details</summary>
+                  <p>Product ID: {product.id}</p>
+                </details>
                 {stock ? (
                   <Inventory stock={stock} />
                 ) : (
@@ -72,7 +83,10 @@ export function DropOverview({ overview }: { overview: Overview | null }) {
             </p>
             {orphans.map((row) => (
               <div key={row.productId}>
-                <p>{row.productId}</p>
+                <details>
+                  <summary>Technical details</summary>
+                  <p>Product ID: {row.productId}</p>
+                </details>
                 <Inventory stock={row} />
               </div>
             ))}

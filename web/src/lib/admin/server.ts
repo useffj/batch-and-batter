@@ -1,3 +1,9 @@
+import {
+  catalogPage,
+  catalogProduct,
+  productFields,
+  type ProductFields,
+} from './products';
 import 'server-only';
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { NextResponse } from 'next/server';
@@ -175,7 +181,11 @@ function save(
   );
   return response;
 }
-async function json(response: Request | Response, max = 262144) {
+async function json(
+  response: Request | Response,
+  max = 262144,
+  sizeError?: Error,
+) {
   if (
     !/^application\/(?:[\w.+-]*\+)?json(?:\s*;|$)|^application\/x-amz-json-1\.1(?:\s*;|$)/i.test(
       response.headers.get('content-type') ?? '',
@@ -191,7 +201,7 @@ async function json(response: Request | Response, max = 262144) {
       const { done, value } = await reader.read();
       if (done) break;
       size += value.length;
-      if (size > max) throw new AdminFailure('INVALID', 502);
+      if (size > max) throw sizeError ?? new AdminFailure('INVALID', 502);
       chunks.push(value);
     }
     return record(JSON.parse(Buffer.concat(chunks).toString('utf8')));
@@ -518,5 +528,156 @@ export async function adminRelay(
     )
       save(response, c, undefined, true);
     return response;
+  }
+}
+
+// Only authenticated full Product payloads use this cap. DynamoDB items are at most
+// 400 KiB; JSON escaping can expand strings up to sixfold. 4 MiB leaves bounded
+// room for that expansion and the DTO envelope. List/auth limits stay at 256 KiB.
+export const PRODUCT_JSON_LIMIT = 4 * 1024 * 1024;
+class ProductPayloadLimit extends Error {
+  constructor(readonly status: number) {
+    super('Product payload limit');
+  }
+}
+// Fixed product routes only: never accepts an arbitrary upstream URL or token.
+export async function catalogRelay(
+  request: Request,
+  productId: string | undefined,
+  c: AdminConfig,
+  fetcher: typeof fetch = fetch,
+): Promise<NextResponse> {
+  try {
+    const config = settings(c);
+    const method = request.method;
+    if (!(productId ? ['GET', 'PUT'] : ['GET', 'POST']).includes(method))
+      throw new AdminFailure('REQUEST', 405);
+    if (
+      method !== 'GET' &&
+      (request.headers.get('origin') !== config.origin ||
+        (request.headers.has('sec-fetch-site') &&
+          request.headers.get('sec-fetch-site') !== 'same-origin'))
+    )
+      throw new AdminFailure('REQUEST', 403);
+    const session = await authorize(
+      request.headers.get('cookie') ?? '',
+      c,
+      fetcher,
+    );
+    let path = '/admin/products';
+    if (productId !== undefined) path += '/' + id(productId);
+    const cursor = new URL(request.url).searchParams.get('cursor');
+    if (cursor !== null) {
+      if (
+        productId ||
+        method !== 'GET' ||
+        !/^[A-Za-z0-9_-]{1,8192}$/.test(cursor)
+      )
+        throw new AdminFailure('REQUEST', 400);
+      path += '?cursor=' + encodeURIComponent(cursor);
+    }
+    let fields: ProductFields | undefined, revision: string | undefined;
+    if (method !== 'GET') {
+      try {
+        const input = await json(
+          request,
+          PRODUCT_JSON_LIMIT,
+          new ProductPayloadLimit(413),
+        );
+        if (method === 'PUT') {
+          revision = text(input.revision, 64);
+          if (
+            !/^\d{4}-\d\d-\d\dT/.test(revision) ||
+            !Number.isFinite(Date.parse(revision))
+          )
+            throw new Error();
+          delete input.revision;
+        }
+        fields = productFields(input);
+      } catch (error) {
+        if (error instanceof ProductPayloadLimit) throw error;
+        return output(
+          {
+            code: 'VALIDATION_ERROR',
+            message: 'Check the product fields and try again.',
+          },
+          400,
+        );
+      }
+    }
+    const response = await fetcher(config.api + path, {
+      method,
+      cache: 'no-store',
+      redirect: 'error',
+      signal: AbortSignal.timeout(8000),
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${session.token}`,
+        ...(fields ? { 'Content-Type': 'application/json' } : {}),
+        ...(revision ? { 'If-Match': revision } : {}),
+      },
+      ...(fields ? { body: JSON.stringify(fields) } : {}),
+    });
+    if (response.status === 401) throw new AdminFailure('EXPIRED', 401);
+    if (response.status === 403) throw new AdminFailure('FORBIDDEN', 403);
+    if ([400, 404, 409].includes(response.status)) {
+      return output(
+        {
+          code:
+            response.status === 409
+              ? 'PRODUCT_CONFLICT'
+              : response.status === 404
+                ? 'PRODUCT_NOT_FOUND'
+                : 'VALIDATION_ERROR',
+          message:
+            response.status === 409
+              ? 'This product changed. Reload it before saving again.'
+              : response.status === 404
+                ? 'This product no longer exists.'
+                : 'The backend rejected these product fields.',
+        },
+        response.status,
+      );
+    }
+    if (!response.ok) throw new AdminFailure('UNAVAILABLE', 502);
+    const result = await json(
+      response,
+      method === 'GET' && !productId ? 262144 : PRODUCT_JSON_LIMIT,
+      new ProductPayloadLimit(502),
+    );
+    const validated =
+      method === 'GET' && !productId
+        ? catalogPage(result)
+        : { product: catalogProduct(result.product) };
+    if (
+      'product' in validated &&
+      productId &&
+      validated.product.productId !== productId
+    )
+      throw new Error();
+    if (session.expiresAt <= Date.now()) throw new AdminFailure('EXPIRED', 401);
+    return output(
+      { ...validated, loadedAt: new Date().toISOString() },
+      response.status,
+    );
+  } catch (e) {
+    if (e instanceof ProductPayloadLimit)
+      return output(
+        {
+          code: 'PRODUCT_TOO_LARGE',
+          message:
+            'This product response or request exceeds the supported size. No data has been truncated; contact the site operator.',
+        },
+        e.status,
+      );
+    const failure =
+      e instanceof AdminFailure ? e : new AdminFailure('UNAVAILABLE', 502);
+    const response = output(
+      { code: failure.code, message: failure.message },
+      failure.status,
+    );
+    return failure.status === 401 || failure.status === 403
+      ? save(response, c)
+      : response;
   }
 }

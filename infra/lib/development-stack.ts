@@ -359,6 +359,12 @@ export class DevelopmentStack extends Stack {
         apigateway.HttpMethod.POST,
         'AdminCancelScheduledDropIntegration',
       ],
+      ['/admin/products', apigateway.HttpMethod.GET, 'AdminCatalogIntegration'],
+      [
+        '/admin/products/{productId}',
+        apigateway.HttpMethod.GET,
+        'AdminGetProductIntegration',
+      ],
       [
         '/admin/products',
         apigateway.HttpMethod.POST,

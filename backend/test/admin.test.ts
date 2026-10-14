@@ -101,7 +101,7 @@ test('admin route remains read-only and unknown admin routes are not exposed', a
     (
       await handler({
         ...event({ jwt: { claims } }),
-        routeKey: 'GET /admin/products',
+        routeKey: 'GET /admin/unsupported-products-route',
       })
     ).statusCode,
     404,
