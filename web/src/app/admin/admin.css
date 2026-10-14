@@ -208,3 +208,55 @@
     font-size: 2rem;
   }
 }
+
+.admin-sidebar nav a:not([aria-current]) {
+  background: transparent;
+}
+.admin-sidebar nav a + a {
+  margin-top: 0.35rem;
+}
+.admin-product-editor {
+  max-width: 48rem;
+}
+.admin-product-editor fieldset {
+  border: 0;
+  padding: 0;
+  min-width: 0;
+}
+.admin-product-editor label {
+  display: block;
+  font-weight: 600;
+  margin: 1rem 0;
+}
+.admin-product-editor input,
+.admin-product-editor textarea,
+.admin-product-editor select {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  min-height: 44px;
+  margin-top: 0.4rem;
+  padding: 0.7rem;
+  border: 1px solid #bcb4aa;
+  border-radius: 0.5rem;
+  background: #fff;
+  color: #292724;
+  font: inherit;
+}
+.admin-product-editor textarea {
+  min-height: 7rem;
+  resize: vertical;
+}
+.admin-field-error {
+  display: block;
+  color: #8c3029;
+  font-size: 0.875rem;
+}
+.admin-description {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.admin-card details {
+  overflow-wrap: anywhere;
+}

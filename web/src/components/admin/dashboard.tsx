@@ -1,12 +1,12 @@
 'use client';
 // Full navigation avoids retaining authenticated route state in client caches.
-/* eslint-disable @next/next/no-html-link-for-pages */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   adminRequest,
   ClientFailure,
   type Snapshot,
 } from '../../lib/admin/client';
+import { AdminNavigation } from './navigation';
 import { DropOverview } from './overview';
 export function Dashboard({ expiresAt }: { expiresAt: number }) {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null),
@@ -103,30 +103,7 @@ export function Dashboard({ expiresAt }: { expiresAt: number }) {
       <a className="admin-skip" href="#admin-content">
         Skip to overview
       </a>
-      <aside className="admin-sidebar">
-        <a className="admin-brand" href="/">
-          Batch &amp; Batter<span>COOKIE CO. / ADMIN</span>
-        </a>
-        <nav aria-label="Administration">
-          <a href="/admin" aria-current="page">
-            Overview
-          </a>
-        </nav>
-        <p className="admin-eyebrow">Coming later</p>
-        <ul className="admin-future">
-          {[
-            'Products',
-            'Drops',
-            'Orders',
-            'Customers',
-            'Fulfillment',
-            'Messaging',
-            'Settings',
-          ].map((s) => (
-            <li key={s}>{s}</li>
-          ))}
-        </ul>
-      </aside>
+      <AdminNavigation current="overview" />
       <main id="admin-content" className="admin-main" tabIndex={-1}>
         <header className="admin-heading">
           <div>
@@ -157,10 +134,10 @@ export function Dashboard({ expiresAt }: { expiresAt: number }) {
                 {new Intl.DateTimeFormat('en-US', {
                   dateStyle: 'medium',
                   timeStyle: 'medium',
-                  timeZone: snapshot.overview?.drop.timezone ?? 'UTC',
+                  timeZone: 'America/Denver',
                 }).format(new Date(snapshot.loadedAt))}
               </time>{' '}
-              ({snapshot.overview?.drop.timezone ?? 'UTC'})
+              (America/Denver)
             </>
           ) : null}
         </div>

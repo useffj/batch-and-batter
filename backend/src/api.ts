@@ -5,6 +5,7 @@ import type { CartService } from './cart-repository';
 import { idSchema } from './domain';
 import { CatalogWriteError, type CatalogRepository } from './repository';
 import { AdminError, requireAdmin } from './admin-auth';
+import { adminCatalog, catalogRoutes } from './admin-catalog';
 import { adminWrite, adminWriteRoutes } from './admin-writes';
 import { adminComposition, compositionRoutes } from './admin-composition';
 import { adminPublish, publishRoute } from './admin-publish';
@@ -26,6 +27,7 @@ export interface ApiEvent {
     authorizer?: { jwt?: { claims?: Record<string, unknown> } };
   };
   headers?: Record<string, string | undefined>;
+  queryStringParameters?: Record<string, string | undefined>;
   body?: string;
   isBase64Encoded?: boolean;
   pathParameters?: Record<string, string | undefined>;
@@ -79,6 +81,7 @@ export function createHandler(
       return cartApi(event, getCarts, context);
     if (event.routeKey === 'GET /health') return complete(await health());
     if (
+      catalogRoutes.includes(event.routeKey) ||
       event.routeKey === 'GET /admin/me' ||
       event.routeKey === 'GET /admin/storefront/assignment' ||
       adminWriteRoutes.includes(event.routeKey) ||
@@ -103,6 +106,10 @@ export function createHandler(
               'The assigned Drop could not be found.',
             );
           return json(200, { dropId });
+        }
+        if (catalogRoutes.includes(event.routeKey)) {
+          const result = await adminCatalog(event, getRepository);
+          return json(result.status, result.body);
         }
         const result = scheduledRoutes.includes(event.routeKey)
           ? await adminScheduled(

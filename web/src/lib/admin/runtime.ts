@@ -1,6 +1,7 @@
 import 'server-only';
 import { NextResponse } from 'next/server';
 import {
+  catalogRelay,
   adminRelay as relay,
   authorize as authorizeSession,
   AdminFailure,
@@ -47,4 +48,27 @@ export async function adminRelay(
     );
   }
   return relay(request, action, { ...config, ADMIN_SESSION_KEY: key });
+}
+
+export async function productRelay(
+  request: Request,
+  productId: string | undefined,
+  config: RuntimeConfig,
+) {
+  let key: string;
+  try {
+    key = await loadSessionKey(config);
+  } catch {
+    return NextResponse.json(
+      { code: 'CONFIGURATION', message: messages.CONFIGURATION },
+      {
+        status: 503,
+        headers: { 'Cache-Control': 'no-store, private', Vary: 'Cookie' },
+      },
+    );
+  }
+  return catalogRelay(request, productId, {
+    ...config,
+    ADMIN_SESSION_KEY: key,
+  });
 }

@@ -2,6 +2,198 @@
 
 Last reviewed: **October 9, 2026 (America/Denver)**. Documentation-only checkpoint; no cloud inspection or hosted execution performed for this update.
 
+## October 14, 2026 — Admin DEV manual acceptance update
+
+This later, scoped update supersedes the historical resumption point below for
+this website development track only. Current assignment: local product-catalog
+work on `codex/admin-product-catalog-1b1`, based on verified merged main
+`3b23b18b3e5b4e9cbd902919cb8b0feb6f5a83b3`. No deployment or business-data
+writes are authorized; hosted `admin-dev-3b23b18` remains unchanged.
+
+The product owner reported these manual passes: Basic Authentication; Cognito
+administrator login; protected `/admin` rendering; the no-Drop-assigned empty
+state; Refresh updating the last-loaded timestamp; Sign Out returning to login;
+and direct `/admin` navigation redirecting to login after sign-out. The owner
+approved the existing visual design. These are operator-reported observations,
+not newly repeated automated hosted tests.
+
+Still untested/incomplete: approved nonadministrator rejection; natural
+15-minute expiry; inventory/pickup accuracy with an assigned Drop; independent
+verification of every upstream protected response; browser cookie attributes;
+and authentication challenge variants not encountered. **Full administrator
+acceptance is not established. Hosted duplicate-activation acceptance remains
+NOT PASSED.** Preserve the separate payment-testing workspace and its unfinished
+work; its historical harness resumption instructions are not this assignment.
+
+## October 14, 2026 — 1B-1 targeted corrections (latest local status)
+
+**LOCALLY VALIDATED — READY FOR REVIEW.** This update supersedes the earlier
+1B-1 validation counts and preview/list-contract descriptions below. Branch
+and base remain `codex/admin-product-catalog-1b1` /
+`3b23b18b3e5b4e9cbd902919cb8b0feb6f5a83b3`; all 24 milestone files remain
+uncommitted. No new schema, route, service, dependency or IAM change was needed
+for these corrections.
+
+- Creation derives a valid slug from the name, including accent normalization;
+  names without ASCII letters/numbers receive the valid fallback `cookie`.
+  Advanced Details contains optional manual editing and plain-language help.
+  Manual customization stops automatic updates. Editing a saved Product never
+  changes its slug merely because its name changes. Slug syntax is validated;
+  **uniqueness is not guaranteed**, and no customer product URL is implied.
+- The disappearing-cookie reproduction was preview-only: native sidebar links
+  loaded a new document, recreating module-local fixtures. The preview now
+  intercepts its own ordinary sidebar navigation and remounts the actual
+  Products component against the same in-memory mock store. Its overview is
+  explicitly a preview placeholder. Production navigation and backend reads
+  are unchanged. Full browser refresh, a new tab, Empty/Error reset links, or
+  restarting the preview still resets fixtures; modified-click/new-tab
+  navigation is outside this single-document session. No browser storage or
+  deployable demo-auth path was introduced.
+- Catalog GET now returns summaries: ID, active status, name, description
+  excerpt and explicit truncation flags. Name/description JSON strings are
+  capped at 512/1,024 serialized UTF-8 bytes, including quotes and escaping,
+  without splitting Unicode code points. All records from the bounded scan
+  remain in the response, so the original continuation cursor is preserved.
+  The 100-evaluated-record bound and empty-page behavior are unchanged.
+  The frontend deduplicates IDs across pages and fetches full details for edits.
+  Stored descriptions, ingredients and allergens are not truncated.
+- The global 256-KiB JSON limit remains unchanged for lists/authentication.
+  Authenticated full Product detail/write payloads alone use a **4-MiB cap**:
+  a DynamoDB Product item can be up to 400 KiB and JSON escaping can expand
+  string data sixfold; this cap leaves bounded envelope room. This is a
+  transport ceiling, not permission to exceed DynamoDB item limits. Oversized
+  requests return 413 before mutation; oversized upstream Product responses
+  return an explicit error rather than an empty catalog. Existing same-origin,
+  session, backend authorization and no-store protections still apply.
+- Active-to-inactive saves require an accessible native confirmation explaining
+  immediate live-Drop visibility/cart impact. Cancel sends no save. Reactivation
+  may restore visibility where the Drop association remains active. Neither
+  transition deletes inventory or historical orders. No new status restrictions.
+- Duplicate-submit prevention covers concurrent UI submissions, **not server
+  idempotency for independent POST requests**. Ambiguous saves still require
+  reconciliation rather than blind retry. Scan pages are not a cross-page
+  snapshot or a guaranteed sorted order. Prices remain per Drop; inventory
+  stays in the Drop model; product media remains required in 1B-2 and per-Drop
+  pricing/inventory management in 1C. MVP scope is unchanged.
+
+Fresh validation: **455 frontend tests, 953 backend tests, 10 artifact checks,
+37 infrastructure tests passed**, zero failures/skips. All three type checks,
+frontend lint, frontend production build, backend build, formatting and
+`git diff --check` passed. Regression coverage includes the 100-record oversized
+response, compact Unicode/escaped boundaries with envelope/cursor overhead,
+large full details and edits, exact 4-MiB/over-limit response boundaries,
+pre-mutation oversized-request rejection, continuation, deduplication, mock
+create/edit persistence followed by fresh list/detail reads, slug behavior and
+deactivation-confirmation predicates. Browser checks separately verified
+keyboard Advanced Details, automatic/manual/saved slugs, creation, edited data
+surviving sidebar navigation, cancel/accept deactivation, and 375px layout
+(document width 375px). These are local mock/synthetic checks, not hosted tests.
+
+Exactly eight existing milestone files changed in this correction pass:
+`backend/src/admin-catalog.ts`, `backend/test/admin-catalog.test.ts`,
+`web/src/lib/admin/products.ts`, `web/src/lib/admin/products.test.ts`,
+`web/src/lib/admin/server.ts`, `web/src/components/admin/products.tsx`,
+`web/scripts/preview-admin-products.mjs`, and this handoff.
+
+Preview restart: stop the prior preview process with Ctrl-C, then from the MVP
+worktree run `node web/scripts/preview-admin-products.mjs` and open
+`http://127.0.0.1:4175`. Add a cookie by name, optionally inspect Advanced Details,
+save, navigate Overview → Products, then edit. Use an initially active fixture
+to inspect/cancel/confirm deactivation. Everything is labeled synthetic and
+remains in the browser document's memory; no AWS credentials are needed.
+
+Next assignment: focused read-only review of these corrections and the complete
+24-file milestone before separately authorizing a source-control checkpoint.
+No commit, push, hosted action or AWS/business-data write occurred. The original
+payment-testing workspace is untouched. Hosted duplicate-activation acceptance
+remains **NOT PASSED**.
+
+## October 14, 2026 — Milestone 1B-1 local implementation
+
+**LOCALLY VALIDATED; uncommitted and undeployed.** Branch
+`codex/admin-product-catalog-1b1` still has HEAD at
+`3b23b18b3e5b4e9cbd902919cb8b0feb6f5a83b3`.
+
+The owner approved preserving the existing Product schema: name, slug, one
+reusable description, ingredients, allergens and active/inactive status.
+The UI says **Price set per Drop**. No catalog price, media fields, fake images,
+placeholder prices or database migration were introduced. Product media remains
+required in 1B-2; pricing and per-Drop inventory remain required in 1C.
+
+`/admin/products` now supports inactive-inclusive listing, explicit pagination,
+refresh, loading/empty/error states, creation and editing. Existing protected
+POST/PUT product contracts are reused; the browser sends an `updatedAt` revision
+which the server forwards as `If-Match`. Stale revisions return 409 and the
+existing conditional repository write protects the subsequent read/write race.
+Legacy API clients without that optional header retain existing semantics.
+New products default inactive. Saves affect only Product records, not Drop
+associations, inventory, orders or payment snapshots. The form explains global
+catalog-status impact, guards duplicate submissions and requires refresh after
+an ambiguous save outcome rather than blindly retrying creation.
+
+Two protected backend GET routes were added: `/admin/products` and
+`/admin/products/{productId}`, with corresponding existing-Lambda API Gateway
+routes. Listing uses one DynamoDB Scan with Limit 100 evaluated records per
+request because the approved schema has no catalog-list index. Empty filtered
+pages can carry a cursor; Load more continues explicitly. There is no unbounded
+scan loop, new index or IAM expansion. This is not a snapshot across pages and
+scan cost grows with the shared catalog table; the UI deduplicates IDs. Revisit
+access-pattern design separately if volume makes this unsuitable.
+
+Cognito access-token/admin-group enforcement, encrypted HttpOnly sessions and
+server-only SSM key retrieval are preserved. Same-origin write checks, no-store
+responses, sanitized failures and required browser edit revisions protect the
+new same-origin proxy. Session expiry clears the catalog and cannot be blocked
+by the unsaved-change navigation guard. No deployable preview-auth bypass exists.
+
+Approved dashboard refinements: America/Denver timestamps, actionable no-Drop
+explanation without a nonfunctional Create Drop button, and optional technical
+details for internal IDs. The existing neutral design is retained.
+
+Validation: **441 frontend tests, 949 backend tests, 10 backend artifact checks,
+37 infrastructure tests passed**, with no failed/skipped tests. Frontend,
+backend and infrastructure type checks passed; frontend lint and production
+build passed; backend artifact build and offline CDK synthesis
+(`--lookups=false`) passed. Formatting and `git diff --check` passed.
+Synthetic browser checks covered create/edit persistence, unchanged ingredient
+and allergen values, active/inactive display, blank-name validation, unsaved
+change confirmation, keyboard focus/status/save controls, loading/empty/error
+states, desktop rendering and a 375px viewport (document width also 375px).
+These checks are local evidence, not hosted administrator acceptance.
+
+Local preview: from the MVP worktree run
+`node web/scripts/preview-admin-products.mjs`, then open
+`http://127.0.0.1:4175`. It uses the actual UI with clearly labeled synthetic
+in-memory fixtures, binds to loopback, blocks non-mocked fetches, and rejects
+production mode. Refresh resets fixtures; Empty and Error links show those
+states. It is outside Next routes/builds and needs no AWS credentials.
+
+Changed-file inventory (24 files):
+
+- Backend: `src/admin-catalog.ts` (new), `src/admin-writes.ts`, `src/api.ts`,
+  `src/repository.ts`, `test/admin-catalog.test.ts` (new), `test/admin.test.ts`,
+  `test/fixtures.ts`.
+- Infrastructure: `lib/development-stack.ts`, `test/development-stack.test.ts`.
+- Web: `src/app/admin/admin.css`, `src/app/admin/products/page.tsx` (new),
+  `src/app/api/admin/products/route.ts` (new),
+  `src/app/api/admin/products/[productId]/route.ts` (new),
+  `src/components/admin/navigation.tsx` (new),
+  `src/components/admin/products.tsx` (new),
+  `src/components/admin/dashboard.tsx`, `src/components/admin/overview.tsx`,
+  `src/lib/admin/products.ts` (new), `src/lib/admin/product-client.ts` (new),
+  `src/lib/admin/products.test.ts` (new), `src/lib/admin/runtime.ts`,
+  `src/lib/admin/server.ts`, `scripts/preview-admin-products.mjs` (new).
+- Documentation: this handoff.
+
+No commits, pushes, AWS operations, hosted changes or business-data writes were
+performed. No dependency manifests changed. The original testing workspace's
+three-file uncommitted diff fingerprint is unchanged:
+`4acc509f1c3a70ee096e180d8540afdc3c2d39e47ef63a9062a1d8aa8085dc67`.
+Next assignment: focused review of this local 24-file product-management change,
+then separately authorized source-control checkpoint. Deployment requires its
+own approval and narrow artifact/resource plan. Hosted duplicate-activation
+acceptance remains **NOT PASSED**.
+
 ## 1. PROJECT IDENTITY
 
 **Batch & Batter Cookie Co.** is an existing production-oriented direct-to-consumer cookie business application, not a new project. Limited inventory is sold through configurable weekly Drops with local pickup. The brand wordmark is “Batch & Batter,” with “Cookie Co.” as descriptor. The original approved feature scope and custom AWS + Stripe architecture remain in force. Low ongoing operating cost is a design constraint.

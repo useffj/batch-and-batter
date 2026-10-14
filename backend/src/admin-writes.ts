@@ -106,6 +106,13 @@ export async function adminWrite(
       : await repository.getProduct(productId);
     if (!creating && !previous)
       throw new AdminError(404, 'PRODUCT_NOT_FOUND', 'Product not found.');
+    const revision = event.headers?.['if-match'] ?? event.headers?.['If-Match'];
+    if (previous && revision !== undefined && revision !== previous.updatedAt)
+      throw new AdminError(
+        409,
+        'PRODUCT_CONFLICT',
+        'Product changed. Reload before editing.',
+      );
     const now = updatedAt(previous?.updatedAt);
     const product = validate(productSchema, {
       ...fields,

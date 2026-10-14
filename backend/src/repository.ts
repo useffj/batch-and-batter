@@ -1,5 +1,6 @@
 import {
   GetCommand,
+  ScanCommand,
   PutCommand,
   QueryCommand,
   TransactWriteCommand,
@@ -55,6 +56,10 @@ export interface CatalogRepository {
   removeDropProduct(dropId: string, productId: string): Promise<void>;
   putPickup(item: PickupDate): Promise<void>;
   removePickup(dropId: string, date: string): Promise<void>;
+  listProducts(cursor?: {
+    PK: string;
+    SK: string;
+  }): Promise<{ products: Product[]; cursor?: { PK: string; SK: string } }>;
   createProduct(product: Product): Promise<void>;
   replaceProduct(product: Product, previous: Product): Promise<void>;
   createDraftDrop(drop: Drop): Promise<void>;
@@ -944,6 +949,43 @@ export class DynamoCatalogRepository implements CatalogRepository {
       }),
     );
     return result.Item ? decode(result.Item, schema, key) : undefined;
+  }
+  async listProducts(cursor?: { PK: string; SK: string }) {
+    // One bounded page; filtered empty pages can still have a continuation.
+    const result = await this.client.send(
+      new ScanCommand({
+        TableName: this.tableName,
+        Limit: 100,
+        ConsistentRead: true,
+        ExclusiveStartKey: cursor,
+        FilterExpression: 'begins_with(#pk, :product) AND #sk = :meta',
+        ExpressionAttributeNames: { '#pk': 'PK', '#sk': 'SK' },
+        ExpressionAttributeValues: { ':product': 'PRODUCT#', ':meta': 'META' },
+      }),
+    );
+    const products = (result.Items ?? []).map((item) => {
+      const { PK: _pk, SK: _sk, ...data } = item;
+      const product = productSchema.parse(data);
+      return decode(
+        item,
+        productSchema,
+        catalogKeys.product(product.productId),
+      );
+    });
+    const key = result.LastEvaluatedKey;
+    return {
+      products,
+      ...(key && Object.keys(key).length
+        ? {
+            cursor: z
+              .strictObject({
+                PK: z.string().min(1).max(2048),
+                SK: z.string().min(1).max(1024),
+              })
+              .parse(key),
+          }
+        : {}),
+    };
   }
   async getProduct(productId: string) {
     const result = await this.get(
