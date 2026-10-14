@@ -102,7 +102,7 @@ function awsErrorMessage(
     name === 'TransactionCanceledException' &&
     reasons.includes('ConditionalCheckFailed')
   ) {
-    return 'Development seed existing-record conflict (TransactionCanceledException / ConditionalCheckFailed): the confirmed transaction was canceled because at least one target record already exists. No items were written by this transaction.';
+    return 'Development seed prerequisite conflict (TransactionCanceledException / ConditionalCheckFailed): catalog readiness, slug ownership, or an existing target record prevented the transaction. No items were written by this transaction.';
   }
   const authCode = codes.find((code) => code && authentication.includes(code));
   const networkCode = codes.find((code) => code && connectivity.includes(code));

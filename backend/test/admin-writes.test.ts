@@ -33,6 +33,7 @@ const claims = {
 function event(routeKey: string, input: unknown): ApiEvent {
   return {
     routeKey,
+    headers: { 'idempotency-key': '11111111-1111-4111-8111-111111111111' },
     body: JSON.stringify(input),
     pathParameters: { productId: product.productId, dropId: drop.dropId },
     requestContext: {
@@ -352,4 +353,29 @@ test('no public writes, deletes, or out-of-scope admin operations exist', async 
   ]) {
     assert.equal((await request(route, {})).statusCode, 404);
   }
+});
+
+test('Product creation rejects missing or malformed identities before repository access', async () => {
+  for (const value of [undefined, 'not-a-uuid']) {
+    const e = event('POST /admin/products', productInput);
+    e.headers = value ? { 'idempotency-key': value } : {};
+    const r = await createHandler(() => {
+      throw new Error('Must not initialize');
+    })(e);
+    assert.equal(r.statusCode, 400);
+    assert.equal(JSON.parse(r.body).code, 'IDEMPOTENCY_KEY_INVALID');
+  }
+});
+test('Product creation identity comes from authenticated subject and forwards the durable original result', async () => {
+  const r = await request('POST /admin/products', productInput, {
+    createProduct: async (_generated, identity) => {
+      assert.deepEqual(identity, {
+        subject: 'test-subject',
+        key: '11111111-1111-4111-8111-111111111111',
+      });
+      return product;
+    },
+  });
+  assert.equal(r.statusCode, 201);
+  assert.deepEqual(JSON.parse(r.body).product, product);
 });

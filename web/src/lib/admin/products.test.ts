@@ -102,7 +102,12 @@ function request(
 ) {
   return new Request('https://shop.test/api/admin/products', {
     method,
-    headers: { cookie, origin, 'content-type': 'application/json' },
+    headers: {
+      cookie,
+      origin,
+      'content-type': 'application/json',
+      'idempotency-key': '11111111-1111-4111-8111-111111111111',
+    },
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
 }
@@ -427,4 +432,115 @@ it('large edited details are forwarded intact with the original revision', async
   expect(r.status).toBe(200);
   expect(JSON.parse(String(calls[1].init?.body))).toEqual(large);
   expect(new Headers(calls[1].init?.headers).get('if-match')).toBe(p.updatedAt);
+});
+
+it('requires a creation key before any product mutation', async () => {
+  const { cookie, fetcher, calls } = await setup();
+  const r = request(cookie, 'POST', fieldsOf(p));
+  r.headers.delete('idempotency-key');
+  expect((await catalogRelay(r, undefined, config, fetcher)).status).toBe(400);
+  expect(calls).toHaveLength(1);
+});
+it('forwards the same creation identity on repeated browser submissions', async () => {
+  const f = vi.fn<typeof fetch>(async () => json({ product: p }, 201));
+  const key = '11111111-1111-4111-8111-111111111111';
+  await productRequest('', 'POST', fieldsOf(p), undefined, f, key);
+  await productRequest('', 'POST', fieldsOf(p), undefined, f, key);
+  for (const [, init] of f.mock.calls)
+    expect(new Headers(init?.headers).get('idempotency-key')).toBe(key);
+});
+it('server relay forwards creation keys and preserves safe slug conflicts', async () => {
+  const { cookie, fetcher, calls } = await setup();
+  const original = fetcher.getMockImplementation()!;
+  fetcher.mockImplementation((url, init) =>
+    String(url).endsWith('/products')
+      ? Promise.resolve(
+          json(
+            { code: 'SLUG_CONFLICT', message: 'raw private diagnostic' },
+            409,
+          ),
+        )
+      : original(url, init),
+  );
+  const r = await catalogRelay(
+    request(cookie, 'POST', fieldsOf(p)),
+    undefined,
+    config,
+    fetcher,
+  );
+  expect(r.status).toBe(409);
+  const body = await r.json();
+  expect(body.code).toBe('SLUG_CONFLICT');
+  expect(body.message).not.toContain('private');
+  expect(new Headers(calls[0].init?.headers).get('authorization')).toContain(
+    'Bearer',
+  );
+});
+it('recovery reads original creation result using authenticated fixed catalog route', async () => {
+  const { cookie, fetcher } = await setup();
+  const original = fetcher.getMockImplementation()!;
+  fetcher.mockImplementation((url, init) =>
+    String(url).includes('creationKey=')
+      ? Promise.resolve(json({ creation: p }))
+      : original(url, init),
+  );
+  const r = new Request(
+    'https://shop.test/api/admin/products?creationKey=11111111-1111-4111-8111-111111111111',
+    { headers: { cookie } },
+  );
+  const result = await catalogRelay(r, undefined, config, fetcher);
+  expect(result.status).toBe(200);
+  expect((await result.json()).creation).toEqual(p);
+});
+
+it('navigation/reload recovery reuses only a scoped request reference', async () => {
+  const { pendingCreation, rememberCreation } =
+    await import('./creation-state');
+  const entries = new Map<string, string>();
+  const storage = {
+    getItem: (k: string) => entries.get(k) ?? null,
+    setItem: (k: string, v: string) => {
+      entries.set(k, v);
+    },
+  };
+  const key = '11111111-1111-4111-8111-111111111111';
+  rememberCreation(storage, 'admin-a', key);
+  expect(pendingCreation(storage, 'admin-a')).toBe(key);
+  expect(pendingCreation(storage, 'admin-b')).toBe(null);
+  expect([...entries.values()]).toEqual([key]);
+  storage.setItem('admin-a', 'corrupt');
+  expect(() => pendingCreation(storage, 'admin-a')).toThrow();
+});
+it('recovery still requires authentication and rejects malformed identities', async () => {
+  const r = new Request('https://shop.test/api/admin/products?creationKey=bad');
+  const f = vi.fn<typeof fetch>();
+  expect((await catalogRelay(r, undefined, config, f)).status).toBe(401);
+  expect(f).not.toHaveBeenCalled();
+  const { cookie, fetcher } = await setup();
+  expect(
+    (
+      await catalogRelay(
+        new Request(r.url, { headers: { cookie } }),
+        undefined,
+        config,
+        fetcher,
+      )
+    ).status,
+  ).toBe(400);
+});
+
+it('a later validation/conflict response never clears an earlier ambiguous creation identity', async () => {
+  const { canReleaseCreation } = await import('./creation-state');
+  for (const code of [
+    'VALIDATION_ERROR',
+    'SLUG_CONFLICT',
+    'PRODUCT_TOO_LARGE',
+    'PRODUCT_WRITES_NOT_READY',
+    'PRODUCT_CONFLICT',
+  ]) {
+    expect(canReleaseCreation(true, code)).toBe(false);
+    expect(canReleaseCreation(false, code)).toBe(true);
+  }
+  expect(canReleaseCreation(false, 'IDEMPOTENCY_CONFLICT')).toBe(false);
+  expect(canReleaseCreation(false, 'PRODUCT_INTEGRITY_CONFLICT')).toBe(false);
 });

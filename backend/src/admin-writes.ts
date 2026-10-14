@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { ApiEvent } from './api';
+import { validateIdentity } from './product-integrity';
 import { AdminError } from './admin-auth';
 import {
   productSchema,
@@ -91,12 +92,20 @@ export const adminWriteRoutes = [
 export async function adminWrite(
   event: ApiEvent,
   getRepository: () => CatalogRepository,
+  subject?: string,
 ) {
   const creating = event.requestContext.http.method === 'POST';
   const isProduct = event.routeKey.includes('/products');
   const input = body(event);
   if (isProduct) {
     const fields = validate(productInput, input);
+    const identity = creating
+      ? validateIdentity({
+          subject: subject!,
+          key: (event.headers?.['idempotency-key'] ??
+            event.headers?.['Idempotency-Key'])!,
+        })
+      : undefined;
     const productId = creating
       ? generateUlid()
       : validate(idSchema, event.pathParameters?.productId);
@@ -121,7 +130,10 @@ export async function adminWrite(
       updatedAt: now,
     });
     if (previous) await repository.replaceProduct(product, previous);
-    else await repository.createProduct(product);
+    else {
+      const saved = await repository.createProduct(product, identity);
+      if (saved) return { status: 201, body: { product: productDto(saved) } };
+    }
     return {
       status: creating ? 201 : 200,
       body: { product: productDto(product) },

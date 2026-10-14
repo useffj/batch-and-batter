@@ -153,7 +153,7 @@ for (const failure of [
     assert.doesNotMatch(h.errors[0], /No items were written|existing-record/);
   });
 }
-test('conditional cancellation is an existing-record conflict only after a confirmed fake send', async () => {
+test('conditional cancellation reports readiness, ownership or record conflict after a confirmed fake send', async () => {
   const h = harness({
     name: 'TransactionCanceledException',
     CancellationReasons: [{ Code: 'None' }, { Code: 'ConditionalCheckFailed' }],
@@ -161,7 +161,7 @@ test('conditional cancellation is an existing-record conflict only after a confi
   assert.equal(await h.run([...args, '--confirm-dev']), 1);
   assert.equal(
     h.errors[0],
-    'Development seed existing-record conflict (TransactionCanceledException / ConditionalCheckFailed): the confirmed transaction was canceled because at least one target record already exists. No items were written by this transaction.',
+    'Development seed prerequisite conflict (TransactionCanceledException / ConditionalCheckFailed): catalog readiness, slug ownership, or an existing target record prevented the transaction. No items were written by this transaction.',
   );
   assert.deepEqual(h.counts(), { clients: 1, sends: 1, destroys: 1 });
 });

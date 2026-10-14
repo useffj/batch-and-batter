@@ -5,7 +5,12 @@ import {
   type ProductFields,
 } from './products';
 import 'server-only';
-import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
+import {
+  createCipheriv,
+  createDecipheriv,
+  randomBytes,
+  createHash,
+} from 'node:crypto';
 import { NextResponse } from 'next/server';
 import { composition, id, record, text } from './contract';
 
@@ -48,7 +53,7 @@ export class AdminFailure extends Error {
     super(messages[code]);
   }
 }
-type Session = { token: string; expiresAt: number };
+type Session = { token: string; expiresAt: number; catalogScope?: string };
 type Challenge = {
   session: string;
   username: string;
@@ -240,6 +245,9 @@ async function identity(token: string, c: AdminConfig, fetcher: typeof fetch) {
     !text(body.username, 256)
   )
     throw new AdminFailure('INVALID', 502);
+  return createHash('sha256')
+    .update('product-create:' + body.subject)
+    .digest('hex');
 }
 export async function authorize(
   cookie: string,
@@ -251,8 +259,8 @@ export async function authorize(
     token = text(value.token, 3600);
   if (!/^[\w-]+\.[\w-]+\.[\w-]+$/.test(token))
     throw new AdminFailure('UNAUTHENTICATED', 401);
-  await identity(token, c, fetcher);
-  return { token, expiresAt: value.expiresAt as number };
+  const catalogScope = await identity(token, c, fetcher);
+  return { token, expiresAt: value.expiresAt as number, catalogScope };
 }
 async function cognito(
   action: string,
@@ -576,6 +584,23 @@ export async function catalogRelay(
         throw new AdminFailure('REQUEST', 400);
       path += '?cursor=' + encodeURIComponent(cursor);
     }
+    const creationKey = new URL(request.url).searchParams.get('creationKey');
+    const uuid =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    if (creationKey !== null) {
+      if (method !== 'GET' || productId || cursor || !uuid.test(creationKey))
+        throw new AdminFailure('REQUEST', 400);
+      path += '?creationKey=' + encodeURIComponent(creationKey);
+    }
+    const requestKey = request.headers.get('idempotency-key');
+    if (method === 'POST' && (!requestKey || !uuid.test(requestKey)))
+      return output(
+        {
+          code: 'IDEMPOTENCY_KEY_INVALID',
+          message: 'A valid creation request identity is required.',
+        },
+        400,
+      );
     let fields: ProductFields | undefined, revision: string | undefined;
     if (method !== 'GET') {
       try {
@@ -615,12 +640,31 @@ export async function catalogRelay(
         Authorization: `Bearer ${session.token}`,
         ...(fields ? { 'Content-Type': 'application/json' } : {}),
         ...(revision ? { 'If-Match': revision } : {}),
+        ...(method === 'POST' ? { 'Idempotency-Key': requestKey! } : {}),
       },
       ...(fields ? { body: JSON.stringify(fields) } : {}),
     });
     if (response.status === 401) throw new AdminFailure('EXPIRED', 401);
     if (response.status === 403) throw new AdminFailure('FORBIDDEN', 403);
-    if ([400, 404, 409].includes(response.status)) {
+    if ([400, 404, 409, 413, 503].includes(response.status)) {
+      const safeMessages: Record<string, string> = {
+        SLUG_CONFLICT:
+          'This slug is already used by another cookie, including inactive cookies. Choose another in Advanced Details.',
+        IDEMPOTENCY_CONFLICT:
+          'This creation request was already used with different details. Reconcile the original cookie first.',
+        PRODUCT_WRITES_NOT_READY:
+          'Product changes are not enabled until catalog preparation is complete.',
+        PRODUCT_INTEGRITY_CONFLICT:
+          'Catalog ownership needs operator attention. Nothing further should be saved.',
+        PRODUCT_TOO_LARGE:
+          'Cookie details exceed the safe storage size. Shorten the details before saving.',
+      };
+      const failure = await json(response);
+      if (typeof failure.code === 'string' && safeMessages[failure.code])
+        return output(
+          { code: failure.code, message: safeMessages[failure.code] },
+          response.status,
+        );
       return output(
         {
           code:
@@ -642,15 +686,22 @@ export async function catalogRelay(
     if (!response.ok) throw new AdminFailure('UNAVAILABLE', 502);
     const result = await json(
       response,
-      method === 'GET' && !productId ? 262144 : PRODUCT_JSON_LIMIT,
+      method === 'GET' && !productId && !creationKey
+        ? 262144
+        : PRODUCT_JSON_LIMIT,
       new ProductPayloadLimit(502),
     );
-    const validated =
-      method === 'GET' && !productId
+    const validated = creationKey
+      ? {
+          creation:
+            result.creation === null ? null : catalogProduct(result.creation),
+        }
+      : method === 'GET' && !productId
         ? catalogPage(result)
         : { product: catalogProduct(result.product) };
     if (
       'product' in validated &&
+      validated.product &&
       productId &&
       validated.product.productId !== productId
     )

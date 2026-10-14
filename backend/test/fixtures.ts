@@ -59,6 +59,7 @@ export function fakeRepository(
   overrides: Partial<CatalogRepository> = {},
 ): CatalogRepository {
   return {
+    getProductCreation: async () => undefined,
     listProducts: async () => ({ products: [] }),
     changeScheduled: async () => {
       throw new Error('Unexpected scheduled change');

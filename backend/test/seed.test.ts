@@ -67,9 +67,13 @@ test('11 items form one conditional transaction, including storefront pointer an
   const plan = buildSeedPlan(options, now);
   assert.equal(plan.items.length, 11);
   const transaction = seedTransaction(plan);
-  assert.equal(transaction.input.TransactItems?.length, 11);
+  assert.equal(transaction.input.TransactItems?.length, 14);
+  assert.deepEqual(transaction.input.TransactItems?.[0].ConditionCheck?.Key, {
+    PK: 'PRODUCT_INTEGRITY#V1',
+    SK: 'STATE',
+  });
   const keys = new Set();
-  for (const operation of transaction.input.TransactItems ?? []) {
+  for (const operation of transaction.input.TransactItems?.slice(1) ?? []) {
     assert.deepEqual(Object.keys(operation), ['Put']);
     assert.equal(operation.Put?.TableName, DEV_TABLE);
     assert.equal(
@@ -78,7 +82,7 @@ test('11 items form one conditional transaction, including storefront pointer an
     );
     keys.add(`${operation.Put?.Item?.PK}/${operation.Put?.Item?.SK}`);
   }
-  assert.equal(keys.size, 11);
+  assert.equal(keys.size, 13);
   const stocks = plan.items.filter((item) =>
     String(item.SK).startsWith('INVENTORY#'),
   );

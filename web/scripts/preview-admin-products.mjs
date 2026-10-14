@@ -23,8 +23,14 @@ import {summaryOf} from '/@fs/${web}src/lib/admin/products.ts';
 import '/@fs/${web}src/app/globals.css';
 import '/@fs/${web}src/app/admin/admin.css';
 const original = {productId:'01K00000000000000000000001',name:'Synthetic chocolate cookie',slug:'synthetic-chocolate-cookie',description:'Preview fixture only. No real catalog or AWS connection.',ingredients:['Synthetic flour','Synthetic cocoa'],allergens:['Wheat'],active:true,createdAt:'2026-10-01T12:00:00.000Z',updatedAt:'2026-10-01T12:00:00.000Z'};
+const recoveryMode=new URLSearchParams(location.search).has('recover');
+const fixtureKey='bb-synthetic-preview-fixtures';
+if(!recoveryMode){sessionStorage.removeItem('bb-product-create:synthetic-preview');sessionStorage.removeItem(fixtureKey);}
+const saved=recoveryMode?JSON.parse(sessionStorage.getItem(fixtureKey)||'null'):null;
 let products = new URLSearchParams(location.search).has('empty') ? [] : [original,{...original,productId:'01K00000000000000000000002',name:'Synthetic inactive cookie',slug:'synthetic-inactive-cookie',active:false}];
-let calls=0;
+let calls=saved?.calls||0;const receipts=new Map(saved?.receipts||[]);let loseOnce=saved?.loseOnce??new URLSearchParams(location.search).has('lost');
+if(saved)products=saved.products;
+const persist=()=>{if(recoveryMode)sessionStorage.setItem(fixtureKey,JSON.stringify({products,calls,receipts:[...receipts],loseOnce}));};
 window.fetch=async(input,init={})=>{
  const url=new URL(String(input),location.origin);if(url.origin!==location.origin || !url.pathname.startsWith('/api/admin/')) throw new Error('Preview blocks all non-mocked requests');
  await new Promise(r=>setTimeout(r,150));
@@ -32,11 +38,17 @@ window.fetch=async(input,init={})=>{
  if(url.pathname==='/api/admin/logout') return reply({revocationConfirmed:false});
  if(new URLSearchParams(location.search).has('error'))return reply({code:'UNAVAILABLE',message:'Synthetic service failure.'},503);
  const id=url.pathname.split('/')[4];const method=init.method||'GET';
+ if(url.searchParams.has('creationKey'))return reply({creation:receipts.get(url.searchParams.get('creationKey'))?.product||null});
  if(method==='GET')return id?products.some(p=>p.productId===id)?reply({product:products.find(p=>p.productId===id)}):reply({code:'PRODUCT_NOT_FOUND',message:'Synthetic product missing.'},404):reply({products:products.map(summaryOf),nextCursor:null,loadedAt:new Date().toISOString()});
  if(!['POST','PUT'].includes(method))throw new Error('Unsupported preview request');
  const {revision,...fields}=JSON.parse(init.body);const previous=products.find(p=>p.productId===id);
+ const key=new Headers(init.headers).get('idempotency-key');
+ const hash=JSON.stringify(fields);
+ if(method==='POST'&&!key)return reply({code:'IDEMPOTENCY_KEY_INVALID',message:'Synthetic creation identity missing.'},400);
+ if(method==='POST'&&receipts.has(key)){const old=receipts.get(key);return old.hash===hash?reply({product:old.product},201):reply({code:'IDEMPOTENCY_CONFLICT',message:'This creation request was already used with different details.'},409);}
+ if(products.some(p=>p.slug===fields.slug&&p.productId!==id))return reply({code:'SLUG_CONFLICT',message:'This slug is already used. Choose another in Advanced Details.'},409);
  if(method==='PUT'&&(!previous||previous.updatedAt!==revision))return reply({code:'PRODUCT_CONFLICT',message:'Synthetic stale revision.'},409);
- const stamp=new Date().toISOString();const p={...fields,productId:id||'01K000000000000000'+String(++calls+10).padStart(8,'0'),createdAt:previous?.createdAt||stamp,updatedAt:stamp};products=[p,...products.filter(x=>x.productId!==p.productId)];return reply({product:p},method==='POST'?201:200);
+ const stamp=new Date().toISOString();const p={...fields,productId:id||'01K000000000000000'+String(++calls+10).padStart(8,'0'),createdAt:previous?.createdAt||stamp,updatedAt:stamp};products=[p,...products.filter(x=>x.productId!==p.productId)];if(method==='POST'){receipts.set(key,{hash,product:structuredClone(p)});if(loseOnce){loseOnce=false;persist();throw new Error('Synthetic lost response after commit');}}persist();return reply({product:p},method==='POST'?201:200);
 };
 function Preview() {
  const [section,setSection]=useState('products'),[visit,setVisit]=useState(0);
@@ -54,7 +66,7 @@ function Preview() {
    document.addEventListener('click',navigate);
    return ()=>document.removeEventListener('click',navigate);
  },[]);
- return <><div style={{padding:'12px',background:'#ffedb6',fontFamily:'sans-serif'}} role="note"><strong>SYNTHETIC LOCAL PREVIEW</strong> — in-memory fixtures only. No authentication, AWS, or real business-data access. Sidebar navigation preserves this session; a full browser refresh resets fixtures. <a href="/?empty">Empty (reset)</a> · <a href="/?error">Error (reset)</a> · <a href="/">Catalog</a></div>{section==='products'?<Products key={visit} expiresAt={Date.now()+900000}/>:<div className="admin-shell"><AdminNavigation current="overview"/><main className="admin-main"><h1>Preview overview</h1><p>This preview demonstrates product management only. Use Products to return to your synthetic catalog. Your changes remain in memory until a full browser refresh.</p></main></div>}</>;
+ return <><div style={{padding:'12px',background:'#ffedb6',fontFamily:'sans-serif'}} role="note"><strong>SYNTHETIC LOCAL PREVIEW</strong> — in-memory fixtures only. No authentication, AWS, or real business-data access. Sidebar navigation preserves this session; a full browser refresh resets fixtures unless explicit synthetic recovery mode is selected. {recoveryMode&&<strong>Recovery mode: synthetic fixtures persist in this tab only.</strong>} <a href="/?empty">Empty (reset)</a> · <a href="/?error">Error (reset)</a> · <a href="/?lost">Lost response (reset)</a> · <a href="/?recover&amp;lost">Reload recovery (synthetic only)</a> · <a href="/">Catalog</a></div>{section==='products'?<Products catalogScope="synthetic-preview" key={visit} expiresAt={Date.now()+900000}/>:<div className="admin-shell"><AdminNavigation current="overview"/><main className="admin-main"><h1>Preview overview</h1><p>This preview demonstrates product management only. Use Products to return to your synthetic catalog. Changes remain in memory; explicit recovery mode also preserves synthetic fixtures across reloads in this tab.</p></main></div>}</>;
 }
 createRoot(document.getElementById('root')).render(<Preview/>);
 `,

@@ -1,3 +1,4 @@
+import { ProductIntegrity, type CreationIdentity } from './product-integrity';
 import {
   GetCommand,
   ScanCommand,
@@ -60,7 +61,11 @@ export interface CatalogRepository {
     PK: string;
     SK: string;
   }): Promise<{ products: Product[]; cursor?: { PK: string; SK: string } }>;
-  createProduct(product: Product): Promise<void>;
+  createProduct(
+    product: Product,
+    identity?: CreationIdentity,
+  ): Promise<Product | void>;
+  getProductCreation(identity: CreationIdentity): Promise<Product | undefined>;
   replaceProduct(product: Product, previous: Product): Promise<void>;
   createDraftDrop(drop: Drop): Promise<void>;
   replaceDraftDrop(drop: Drop, previous: Drop): Promise<void>;
@@ -900,9 +905,17 @@ export class DynamoCatalogRepository implements CatalogRepository {
       throw new CatalogWriteError(draft ? 'DROP_CONFLICT' : 'PRODUCT_CONFLICT');
     }
   }
-  async createProduct(product: Product) {
+  async getProductCreation(identity: CreationIdentity) {
+    return (
+      await new ProductIntegrity(this.client, this.tableName).result(identity)
+    )?.product;
+  }
+  async createProduct(product: Product, identity?: CreationIdentity) {
     const item = productSchema.parse(product);
-    await this.put(item, catalogKeys.product(item.productId));
+    return new ProductIntegrity(this.client, this.tableName).create(
+      item,
+      identity!,
+    );
   }
   async replaceProduct(product: Product, previous: Product) {
     const item = productSchema.parse(product);
@@ -912,7 +925,10 @@ export class DynamoCatalogRepository implements CatalogRepository {
       previous,
       item.productId === previous.productId,
     );
-    await this.put(item, catalogKeys.product(item.productId), previous);
+    await new ProductIntegrity(this.client, this.tableName).replace(
+      item,
+      previous,
+    );
   }
   async createDraftDrop(drop: Drop) {
     const item = dropSchema.parse(drop);

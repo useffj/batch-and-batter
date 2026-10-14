@@ -108,7 +108,11 @@ export function createHandler(
           return json(200, { dropId });
         }
         if (catalogRoutes.includes(event.routeKey)) {
-          const result = await adminCatalog(event, getRepository);
+          const result = await adminCatalog(
+            event,
+            getRepository,
+            identity.subject,
+          );
           return json(result.status, result.body);
         }
         const result = scheduledRoutes.includes(event.routeKey)
@@ -128,7 +132,7 @@ export function createHandler(
                   ? await adminPublish(event, getRepository, getSchedules)
                   : compositionRoutes.includes(event.routeKey)
                     ? await adminComposition(event, getRepository)
-                    : await adminWrite(event, getRepository);
+                    : await adminWrite(event, getRepository, identity.subject);
         return json(result.status, result.body);
       } catch (failure) {
         if (failure instanceof AdminError)

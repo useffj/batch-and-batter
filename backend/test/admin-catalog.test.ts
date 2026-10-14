@@ -18,6 +18,7 @@ const claims = {
 function event(route = 'GET /admin/products'): ApiEvent {
   return {
     routeKey: route,
+    headers: { 'idempotency-key': '11111111-1111-4111-8111-111111111111' },
     pathParameters: { productId: product.productId },
     requestContext: {
       requestId: 'catalog-test',
