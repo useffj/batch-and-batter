@@ -5,6 +5,7 @@ export async function productRequest(
   body?: unknown,
   signal?: AbortSignal,
   transport: typeof fetch = fetch,
+  creationKey?: string,
 ) {
   const response = await transport('/api/admin/products' + path, {
     method,
@@ -12,7 +13,10 @@ export async function productRequest(
     cache: 'no-store',
     redirect: 'error',
     signal: signal ?? AbortSignal.timeout(15000),
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(creationKey ? { 'Idempotency-Key': creationKey } : {}),
+    },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   const data = await response.json();

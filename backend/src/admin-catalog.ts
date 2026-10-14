@@ -1,3 +1,4 @@
+import { validateIdentity } from './product-integrity';
 import { z } from 'zod';
 import type { ApiEvent } from './api';
 import type { CatalogRepository } from './repository';
@@ -35,6 +36,7 @@ export const catalogRoutes = [
 export async function adminCatalog(
   event: ApiEvent,
   repository: () => CatalogRepository,
+  subject?: string,
 ) {
   if (event.routeKey === catalogRoutes[1]) {
     const id = validate(idSchema, event.pathParameters?.productId);
@@ -42,6 +44,22 @@ export async function adminCatalog(
     if (!product)
       throw new AdminError(404, 'PRODUCT_NOT_FOUND', 'Product not found.');
     return { status: 200, body: { product: productDto(product) } };
+  }
+  const requestKey = event.queryStringParameters?.creationKey;
+  if (requestKey !== undefined) {
+    if (event.queryStringParameters?.cursor !== undefined)
+      throw new AdminError(
+        400,
+        'VALIDATION_ERROR',
+        'Conflicting catalog query.',
+      );
+    const product = await repository().getProductCreation(
+      validateIdentity({ subject: subject!, key: requestKey }),
+    );
+    return {
+      status: 200,
+      body: { creation: product ? productDto(product) : null },
+    };
   }
   let cursor: { PK: string; SK: string } | undefined;
   const encoded = event.queryStringParameters?.cursor;

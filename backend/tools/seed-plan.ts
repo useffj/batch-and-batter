@@ -1,3 +1,8 @@
+import {
+  integrityReadyKey,
+  slugKey,
+  checkIntegritySizes,
+} from '../src/product-integrity';
 import { parseArgs } from 'node:util';
 import { TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
 import {
@@ -203,13 +208,41 @@ export function seedTransaction(plan: SeedPlan) {
     plan.profile !== DEV_PROFILE
   )
     throw new Error('Invalid development seed target.');
+  const claims = plan.items
+    .filter(
+      (i) =>
+        typeof i.PK === 'string' &&
+        i.PK.startsWith('PRODUCT#') &&
+        i.SK === 'META',
+    )
+    .map((i) => {
+      const { PK, SK, ...fields } = i;
+      const product = productSchema.parse(fields);
+      return {
+        ...slugKey(product.slug),
+        canonicalSlug: product.slug,
+        productId: product.productId,
+      };
+    });
+  checkIntegritySizes([...plan.items, ...claims]);
   return new TransactWriteCommand({
-    TransactItems: plan.items.map((Item) => ({
-      Put: {
-        TableName: plan.table,
-        Item,
-        ConditionExpression: 'attribute_not_exists(PK)',
+    TransactItems: [
+      {
+        ConditionCheck: {
+          TableName: plan.table,
+          Key: integrityReadyKey,
+          ConditionExpression: '#v = :v AND #s = :s',
+          ExpressionAttributeNames: { '#v': 'version', '#s': 'state' },
+          ExpressionAttributeValues: { ':v': 1, ':s': 'READY' },
+        },
       },
-    })),
+      ...[...plan.items, ...claims].map((Item) => ({
+        Put: {
+          TableName: plan.table,
+          Item,
+          ConditionExpression: 'attribute_not_exists(PK)',
+        },
+      })),
+    ],
   });
 }

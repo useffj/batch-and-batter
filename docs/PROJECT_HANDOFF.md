@@ -2,6 +2,223 @@
 
 Last reviewed: **October 9, 2026 (America/Denver)**. Documentation-only checkpoint; no cloud inspection or hosted execution performed for this update.
 
+## October 14, 2026 — 1B-1A integration review follow-up
+
+This later review supersedes the validation gaps in the implementation entry
+below. Branch and baseline remain `codex/admin-product-integrity-1b1a` and
+`1987371c27efdb3acc2317b27c97e4834b8df551`. The initial 22-file change set was
+preserved; two focused test files were added, for 24 uncommitted files. No commit,
+push, AWS API call, deployment, live data write or migration occurred. The original
+payment-testing worktree was not modified. Hosting statements below are historical,
+not fresh AWS verification. Hosted duplicate-activation acceptance is **NOT PASSED**.
+
+Verified defects corrected:
+
+- A receipt arriving between a failed transaction's reconciliation and diagnostic
+  reads could incorrectly produce SLUG_CONFLICT. A final durable receipt read now
+  takes precedence over the apparent conflict.
+- Transaction cancellations with validation reasons could be mislabeled as slug
+  conflicts. Business diagnostics now require confirmed, positional conditional
+  failures. Unknown timeouts and transaction conflicts remain ambiguous without a
+  receipt; bounded retries preserve the identity. Unexpected cancellations fail
+  closed through existing sanitized API errors.
+- An uncertain/resumed browser creation could discard its pending key after a
+  later non-ambiguous rejection. It now retains the key and frozen retry details
+  until reconciliation. Recovery also respects session expiration/logout.
+- Stale edits after rename now report PRODUCT_CONFLICT instead of an ownership
+  inconsistency. Slug help text now describes inactive-cookie slug reservation.
+
+Local integration engine: official AWS DynamoDB Local **3.3.1**, temporary
+Amazon Corretto **21.0.12.1** for macOS arm64, under
+`/tmp/bb-integrity-dynamodb-local`. Both archives were downloaded over verified
+HTTPS from official AWS distribution links and checked against official SHA-256
+files before extraction/execution:
+
+- DynamoDB archive: `f80bcec477f85f57e2c77f8d54aa6b672a8403fceff0c450560aee1cf6c21163`.
+- Corretto archive: `8594556550766865662411ef3a7a71a66df9a9065f28a7b318a5352bda91b6a4`.
+
+The temporary launcher bound Jetty to **127.0.0.1:18765 before starting**;
+`lsof` confirmed loopback-only listening. In-memory mode, telemetry disabled,
+synthetic records, explicit dummy credentials and no AWS profile were used.
+[The opt-in integration script](../backend/scripts/test-product-integrity-local.mjs)
+hardcodes the endpoint and checks hostname, port and protocol at the SDK request
+boundary; it cannot silently fall back to AWS. It creates uniquely named local
+tables and deletes them in cleanup. No project dependency or system runtime
+installation was needed. Run `tsc` in `backend`, start the isolated engine as above,
+then `node scripts/test-product-integrity-local.mjs`; do not run the live seed CLI.
+
+**12 real-engine integration groups passed:** atomic creation; original replay;
+changed-payload conflict; administrator scope; concurrent identical and competing
+requests; inactive slug reservation; atomic rename/former-slug reuse; stale edits;
+rollback; replay after edits; readiness and bad ownership; Product/receipt limits
+(including an exact 358,400-byte receipt and one-byte-over rejection); internal
+record filtering and pagination; readiness revocation at transaction boundary;
+real commit followed by injected response loss; development seed prerequisites,
+claims and rollback; empty filtered continuation; concurrent same-key different
+payloads. Seed commands were remapped to isolated local test tables, never sent
+to DEV. Product, owner, receipt and readiness keys do not overlap in a transaction.
+
+[Six injected-failure tests](../backend/test/product-integrity-failures.test.ts)
+cover late receipts, validation cancellation, transaction-conflict retry, ambiguous
+timeouts with an occupied slug, and corrupted receipts. The first two regressions
+failed before correction and passed afterward. The real-engine lost-response case
+uses an injected transport failure after an actual local commit.
+
+DynamoDB Local does not emit every managed-service conflict behavior and does not
+model production throughput/timing. This is not proof of every production race.
+See [AWS local usage notes](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/DynamoDBLocal.UsageNotes.html),
+[official distribution](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/DynamoDBLocal.DownloadingAndRunning.html)
+and [Corretto downloads](https://docs.aws.amazon.com/corretto/latest/corretto-21-ug/downloads-list.html).
+
+Synthetic browser checks passed: Add Cookie/automatic slug, duplicate warning,
+same-identity lost-response retry with one record, navigation persistence, saved
+slug rename, deactivation cancel/confirm, and full-reload recovery. Safari native
+accessibility successfully handled both confirmation and before-unload dialogs.
+The explicit preview `?recover&lost` mode retains only synthetic fixture state in
+that tab's sessionStorage to model a durable backend across reloads; ordinary
+preview reset modes still clear it. Production stores only the scoped operation
+UUID, not fixture state or credentials. After reload, Add Cookie stayed disabled
+until Check creation result recovered the original cookie. At 375px, document
+width equaled viewport width with readable controls and no horizontal overflow;
+keyboard Tab moved between labeled inputs and Enter expanded Advanced Details.
+These checks are not a comprehensive accessibility audit or hosted acceptance.
+
+Fresh validation: **462 frontend tests, 978 backend tests, 10 backend artifact
+checks, and 12 local database integration groups passed**. Backend/frontend type
+checks, frontend lint, backend build, frontend production build, formatting and
+`git diff --check` passed. Prior 461/972/10 counts below are historical.
+Infrastructure was unchanged; its prior 37 passing tests were not rerun.
+
+Source-control disposition: **READY FOR SOURCE-CONTROL CHECKPOINT**, subject to
+separate commit/push authorization and deployment-trigger verification. No
+remaining verified application defect was identified. The historical catalog
+backfill, duplicate-owner decisions, writer quiescence/retirement, complete
+ownership verification and explicit readiness activation remain separate release
+requirements. Receipts remain indefinite/no-TTL; pagination remains non-snapshot;
+closing a tab/clearing storage requires manual catalog reconciliation before
+recreating an uncertain operation. No live product-creation acceptance is granted.
+
+## October 14, 2026 — 1B-1A local Product integrity implementation
+
+Uncommitted local implementation on `codex/admin-product-integrity-1b1a`, based
+on merged main `1987371c27efdb3acc2317b27c97e4834b8df551` (PR #59; post-merge
+CI passed). No deployment, migration, readiness activation or business-data
+writes occurred. Admin DEV remains Job 1; public main remains Job 9.
+
+Product records retain their existing strict schema and IDs. New internal Catalog
+items use `PRODUCT_SLUG#<sha256(canonicalSlug)> / OWNER`,
+`PRODUCT_CREATE#<sha256(JSON([subject, lowercase UUID]))> / RESULT`, and
+`PRODUCT_INTEGRITY#V1 / STATE`. Slug records store canonicalSlug and productId.
+The readiness item must have `version: 1, state: READY`; missing/incomplete state
+blocks writes. No implementation path creates this readiness item.
+
+POST requires an Idempotency-Key UUID, scoped to authenticated Cognito subject
+and Product creation. Receipt version 1 hashes fixed-order JSON
+`[1,name,slug,description,ingredients,allergens,active]` after existing validation;
+array order and meaningful text remain significant. The completed receipt stores
+subject, normalized request key, version, hash, original Product and completion
+time. Receipts have no TTL. Replays return the original 201 Product even after
+later edits; different payloads return 409 IDEMPOTENCY_CONFLICT. Same display
+names are allowed; inactive Products continue to own their slugs.
+
+Creation transaction: readiness condition plus three conditional Puts (Product,
+slug owner, receipt). Rename transaction: readiness condition, revision-protected
+Product Put, new slug claim, owner-checked old slug Delete. Unchanged slugs require
+an ownership condition. Stored canonical slugs are compared; digest/ownership
+inconsistency fails closed. Occupied slugs return 409 SLUG_CONFLICT. Former slugs
+are reusable after a successful rename. Reevaluate redirects before introducing
+customer-facing slug URLs. Creation attempts reconcile a strongly consistent
+receipt after errors and use bounded retries; no short-lived DynamoDB token is
+used as the durable guarantee. Legacy unkeyed repository creates fail closed.
+
+Safe size policy: at most 358,400 serialized UTF-8 JSON bytes per written Product,
+owner or receipt item, and at most 1,048,576 aggregate serialized bytes checked
+before writes. These conservative ceilings leave room below DynamoDB's 400-KiB
+item and 4-MiB transaction limits. They intentionally reject some otherwise
+storable large values, including large escaped strings, without truncation.
+Oversize returns 413 PRODUCT_TOO_LARGE; no partial record or receipt is retained.
+The Product edit path applies the same item ceiling. Existing larger records are
+not rewritten or removed automatically. Existing frontend 4-MiB full-detail and
+256-KiB list/auth transport limits remain unchanged.
+
+Browser creation uses a UUID per Add Cookie editor. Frozen in-memory submission
+fields and the same identity are reused after an ambiguous failure. Tab-local
+sessionStorage holds only the UUID under an authenticated server-derived subject
+scope hash; no fields, access tokens or session secrets are stored. Navigation or
+reload offers receipt reconciliation through the existing protected catalog GET
+with `creationKey`, or resumption with the original identity and reentered fields.
+A different completed payload conflicts. Successful replay is followed by a fresh
+Product detail read before editing. Closing the tab/clearing browser storage
+loses the local reference: do not blindly recreate; reconcile the catalog first.
+Independent intentional operations in other tabs are still separate operations.
+
+The development seed transaction now also checks readiness and claims its Product
+slugs atomically; its fixed IDs still prevent rerun overwrites. Its error report
+now distinguishes prerequisite failure from an assertion that a record exists.
+Drop/inventory seed values and ordinary Drop/inventory/payment behavior are not
+changed. This does not authorize running the seed tool.
+
+Required separate rollout: quiesce Product writers; inventory all existing
+Products; detect duplicate slugs including inactive; obtain owner decisions;
+conditionally backfill owners while checking revisions; verify complete ownership;
+retire old writer deployments; activate readiness only after verification.
+No live table scan or migration was run. Do not infer migration completeness from
+ordinary catalog pagination. Pagination remains bounded, deduplicated in the UI,
+and not a cross-page snapshot; fresh detail and revision checks protect edits.
+
+Validation uses a synthetic serializable transaction model that checks all
+conditions against one pre-commit state before applying writes. It exercises
+races, rollback, lost responses, durable replay and readiness changes. It is NOT
+DynamoDB Local or live DynamoDB proof. Docker is unavailable and the system Java
+launcher reports no installed runtime. Real DynamoDB transaction integration
+validation remains outstanding; no full service-concurrency claim is made.
+Synthetic browser checks confirmed creation after a lost-response retry creates
+one cookie, navigation persistence, and a clear duplicate-slug message. Remaining
+visual rename/recovery checks were blocked by browser automation stalling on a
+native discard dialog; automated rename/recovery coverage is recorded separately.
+The preview remains loopback-only, outside Next routes/builds, with synthetic
+fixtures; `?lost` demonstrates a committed create whose first response is lost.
+Full preview reload resets its synthetic store and recovery reference, unlike
+production's durable backend and tab-local recovery metadata.
+
+Final local validation: **461 frontend tests, 972 backend tests, 10 backend
+artifact checks passed**, zero failures/skips. Backend and frontend type checks,
+frontend lint, backend artifact build, frontend production build, formatting and
+`git diff --check` passed. Infrastructure files and IAM are unchanged; the prior
+37-test infrastructure result was not rerun for this slice. No hosted tests ran.
+The old Product single-Put assertions were replaced by transaction-level synthetic
+coverage; unchanged Drop persistence tests remain. Before source-control approval,
+review these 22 files and the outstanding real-DynamoDB/visual validation limits.
+
+Exact changed-file inventory (relative to the MVP workspace):
+
+- `backend/src/admin-catalog.ts`
+- `backend/src/admin-writes.ts`
+- `backend/src/api.ts`
+- `backend/src/product-integrity.ts`
+- `backend/src/repository.ts`
+- `backend/test/admin-catalog.test.ts`
+- `backend/test/admin-writes.test.ts`
+- `backend/test/fixtures.ts`
+- `backend/test/product-integrity.test.ts`
+- `backend/test/repository-writes.test.ts`
+- `backend/test/seed-errors.test.ts`
+- `backend/test/seed.test.ts`
+- `backend/tools/seed-dev.ts`
+- `backend/tools/seed-plan.ts`
+- `docs/PROJECT_HANDOFF.md`
+- `web/scripts/preview-admin-products.mjs`
+- `web/src/app/admin/products/page.tsx`
+- `web/src/components/admin/products.tsx`
+- `web/src/lib/admin/creation-state.ts`
+- `web/src/lib/admin/product-client.ts`
+- `web/src/lib/admin/products.test.ts`
+- `web/src/lib/admin/server.ts`
+
+No new AWS resources, table/index, IAM permissions, dependency upgrades, pricing,
+media or Product schema fields. Product media remains 1B-2; per-Drop pricing and
+inventory remain 1C. Hosted duplicate-activation acceptance remains NOT PASSED.
+
 ## October 14, 2026 — Admin DEV manual acceptance update
 
 This later, scoped update supersedes the historical resumption point below for

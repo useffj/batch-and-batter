@@ -34,18 +34,12 @@ function setup(responses: (Record<string, unknown> | Error)[]) {
     commands,
   };
 }
-test('creations use only conditional PutItem at Product/Drop META keys', async () => {
-  const { repository, commands } = setup([{}, {}]);
-  await repository.createProduct(product);
+test('creations use only conditional PutItem at Drop META keys', async () => {
+  const { repository, commands } = setup([{}]);
   await repository.createDraftDrop(draft);
   assert.deepEqual(
     commands.map((command) => command.input),
     [
-      {
-        TableName: 'test-catalog',
-        Item: { ...product, ...catalogKeys.product(product.productId) },
-        ConditionExpression: 'attribute_not_exists(PK)',
-      },
       {
         TableName: 'test-catalog',
         Item: { ...draft, ...catalogKeys.drop(draft.dropId) },
@@ -56,26 +50,11 @@ test('creations use only conditional PutItem at Product/Drop META keys', async (
   assert.ok(commands.every((command) => command instanceof PutCommand));
 });
 test('replacement guards existence, previous version, creation timestamp and DRAFT status at write time', async () => {
-  const { repository, commands } = setup([{}, {}]);
-  await repository.replaceProduct(nextProduct, product);
+  const { repository, commands } = setup([{}]);
   await repository.replaceDraftDrop(nextDrop, draft);
   assert.deepEqual(
     commands.map((command) => command.input),
     [
-      {
-        TableName: 'test-catalog',
-        Item: { ...nextProduct, ...catalogKeys.product(product.productId) },
-        ConditionExpression:
-          'attribute_exists(PK) AND #created = :created AND #updated = :updated',
-        ExpressionAttributeNames: {
-          '#created': 'createdAt',
-          '#updated': 'updatedAt',
-        },
-        ExpressionAttributeValues: {
-          ':created': product.createdAt,
-          ':updated': product.updatedAt,
-        },
-      },
       {
         TableName: 'test-catalog',
         Item: { ...nextDrop, ...catalogKeys.drop(draft.dropId) },
@@ -96,7 +75,7 @@ test('replacement guards existence, previous version, creation timestamp and DRA
   );
 });
 test('conditional create failures become conflicts with no fallback writes', async () => {
-  for (const kind of ['product', 'drop'] as const) {
+  for (const kind of ['drop'] as string[]) {
     const { repository, commands } = setup([conditionalFailure()]);
     await assert.rejects(
       kind === 'product'
@@ -112,8 +91,6 @@ test('conditional create failures become conflicts with no fallback writes', asy
 });
 test('conditional replace failures distinguish deletion, concurrent edit and concurrent publication', async () => {
   for (const [kind, current, code] of [
-    ['product', undefined, 'PRODUCT_NOT_FOUND'],
-    ['product', nextProduct, 'PRODUCT_CONFLICT'],
     ['drop', undefined, 'DROP_NOT_FOUND'],
     ['drop', nextDrop, 'DROP_CONFLICT'],
     ...(
@@ -129,18 +106,13 @@ test('conditional replace failures distinguish deletion, concurrent edit and con
       (status) => ['drop', { ...draft, status }, 'DROP_NOT_EDITABLE'] as const,
     ),
   ] as const) {
-    const key =
-      kind === 'product'
-        ? catalogKeys.product(product.productId)
-        : catalogKeys.drop(drop.dropId);
+    const key = catalogKeys.drop(drop.dropId);
     const { repository, commands } = setup([
       conditionalFailure(),
       current ? { Item: { ...current, ...key } } : {},
     ]);
     await assert.rejects(
-      kind === 'product'
-        ? repository.replaceProduct(nextProduct, product)
-        : repository.replaceDraftDrop(nextDrop, draft),
+      repository.replaceDraftDrop(nextDrop, draft),
       (error: unknown) =>
         error instanceof CatalogWriteError && error.code === code,
     );
@@ -187,72 +159,13 @@ test('repository independently rejects invalid records, non-DRAFT state and chan
 });
 test('unexpected SDK failures are propagated without retries or conversion into conflicts', async () => {
   const failure = new Error('private SDK failure');
-  for (const operation of [
-    'createProduct',
-    'replaceProduct',
-    'createDraftDrop',
-    'replaceDraftDrop',
-  ] as const) {
+  for (const operation of ['createDraftDrop', 'replaceDraftDrop'] as const) {
     const { repository, commands } = setup([failure]);
     const promise =
-      operation === 'createProduct'
-        ? repository.createProduct(product)
-        : operation === 'replaceProduct'
-          ? repository.replaceProduct(nextProduct, product)
-          : operation === 'createDraftDrop'
-            ? repository.createDraftDrop(draft)
-            : repository.replaceDraftDrop(nextDrop, draft);
+      operation === 'createDraftDrop'
+        ? repository.createDraftDrop(draft)
+        : repository.replaceDraftDrop(nextDrop, draft);
     await assert.rejects(promise, (error) => error === failure);
     assert.equal(commands.length, 1);
   }
-});
-
-test('an in-memory conditional store permits only one of two overlapping replacements and never upserts', async () => {
-  let stored: Record<string, unknown> | undefined = {
-    ...product,
-    ...catalogKeys.product(product.productId),
-  };
-  const client = {
-    send: async (command: PutCommand | GetCommand) => {
-      if (command instanceof GetCommand) return { Item: stored };
-      assert.ok(command instanceof PutCommand);
-      const input = command.input;
-      const values = input.ExpressionAttributeValues!;
-      // Interpret the asserted replacement condition against current state.
-      if (
-        !stored ||
-        stored.createdAt !== values[':created'] ||
-        stored.updatedAt !== values[':updated'] ||
-        (values[':draft'] && stored.status !== values[':draft'])
-      )
-        throw conditionalFailure();
-      stored = { ...input.Item };
-      return {};
-    },
-  } as unknown as Pick<DynamoDBDocumentClient, 'send'>;
-  const repository = new DynamoCatalogRepository(client, 'test-catalog');
-  const results = await Promise.allSettled([
-    repository.replaceProduct(nextProduct, product),
-    repository.replaceProduct(
-      { ...nextProduct, name: 'Competing edit' },
-      product,
-    ),
-  ]);
-  assert.equal(
-    results.filter((result) => result.status === 'fulfilled').length,
-    1,
-  );
-  const rejected = results.find((result) => result.status === 'rejected');
-  assert.ok(
-    rejected?.status === 'rejected' &&
-      rejected.reason.code === 'PRODUCT_CONFLICT',
-  );
-  assert.equal(stored!.name, 'Changed');
-  stored = undefined;
-  await assert.rejects(
-    repository.replaceProduct(nextProduct, product),
-    (error: unknown) =>
-      error instanceof CatalogWriteError && error.code === 'PRODUCT_NOT_FOUND',
-  );
-  assert.equal(stored, undefined);
 });

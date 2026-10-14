@@ -1,4 +1,9 @@
 'use client';
+import {
+  canReleaseCreation,
+  pendingCreation,
+  rememberCreation,
+} from '../../lib/admin/creation-state';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AdminNavigation } from './navigation';
 import { adminRequest, ClientFailure } from '../../lib/admin/client';
@@ -18,7 +23,56 @@ import {
   type ProductFields,
 } from '../../lib/admin/products';
 
-export function Products({ expiresAt }: { expiresAt: number }) {
+export function Products({
+  expiresAt,
+  catalogScope,
+}: {
+  expiresAt: number;
+  catalogScope?: string;
+}) {
+  const storageKey = catalogScope
+    ? 'bb-product-create:' + catalogScope
+    : undefined;
+  const [creationVisit, setCreationVisit] = useState(0);
+  const [pending, setPending] = useState<string | null>(null);
+  const [recovery, setRecovery] = useState('');
+  useEffect(() => {
+    if (storageKey) {
+      try {
+        setPending(pendingCreation(sessionStorage, storageKey));
+      } catch {
+        setRecovery(
+          'Browser recovery storage is unavailable. Creation is disabled.',
+        );
+      }
+    }
+  }, [storageKey]);
+  async function reconcile() {
+    if (!pending) return;
+    try {
+      const r = await productRequest(
+        '?creationKey=' + encodeURIComponent(pending),
+      );
+      if (!r.creation) {
+        setRecovery(
+          'Creation is not yet confirmed. Check again, or resume this same request with the original cookie details. A different completed payload will be rejected.',
+        );
+        return;
+      }
+      const original = catalogProduct(r.creation);
+      const current = catalogProduct(
+        (await productRequest('/' + original.productId)).product,
+      );
+      if (locked.current || Date.now() >= expiresAt) return;
+      if (storageKey) sessionStorage.removeItem(storageKey);
+      setPending(null);
+      setRecovery('');
+      setEditing(current);
+      void load();
+    } catch (e) {
+      failure(e);
+    }
+  }
   const [products, setProducts] = useState<CatalogSummary[]>([]),
     [cursor, setCursor] = useState<string | null>(null),
     [busy, setBusy] = useState(true),
@@ -119,6 +173,7 @@ export function Products({ expiresAt }: { expiresAt: number }) {
     setNotice('');
     setError('');
     if (!id) {
+      setCreationVisit((v) => v + 1);
       setEditing('new');
       return;
     }
@@ -186,7 +241,14 @@ export function Products({ expiresAt }: { expiresAt: number }) {
               Refresh
             </button>
             <button
-              disabled={busy || saving || locked.current}
+              disabled={
+                busy ||
+                saving ||
+                locked.current ||
+                !!pending ||
+                !!recovery ||
+                !storageKey
+              }
               onClick={() => void select()}
             >
               Add Cookie
@@ -219,12 +281,38 @@ export function Products({ expiresAt }: { expiresAt: number }) {
             {error}
           </p>
         )}
+        {pending && !editing && (
+          <section className="admin-card" role="status">
+            <p>
+              A previous cookie creation needs confirmation before another can
+              begin. {recovery}
+            </p>
+            <button onClick={() => void reconcile()} disabled={busy}>
+              Check creation result
+            </button>
+            <button
+              disabled={busy}
+              onClick={() => {
+                setEditing('new');
+                setRecovery('');
+              }}
+            >
+              Resume same creation
+            </button>
+          </section>
+        )}
+        {recovery && !pending && <p role="alert">{recovery}</p>}
         {editing && (
           <ProductEditor
+            pendingIdentity={pending}
+            storageKey={storageKey}
+            onPending={setPending}
             onBusy={setSaving}
             onUnauthorized={failure}
             key={
-              editing === 'new' ? 'new' : editing.productId + editing.updatedAt
+              editing === 'new'
+                ? 'new' + creationVisit
+                : editing.productId + editing.updatedAt
             }
             product={editing === 'new' ? undefined : editing}
             onDirty={(v) => {
@@ -303,7 +391,13 @@ export function ProductEditor({
   onDirty,
   onBusy,
   onUnauthorized,
+  storageKey,
+  pendingIdentity,
+  onPending,
 }: {
+  storageKey?: string;
+  pendingIdentity?: string | null;
+  onPending?: (key: string | null) => void;
   product?: CatalogProduct;
   onSaved: (p: CatalogProduct) => void;
   onClose: () => void;
@@ -323,16 +417,20 @@ export function ProductEditor({
     [uncertain, setUncertain] = useState(false),
     [advanced, setAdvanced] = useState(false),
     [manualSlug, setManualSlug] = useState(false);
+  const requestIdentity = useRef<string | null>(pendingIdentity ?? null);
+  const submitted = useRef<ProductFields | null>(null);
+  const mustReconcile = useRef(!!pendingIdentity);
   const gate = useRef(submissionGate()),
     alive = useRef(true),
     heading = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
     alive.current = true;
+    if (!product) requestIdentity.current ??= crypto.randomUUID();
     heading.current?.focus();
     return () => {
       alive.current = false;
     };
-  }, []);
+  }, [product]);
   useEffect(() => {
     onBusy?.(busy);
     return () => onBusy?.(false);
@@ -354,11 +452,11 @@ export function ProductEditor({
   }
   async function submit() {
     await gate.current(async () => {
-      if (uncertain) return;
+      if (uncertain && product) return;
       // Preserve unchanged arrays exactly; split only edited text into explicit entries.
       const parse = (value: string) =>
         value === '' ? [] : value.split('\n').map((x) => x.trim());
-      const data = {
+      const data = submitted.current ?? {
         ...fields,
         ingredients:
           ingredients === initial.ingredients.join('\n')
@@ -386,12 +484,30 @@ export function ProductEditor({
       setBusy(true);
       setMessage('');
       try {
+        if (!product) {
+          if (!storageKey) throw new Error('Recovery scope unavailable');
+          requestIdentity.current ??= crypto.randomUUID();
+          rememberCreation(sessionStorage, storageKey, requestIdentity.current);
+          onPending?.(requestIdentity.current);
+          submitted.current = data;
+        }
         const r = await productRequest(
           product ? '/' + product.productId : '',
           product ? 'PUT' : 'POST',
           { ...data, ...(product ? { revision: product.updatedAt } : {}) },
+          undefined,
+          fetch,
+          product ? undefined : requestIdentity.current!,
         );
-        const saved = catalogProduct(r.product);
+        let saved = catalogProduct(r.product);
+        if (!product) {
+          mustReconcile.current = true;
+          saved = catalogProduct(
+            (await productRequest('/' + saved.productId)).product,
+          );
+          if (storageKey) sessionStorage.removeItem(storageKey);
+          onPending?.(null);
+        }
         if (alive.current) onSaved(saved);
       } catch (e) {
         if (!alive.current) return;
@@ -403,13 +519,29 @@ export function ProductEditor({
           }
           return;
         }
-        const ambiguous = !(e instanceof ClientFailure) || e.status >= 500;
+        const ambiguous =
+          !(e instanceof ClientFailure) ||
+          (e.status >= 500 && e.code !== 'PRODUCT_WRITES_NOT_READY');
+        if (ambiguous) mustReconcile.current = true;
+        if (
+          !product &&
+          e instanceof ClientFailure &&
+          canReleaseCreation(mustReconcile.current, e.code)
+        ) {
+          submitted.current = null;
+          if (storageKey) sessionStorage.removeItem(storageKey);
+          onPending?.(null);
+        }
         setUncertain(
-          ambiguous || (e instanceof ClientFailure && e.status === 409),
+          ambiguous ||
+            (!product && mustReconcile.current) ||
+            (!!product && e instanceof ClientFailure && e.status === 409),
         );
         setMessage(
           ambiguous
-            ? 'Save outcome is unknown. Close this form and refresh the catalog before attempting another save.'
+            ? product
+              ? 'Save outcome is unknown. Close this form and refresh the catalog before attempting another save.'
+              : 'Creation is not confirmed. Retry uses the same request and details. If you leave this page, check the creation result before starting another cookie.'
             : e instanceof ClientFailure
               ? e.message
               : 'Save failed.',
@@ -489,8 +621,8 @@ export function ProductEditor({
             <p id="slug-help" className="admin-muted">
               A short system label generated from the cookie name. You usually
               do not need to change it. Saved labels stay unchanged when
-              renaming a cookie. This is not a product web address; uniqueness
-              is not guaranteed.
+              renaming a cookie. This is not a product web address. Each saved
+              cookie reserves its slug, including inactive cookies.
             </p>
             {errors.slug && (
               <span id="error-slug" className="admin-field-error">
@@ -543,9 +675,15 @@ export function ProductEditor({
         <div className="admin-actions">
           <button
             type="submit"
-            disabled={busy || uncertain || (!!product && !changed)}
+            disabled={
+              busy || (uncertain && !!product) || (!!product && !changed)
+            }
           >
-            {busy ? 'Saving…' : 'Save cookie'}
+            {busy
+              ? 'Saving…'
+              : uncertain && !product
+                ? 'Retry same creation'
+                : 'Save cookie'}
           </button>
           <button type="button" disabled={busy} onClick={onClose}>
             Close

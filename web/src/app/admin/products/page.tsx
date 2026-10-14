@@ -6,9 +6,11 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 export default async function AdminPage() {
   let expiresAt: number;
+  let catalogScope: string | undefined;
   try {
-    expiresAt = (await authorize((await cookies()).toString(), process.env))
-      .expiresAt;
+    const session = await authorize((await cookies()).toString(), process.env);
+    expiresAt = session.expiresAt;
+    catalogScope = session.catalogScope;
   } catch (e) {
     const reason =
       e instanceof AdminFailure
@@ -24,5 +26,5 @@ export default async function AdminPage() {
         : 'unavailable';
     redirect(`/admin/login${reason ? `?reason=${reason}` : ''}`);
   }
-  return <Products expiresAt={expiresAt} />;
+  return <Products expiresAt={expiresAt} catalogScope={catalogScope} />;
 }
