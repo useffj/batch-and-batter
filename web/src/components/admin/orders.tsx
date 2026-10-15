@@ -47,7 +47,7 @@ export type Order = {
   pickupDate: string;
   createdAt: string;
   updatedAt: string;
-  fulfillmentStatus: null;
+  fulfillmentStatus: string | null;
   customer?: { name: string; email: string; phone: string };
   items?: {
     name: string;
@@ -89,7 +89,10 @@ export function OrderDetails({ order: o }: { order: Order }) {
       <p>
         {human(o.status)} · Payment: {human(o.paymentStatus)}
       </p>
-      <p>Fulfillment: Not recorded</p>
+      <p>
+        Fulfillment:{' '}
+        {o.fulfillmentStatus ? human(o.fulfillmentStatus) : 'Not recorded'}
+      </p>
       <h3>Customer</h3>
       <p>
         {o.customer?.name}
@@ -235,8 +238,8 @@ export function Orders({ expiresAt }: { expiresAt: number }) {
       <main className="admin-main weekly-drops admin-orders">
         <h1>Orders</h1>
         <p>
-          Read-only order records. Dates and timestamps use Denver time.
-          Fulfillment has not yet been recorded.
+          Read-only order records. Dates and timestamps use Denver time. Manage
+          pickups in Fulfillment.
         </p>
         <p role="status">{busy ? 'Loading…' : error}</p>
         {detail ? (
@@ -382,7 +385,12 @@ export function Orders({ expiresAt }: { expiresAt: number }) {
                     <p>
                       {human(o.status)} · Payment: {human(o.paymentStatus)}
                     </p>
-                    <p>Pickup {o.pickupDate} · Fulfillment: Not recorded</p>
+                    <p>
+                      Pickup {o.pickupDate} · Fulfillment:{' '}
+                      {o.fulfillmentStatus
+                        ? human(o.fulfillmentStatus)
+                        : 'Not recorded'}
+                    </p>
                     <p>Created {timestamp(o.createdAt)} Denver</p>
                   </article>
                 ))}

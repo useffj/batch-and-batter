@@ -1,3 +1,8 @@
+import {
+  adminFulfillment,
+  fulfillmentRoutes,
+  type FulfillmentRepository,
+} from './admin-fulfillment';
 import { adminOrders, orderRoutes, type AdminOrders } from './admin-orders';
 import { adminWeekly, weeklyRoutes } from './admin-weekly';
 import type { MediaOrchestration } from './media-orchestration';
@@ -74,6 +79,9 @@ export function createHandler(
   getOrders: () => AdminOrders = () => {
     throw new Error('Orders unavailable');
   },
+  getFulfillment: () => FulfillmentRepository = () => {
+    throw Error('Fulfillment unavailable');
+  },
 ) {
   return async (
     event: ApiEvent,
@@ -100,6 +108,7 @@ export function createHandler(
       return cartApi(event, getCarts, context);
     if (event.routeKey === 'GET /health') return complete(await health());
     if (
+      fulfillmentRoutes.includes(event.routeKey) ||
       orderRoutes.includes(event.routeKey) ||
       weeklyRoutes.includes(event.routeKey) ||
       mediaRoutes.includes(event.routeKey) ||
@@ -116,6 +125,11 @@ export function createHandler(
     ) {
       try {
         const identity = requireAdmin(event);
+        if (fulfillmentRoutes.includes(event.routeKey))
+          return json(
+            200,
+            await adminFulfillment(event, getFulfillment(), identity.subject),
+          );
         if (orderRoutes.includes(event.routeKey))
           return json(200, await adminOrders(event, getOrders()));
         if (weeklyRoutes.includes(event.routeKey)) {

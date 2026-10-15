@@ -989,3 +989,78 @@ export async function ordersRelay(
     );
   }
 }
+
+export async function relayFulfillment(
+  request: Request,
+  orderId: string | undefined,
+  c: AdminConfig,
+  fetcher: typeof fetch = fetch,
+) {
+  try {
+    const config = settings(c),
+      method = request.method,
+      params = new URL(request.url).searchParams;
+    if (method !== (orderId ? 'POST' : 'GET'))
+      throw new AdminFailure('REQUEST', 405);
+    if (
+      (orderId && id(orderId) !== orderId) ||
+      params.toString().length > 5000 ||
+      [...params.keys()].some((k) => !['pickupDate', 'cursor'].includes(k)) ||
+      (orderId && params.size) ||
+      [...params.keys()].some((k) => params.getAll(k).length !== 1)
+    )
+      throw new AdminFailure('REQUEST', 400);
+    if (
+      (method === 'POST' && request.headers.get('origin') !== config.origin) ||
+      (request.headers.has('sec-fetch-site') &&
+        request.headers.get('sec-fetch-site') !== 'same-origin')
+    )
+      throw new AdminFailure('REQUEST', 403);
+    const session = await authorize(
+      request.headers.get('cookie') ?? '',
+      c,
+      fetcher,
+    );
+    const payload =
+      method === 'POST'
+        ? await json(request, 8192, new AdminFailure('REQUEST', 413))
+        : undefined;
+    if (session.expiresAt <= Date.now()) throw new AdminFailure('EXPIRED', 401);
+    const r = await fetcher(
+      config.api +
+        (orderId
+          ? '/admin/orders/' + orderId + '/fulfillment'
+          : '/admin/fulfillment') +
+        (params.size ? '?' + params.toString() : ''),
+      {
+        method,
+        headers: {
+          Authorization: 'Bearer ' + session.token,
+          'Content-Type': 'application/json',
+        },
+        body: payload ? JSON.stringify(payload) : undefined,
+        cache: 'no-store',
+        redirect: 'error',
+        signal: AbortSignal.timeout(12000),
+      },
+    );
+    if (!r.ok)
+      return output(
+        {
+          message:
+            r.status === 409
+              ? 'Order or fulfillment changed, or action is not eligible. Refresh before choosing another action.'
+              : 'Unable to confirm fulfillment. Refresh to inspect the persisted state.',
+        },
+        [400, 401, 403, 404, 409].includes(r.status) ? r.status : 503,
+      );
+    const data = await json(r, 512 * 1024, new AdminFailure('INVALID'));
+    if (session.expiresAt <= Date.now()) throw new AdminFailure('EXPIRED', 401);
+    return output(data);
+  } catch (e) {
+    return output(
+      { message: e instanceof AdminFailure ? e.message : messages.UNAVAILABLE },
+      e instanceof AdminFailure ? e.status : 503,
+    );
+  }
+}

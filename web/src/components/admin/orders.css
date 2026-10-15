@@ -24,3 +24,17 @@
 .admin-orders section {
   overflow-wrap: anywhere;
 }
+.fulfillment-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.admin-orders textarea {
+  display: block;
+  width: 100%;
+  max-width: 36rem;
+  min-height: 6rem;
+}
+.admin-orders article {
+  overflow-wrap: anywhere;
+}

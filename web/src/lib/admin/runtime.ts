@@ -134,3 +134,26 @@ export async function orderRelay(
     );
   }
 }
+
+export async function fulfillmentRelay(
+  request: Request,
+  orderId: string | undefined,
+  config: RuntimeConfig,
+) {
+  try {
+    const key = await loadSessionKey(config);
+    const { relayFulfillment } = await import('./server');
+    return relayFulfillment(request, orderId, {
+      ...config,
+      ADMIN_SESSION_KEY: key,
+    });
+  } catch {
+    return NextResponse.json(
+      { message: messages.CONFIGURATION },
+      {
+        status: 503,
+        headers: { 'Cache-Control': 'no-store, private', Vary: 'Cookie' },
+      },
+    );
+  }
+}

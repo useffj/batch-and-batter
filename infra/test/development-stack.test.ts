@@ -131,7 +131,7 @@ test('application Node 24 Lambda preserves its identity and serves exactly the t
   template.hasResourceProperties('AWS::ApiGatewayV2::Api', {
     ProtocolType: 'HTTP',
   });
-  template.resourceCountIs('AWS::ApiGatewayV2::Route', 43);
+  template.resourceCountIs('AWS::ApiGatewayV2::Route', 45);
   const functionId = Object.keys(
     template.findResources('AWS::Lambda::Function'),
   )[0];
@@ -156,6 +156,8 @@ test('application Node 24 Lambda preserves its identity and serves exactly the t
       'GET /drops/current',
       'GET /drops/{dropId}',
       'GET /health',
+      'GET /admin/fulfillment',
+      'POST /admin/orders/{orderId}/fulfillment',
       'GET /admin/orders',
       'GET /admin/orders/{orderId}',
       'GET /admin/drops',
@@ -323,7 +325,11 @@ test('Lambda has only scoped logging and the exact Catalog composition permissio
     )!;
     assert.deepEqual(statements[index + 2], {
       Effect: 'Allow',
-      Action: ['dynamodb:GetItem', 'dynamodb:PutItem'],
+      Action: [
+        'dynamodb:GetItem',
+        'dynamodb:PutItem',
+        ...(name === 'Commerce' ? ['dynamodb:ConditionCheckItem'] : []),
+      ],
       Resource: { 'Fn::GetAtt': [id, 'Arn'] },
     });
     template.hasResourceProperties('AWS::Lambda::Function', {
@@ -439,6 +445,8 @@ test('all twenty-two admin routes bind the JWT authorizer to the existing pool, 
     ...compositionRoutes,
     ...mediaRoutes,
     'GET /admin/me',
+    'GET /admin/fulfillment',
+    'POST /admin/orders/{orderId}/fulfillment',
     'GET /admin/orders',
     'GET /admin/orders/{orderId}',
     'GET /admin/drops',
@@ -511,8 +519,8 @@ test('tables, pool including MFA, client and JWT authorizer exactly preserve the
 });
 
 test('every route integration invokes only the existing Lambda through route-scoped API Gateway permissions', () => {
-  template.resourceCountIs('AWS::ApiGatewayV2::Integration', 43);
-  template.resourceCountIs('AWS::Lambda::Permission', 43);
+  template.resourceCountIs('AWS::ApiGatewayV2::Integration', 45);
+  template.resourceCountIs('AWS::Lambda::Permission', 45);
   for (const resource of Object.values(
     template.findResources('AWS::ApiGatewayV2::Integration'),
   )) {
@@ -627,6 +635,10 @@ test('Phase 5A2 changes only approved properties of Phase 5A1 resources', () => 
       );
     }
     if (id === 'CommerceTable6CC80189') allowOrderIndexes(expected);
+    if (id.startsWith('ApplicationRoleDefaultPolicy'))
+      expected.Properties.PolicyDocument.Statement.find((s: any) =>
+        JSON.stringify(s.Resource).includes('CommerceTable'),
+      ).Action.push('dynamodb:ConditionCheckItem');
     assert.deepEqual(actual, expected, `Unapproved resource change: ${id}`);
   }
   const added = Object.entries(current)
@@ -637,9 +649,9 @@ test('Phase 5A2 changes only approved properties of Phase 5A1 resources', () => 
     added,
     [
       ...Array(32).fill('AWS::CloudWatch::Alarm'),
-      ...Array(19).fill('AWS::ApiGatewayV2::Route'),
-      ...Array(19).fill('AWS::ApiGatewayV2::Integration'),
-      ...Array(19).fill('AWS::Lambda::Permission'),
+      ...Array(21).fill('AWS::ApiGatewayV2::Route'),
+      ...Array(21).fill('AWS::ApiGatewayV2::Integration'),
+      ...Array(21).fill('AWS::Lambda::Permission'),
       ...Array(3).fill('AWS::SQS::Queue'),
       'AWS::KMS::Key',
       'AWS::KMS::Alias',

@@ -1,3 +1,4 @@
+import { FulfillmentRepository } from './admin-fulfillment';
 import { AdminOrders } from './admin-orders';
 import { MediaRepository } from './media-repository';
 import type { MediaApiRepository } from './admin-media';
@@ -25,6 +26,7 @@ export function createEntrypoint(
   getCarts?: () => CartService,
   getMedia?: () => MediaApiRepository,
   getOrders?: () => AdminOrders,
+  getFulfillment?: () => FulfillmentRepository,
 ) {
   const http = createHandler(
     getRepository,
@@ -33,6 +35,7 @@ export function createEntrypoint(
     getMedia,
     undefined,
     getOrders,
+    getFulfillment,
   );
   let payment: ReturnType<typeof createPaymentHttp> | undefined;
   const automatic = createAutoOpenHandler(getRepository);
@@ -61,6 +64,7 @@ let schedules: SchedulerOpeningSchedules | undefined;
 let carts: DynamoCartRepository | undefined;
 let media: MediaRepository | undefined;
 let orders: AdminOrders | undefined;
+let fulfillment: FulfillmentRepository | undefined;
 export const handler = createEntrypoint(
   () =>
     (repository ??= new DynamoCatalogRepository(
@@ -102,6 +106,11 @@ export const handler = createEntrypoint(
     )),
   () =>
     (orders ??= new AdminOrders(
+      DynamoDBDocumentClient.from(new DynamoDBClient({ maxAttempts: 1 })),
+      process.env.COMMERCE_TABLE_NAME ?? '',
+    )),
+  () =>
+    (fulfillment ??= new FulfillmentRepository(
       DynamoDBDocumentClient.from(new DynamoDBClient({ maxAttempts: 1 })),
       process.env.COMMERCE_TABLE_NAME ?? '',
     )),
