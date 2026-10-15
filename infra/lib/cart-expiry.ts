@@ -1,4 +1,4 @@
-import * as path from 'node:path';
+import { artifactCode } from './artifacts';
 import {
   Duration,
   RemovalPolicy,
@@ -48,8 +48,12 @@ export function addCartExpiry(
       functionName: `${prefix}-${suffix}`,
       runtime: lambda.Runtime.NODEJS_24_X,
       handler: `${suffix}-handler.handler`,
-      code: lambda.Code.fromAsset(
-        path.join(__dirname, '../../../../backend/dist/lambda'),
+      code: artifactCode(
+        stack,
+        id === 'CartExpiryWorker'
+          ? 'CartExpiryWorkerD6838A04'
+          : 'CartExpiryReconciler320F0954',
+        `${suffix}-handler.handler`,
       ),
       role,
       logGroup,

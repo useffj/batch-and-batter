@@ -1,0 +1,10 @@
+{
+  "account": "302154194958",
+  "region": "us-east-2",
+  "stackId": "arn:aws:cloudformation:us-east-2:302154194958:stack/batch-and-batter-dev/34afe3a0-b62a-11f1-bc49-0ae90c1e4ec5",
+  "stackName": "batch-and-batter-dev",
+  "lastUpdatedTime": "2026-10-13T23:11:44.640000+00:00",
+  "templateSha256": "7afad8c03b128eff48b0ce8af20b6c7c400e0b40273441db75c2d775afe510e9",
+  "sourceMilestone": "1B-2I-C",
+  "maximumEvidenceAgeMs": 900000
+}

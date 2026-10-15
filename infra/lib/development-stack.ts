@@ -1,6 +1,6 @@
 import { addPayments } from './payments';
 import { addCartExpiry } from './cart-expiry';
-import * as path from 'node:path';
+import { artifactCode } from './artifacts';
 import {
   CfnOutput,
   ArnFormat,
@@ -235,9 +235,7 @@ export class DevelopmentStack extends Stack {
       functionName: `${prefix}-api`,
       runtime: lambda.Runtime.NODEJS_24_X,
       handler: 'handler.handler',
-      code: lambda.Code.fromAsset(
-        path.join(__dirname, '../../../../backend/dist/lambda'),
-      ),
+      code: artifactCode(this, 'ApplicationApi5D63FF39', 'handler.handler'),
       environment: {
         RESERVATION_QUEUE_URL: reservationQueue.queueUrl,
         CATALOG_TABLE_NAME: catalogTable.tableName,

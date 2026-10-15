@@ -1,5 +1,5 @@
-// Normal dev deployment entrypoint. Never inherit prior payment admission.
-const { spawnSync } = require('node:child_process');
+// DEV deployment entrypoint is blocked pending a separately authorized release contract.
+// Retain the pure legacy argument helper for contract tests; it cannot execute.
 const paymentConfig = require('../config/dev-payment.json');
 const parameterKeys = [
   'StripeSandboxAccountId',
@@ -61,23 +61,14 @@ function deployArgs(args, config = paymentConfig) {
   ];
 }
 module.exports = { deployArgs };
+function assertReleaseAuthorized() {
+  const { deploymentBlockers } = require('./build-api-release.cjs');
+  throw new Error('DEPLOYMENT_BLOCKED: ' + deploymentBlockers().join('; '));
+}
+module.exports.assertReleaseAuthorized = assertReleaseAuthorized;
 if (require.main === module) {
   try {
-    const args = deployArgs(process.argv.slice(2));
-    const env = {
-      ...process.env,
-      AWS_REGION: 'us-east-2',
-      AWS_DEFAULT_REGION: 'us-east-2',
-      CDK_DEFAULT_REGION: 'us-east-2',
-    };
-    // Resolve the account from the selected profile, not inherited synthesis state.
-    delete env.CDK_DEFAULT_ACCOUNT;
-    const result = spawnSync('npx', args, {
-      cwd: require('node:path').resolve(__dirname, '..'),
-      env,
-      stdio: 'inherit',
-    });
-    process.exitCode = result.status ?? 1;
+    assertReleaseAuthorized();
   } catch (error) {
     process.stderr.write(error.message + '\n');
     process.exitCode = 1;
