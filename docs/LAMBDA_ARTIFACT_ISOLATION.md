@@ -340,3 +340,115 @@ authorized release. No publication or deployment is authorized by this plan.
 References:
 [PutObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObject.html),
 [conditional-write enforcement](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes-enforce.html).
+
+## 1B-2J-A: local protection and publication contracts
+
+LOCAL POLICY IMPLEMENTED. AWS PROTECTION ACTIVE: FALSE.
+No artifact publication, deployment, security exception or activation is authorized.
+
+The two JSON proposals are not wired into CDK or an AWS executor. The bucket
+policy preserves TLS enforcement, denies accepted A/B/C mutations on the three
+literal manifest keys, denies candidate deletion/ACL/tagging mutations, and
+restricts api-releases writes to the dedicated publisher with literal
+If-None-Match `*`. Missing/incorrect conditions fail closed. No multipart
+exemptions are supplied. The supported publisher operation is single PutObject;
+copy and multipart are unsupported. Existing unrelated bootstrap keys retain
+existing access, but the broad bootstrap file publisher cannot mutate protected
+keys. This is an intentional restriction, including bootstrap cleanup.
+
+The role proposal trusts only the reviewed DEV SSO administrator role. Its
+permissions boundary caps access at the candidate prefix, while a materialized
+identity policy permits exactly one validated UUIDv4/hash key. The template is
+not directly deployable: unresolved placeholders must be rejected. No policy
+administration, deletion, IAM, Lambda, CloudFormation, SSM or Secrets Manager
+permissions are included. Bucket configuration inspection belongs to a separate
+read-only verifier, not an expanded publisher role.
+
+### Local execution and durable recovery
+
+`infra/scripts/publish-api-artifact.cjs` has NO live SDK adapter, credentials
+provider, network implementation or enabled publishing CLI. Running it exits
+with LIVE_PUBLISHING_DISABLED. Exported functions require mock-only mode and
+injected mock S3/KMS/protection adapters; these markers are test contracts, not
+an IAM security boundary against code modification or dishonest adapters.
+
+Use `newOperationId()` once, then persist that ID for all retries. The operation
+requires artifact ID, 40-hex source commit, approval reference, expected SHA-256,
+size and the existing independent API builder evidence. `loadCandidate` reads
+only backend/dist/api-release/api.zip and adjacent evidence.json, rejects a
+redirected artifact path and mismatched evidence, and validates the single stored
+handler.js ZIP structure. Publication captures a private Buffer copy before
+asynchronous work; bytes used for hashing and upload are the same captured bytes.
+No dependencies were added. Builder evidence and approval references are not
+cryptographic attestations; a future operator must independently validate them.
+
+`createJournal` stores bounded, mode-0600 JSON receipts under an operator-owned
+local directory outside Git. It fsyncs files and directories, writes receipts
+by atomic rename, and acquires an exclusive per-operation lock before any adapter
+operation. A crashed/stale lock is never automatically removed. Recovery requires
+operator confirmation that no writer remains; do not invent another operation
+ID. This local lock coordinates processes sharing that journal, not distributed
+hosts. The S3 conditional write provides the cross-process object-creation guard.
+
+The journal records immutable identity/key before attempting a write, then
+ATTEMPTED before the mock PutObject. The request uses ExpectedBucketOwner,
+IfNoneMatch, Base64 raw SHA-256, the approved SSE-KMS key, BucketKeyEnabled false,
+and bounded operation/source provenance metadata; no ACL or tags. A returned
+version is recorded before reading it back. Verification compares exact-version
+bytes, size, SHA-256, metadata, encryption and current-key/version history.
+Receipts remain simulated with deploymentAuthorized false even after VERIFIED.
+
+Recovery never automatically performs a second PUT after ATTEMPTED. Lost
+acknowledgement, 409 or failed read-back preserve the original key and receipt;
+repeat invocation can reconcile the original object by exact version and bytes.
+412 or a preexisting-key collision blocks the operation. Missing object after an
+uncertain attempt remains unresolved. No replacement key, overwrite or deletion
+is attempted. Incorrect returned versions, content mismatch, unexpected history,
+delete markers, incomplete pagination, changed input or missing/freshness-invalid
+protection evidence block verification. A definitive collision is not silently
+adopted. Read adapters must fully paginate exact-key history and provide complete
+Buffer bodies; production streaming/bounds and transport implementations remain
+outside this local-only milestone.
+
+### Retention and encryption invariants
+
+Preserve CleanupOldVersions: noncurrent expiration after 30 days, and
+AbortIncompleteMultipartUploads after one day. No lifecycle policy is proposed
+or modified. Every active, rollback and candidate artifact must remain CURRENT
+at its own never-reused protected key. Moving the API to a new key does not make
+the previous key noncurrent. Policy Deny does not stop Lifecycle expiration.
+Any noncurrent designated artifact, current delete marker, unexpected history,
+changed current VersionId/hash, inactive protection or unavailable rollback
+artifact blocks future release. The old 81-byte noncurrent B version is not an
+accepted rollback artifact. Versioning alone is not immutability.
+
+The reviewed AWS-managed aws/s3 key is
+arn:aws:kms:us-east-2:302154194958:key/c4361324-2444-4484-82ef-f98ba10b5ad3.
+The role needs only GenerateDataKey and Decrypt on that key, with ViaService
+s3.us-east-2.amazonaws.com, CallerAccount 302154194958 and candidate-object
+context. With Bucket Keys disabled, S3 supplies the OBJECT ARN encryption
+context, including for aws/s3. Enabling Bucket Keys would change context to the
+bucket ARN and must fail closed, not broaden permissions. No AWS-managed key
+policy edit is proposed. Real authorization still depends on the key policy,
+identity policy, permissions boundary, SCPs and endpoint/resource policies.
+References: [SSE-KMS context](https://docs.aws.amazon.com/AmazonS3/latest/userguide/specifying-kms-encryption.html)
+and [conditional-write enforcement](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes-enforce.html).
+
+### Activation gates and verification limits
+
+The local policy evaluator tests only the operators present in these proposals;
+it is not an AWS IAM evaluator. Before activation, separately authorize review
+of rendered policies, exact principal trust, AWS-managed key access, inherited
+permissions, conditional writes/copy/multipart behavior, delete-marker handling,
+bootstrap compatibility and the actual bucket/versioning/lifecycle state. Do not
+use accepted artifacts as destructive policy-test fixtures. Administrative
+policy/lifecycle/IAM changes and bootstrap policy replacement remain privileged
+exceptions requiring separate owner authorization; these controls are not WORM.
+
+Future steps remain separate: local review; authorized protection/role activation;
+authorized publication with independent SHA-256 read-back; fresh active/rollback
+availability and retention verification; then separately authorized API-only
+CloudFormation change-set review. Rollback must preserve every worker Code
+reference and payment parameter. No direct Lambda update, ordinary full-stack
+deploy, catalog migration, media activation or payment change is enabled.
+Hosted duplicate-activation acceptance remains NOT PASSED.

@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 1,
+  "status": "PROPOSAL_ONLY",
+  "awsProtectionActive": false,
+  "roleArn": "arn:aws:iam::302154194958:role/batch-and-batter-dev-api-artifact-publisher",
+  "trustPolicy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": {
+          "AWS": "arn:aws:iam::302154194958:role/aws-reserved/sso.amazonaws.com/us-east-2/AWSReservedSSO_AdministratorAccess_e072fc27fb82916d"
+        },
+        "Action": "sts:AssumeRole"
+      }
+    ]
+  },
+  "permissionsBoundary": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Action": "s3:PutObject",
+        "Resource": "arn:aws:s3:::cdk-hnb659fds-assets-302154194958-us-east-2/api-releases/*",
+        "Condition": {
+          "StringEquals": {
+            "s3:if-none-match": "*"
+          }
+        }
+      },
+      {
+        "Effect": "Allow",
+        "Action": ["s3:GetObject", "s3:GetObjectVersion"],
+        "Resource": "arn:aws:s3:::cdk-hnb659fds-assets-302154194958-us-east-2/api-releases/*"
+      },
+      {
+        "Effect": "Allow",
+        "Action": "s3:ListBucketVersions",
+        "Resource": "arn:aws:s3:::cdk-hnb659fds-assets-302154194958-us-east-2",
+        "Condition": {
+          "StringLike": {
+            "s3:prefix": "api-releases/*"
+          }
+        }
+      },
+      {
+        "Effect": "Allow",
+        "Action": ["kms:GenerateDataKey", "kms:Decrypt"],
+        "Resource": "arn:aws:kms:us-east-2:302154194958:key/c4361324-2444-4484-82ef-f98ba10b5ad3",
+        "Condition": {
+          "StringEquals": {
+            "kms:ViaService": "s3.us-east-2.amazonaws.com",
+            "kms:CallerAccount": "302154194958"
+          },
+          "StringLike": {
+            "kms:EncryptionContext:aws:s3:arn": "arn:aws:s3:::cdk-hnb659fds-assets-302154194958-us-east-2/api-releases/*"
+          }
+        }
+      }
+    ]
+  },
+  "identityPolicyTemplate": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Action": "s3:PutObject",
+        "Resource": "arn:aws:s3:::cdk-hnb659fds-assets-302154194958-us-east-2/${APPROVED_CANDIDATE_KEY}",
+        "Condition": {
+          "StringEquals": {
+            "s3:if-none-match": "*"
+          }
+        }
+      },
+      {
+        "Effect": "Allow",
+        "Action": ["s3:GetObject", "s3:GetObjectVersion"],
+        "Resource": "arn:aws:s3:::cdk-hnb659fds-assets-302154194958-us-east-2/${APPROVED_CANDIDATE_KEY}"
+      },
+      {
+        "Effect": "Allow",
+        "Action": "s3:ListBucketVersions",
+        "Resource": "arn:aws:s3:::cdk-hnb659fds-assets-302154194958-us-east-2",
+        "Condition": {
+          "StringEquals": {
+            "s3:prefix": "${APPROVED_CANDIDATE_KEY}"
+          }
+        }
+      },
+      {
+        "Effect": "Allow",
+        "Action": ["kms:GenerateDataKey", "kms:Decrypt"],
+        "Resource": "arn:aws:kms:us-east-2:302154194958:key/c4361324-2444-4484-82ef-f98ba10b5ad3",
+        "Condition": {
+          "StringEquals": {
+            "kms:ViaService": "s3.us-east-2.amazonaws.com",
+            "kms:CallerAccount": "302154194958",
+            "kms:EncryptionContext:aws:s3:arn": "arn:aws:s3:::cdk-hnb659fds-assets-302154194958-us-east-2/${APPROVED_CANDIDATE_KEY}"
+          }
+        }
+      }
+    ]
+  },
+  "templateContract": "Replace APPROVED_CANDIDATE_KEY only after validating api-releases/<UUIDv4>/<64 lowercase hex>.zip. Reject unresolved variables. No AWS activation tool is provided."
+}
