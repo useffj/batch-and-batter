@@ -1,3 +1,5 @@
+import { mediaRelay as relayMedia } from './server';
+import type { MediaTarget } from './media-contract';
 import 'server-only';
 import { NextResponse } from 'next/server';
 import {
@@ -71,4 +73,24 @@ export async function productRelay(
     ...config,
     ADMIN_SESSION_KEY: key,
   });
+}
+
+export async function mediaRelay(
+  request: Request,
+  target: MediaTarget,
+  config: RuntimeConfig,
+) {
+  let key: string;
+  try {
+    key = await loadSessionKey(config);
+  } catch {
+    return NextResponse.json(
+      { code: 'CONFIGURATION', message: messages.CONFIGURATION },
+      {
+        status: 503,
+        headers: { 'Cache-Control': 'no-store, private', Vary: 'Cookie' },
+      },
+    );
+  }
+  return relayMedia(request, target, { ...config, ADMIN_SESSION_KEY: key });
 }

@@ -1,3 +1,5 @@
+import { MediaRepository } from './media-repository';
+import type { MediaApiRepository } from './admin-media';
 import { createPaymentHttp } from './payment-http-runtime';
 import { SQSClient } from '@aws-sdk/client-sqs';
 import { SqsExpiryDispatch } from './cart-expiry';
@@ -20,8 +22,9 @@ export function createEntrypoint(
   getRepository: () => CatalogRepository,
   getSchedules: () => OpeningSchedules,
   getCarts?: () => CartService,
+  getMedia?: () => MediaApiRepository,
 ) {
-  const http = createHandler(getRepository, getSchedules, getCarts);
+  const http = createHandler(getRepository, getSchedules, getCarts, getMedia);
   let payment: ReturnType<typeof createPaymentHttp> | undefined;
   const automatic = createAutoOpenHandler(getRepository);
   return (event: unknown, context?: InvocationContext) => {
@@ -47,6 +50,7 @@ export function createEntrypoint(
 let repository: DynamoCatalogRepository | undefined;
 let schedules: SchedulerOpeningSchedules | undefined;
 let carts: DynamoCartRepository | undefined;
+let media: MediaRepository | undefined;
 export const handler = createEntrypoint(
   () =>
     (repository ??= new DynamoCatalogRepository(
@@ -80,5 +84,10 @@ export const handler = createEntrypoint(
         new SQSClient({ maxAttempts: 1 }),
         process.env.RESERVATION_QUEUE_URL ?? '',
       ),
+    )),
+  () =>
+    (media ??= new MediaRepository(
+      DynamoDBDocumentClient.from(new DynamoDBClient({ maxAttempts: 1 })),
+      process.env.CATALOG_TABLE_NAME ?? '',
     )),
 );

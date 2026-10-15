@@ -359,6 +359,36 @@ export class DevelopmentStack extends Stack {
         apigateway.HttpMethod.POST,
         'AdminCancelScheduledDropIntegration',
       ],
+      [
+        '/admin/products/{productId}/media',
+        apigateway.HttpMethod.GET,
+        'AdminMediaReadIntegration',
+      ],
+      [
+        '/admin/products/{productId}/media',
+        apigateway.HttpMethod.PUT,
+        'AdminMediaWriteIntegration',
+      ],
+      [
+        '/admin/products/{productId}/media/uploads',
+        apigateway.HttpMethod.POST,
+        'AdminMediaUploadIntegration',
+      ],
+      [
+        '/admin/products/{productId}/media/uploads/{uploadId}',
+        apigateway.HttpMethod.GET,
+        'AdminMediaStatusIntegration',
+      ],
+      [
+        '/admin/products/{productId}/media/uploads/{uploadId}/complete',
+        apigateway.HttpMethod.POST,
+        'AdminMediaRequestProcessingIntegration',
+      ],
+      [
+        '/admin/products/{productId}/media/assets/{mediaId}',
+        apigateway.HttpMethod.GET,
+        'AdminMediaAssetIntegration',
+      ],
       ['/admin/products', apigateway.HttpMethod.GET, 'AdminCatalogIntegration'],
       [
         '/admin/products/{productId}',

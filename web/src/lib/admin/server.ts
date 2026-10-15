@@ -1,4 +1,13 @@
 import {
+  mediaPath,
+  mediaInput,
+  mediaResponse,
+  mediaErrorCodes,
+  type MediaTarget,
+} from './media-contract';
+const UUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+import {
   catalogPage,
   catalogProduct,
   productFields,
@@ -730,5 +739,92 @@ export async function catalogRelay(
     return failure.status === 401 || failure.status === 403
       ? save(response, c)
       : response;
+  }
+}
+
+// JSON-only media relay. Never forwards processor claims or arbitrary destinations.
+export async function mediaRelay(
+  request: Request,
+  target: MediaTarget,
+  c: AdminConfig,
+  fetcher: typeof fetch = fetch,
+): Promise<NextResponse> {
+  try {
+    const config = settings(c),
+      method = request.method;
+    let path: string;
+    try {
+      path = mediaPath(target, method);
+      if (new URL(request.url).search) throw new Error();
+    } catch {
+      throw new AdminFailure('REQUEST', 400);
+    }
+    if (
+      method !== 'GET' &&
+      (request.headers.get('origin') !== config.origin ||
+        (request.headers.has('sec-fetch-site') &&
+          request.headers.get('sec-fetch-site') !== 'same-origin'))
+    )
+      throw new AdminFailure('REQUEST', 403);
+    const session = await authorize(
+      request.headers.get('cookie') ?? '',
+      c,
+      fetcher,
+    );
+    let input: unknown;
+    if (method !== 'GET') {
+      try {
+        input = mediaInput(
+          await json(request, 16384, new AdminFailure('REQUEST', 413)),
+          target.kind,
+        );
+      } catch (e) {
+        if (e instanceof AdminFailure && e.status === 413) throw e;
+        throw new AdminFailure('REQUEST', 400);
+      }
+    } else if (request.body) throw new AdminFailure('REQUEST', 400);
+    const key = request.headers.get('idempotency-key');
+    if (target.kind === 'uploads' && (!key || !UUID.test(key)))
+      throw new AdminFailure('REQUEST', 400);
+    const response = await fetcher(config.api + path, {
+      method,
+      cache: 'no-store',
+      redirect: 'error',
+      signal: AbortSignal.timeout(8000),
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${session.token}`,
+        ...(method !== 'GET' ? { 'Content-Type': 'application/json' } : {}),
+        ...(target.kind === 'uploads' ? { 'Idempotency-Key': key! } : {}),
+      },
+      ...(input !== undefined ? { body: JSON.stringify(input) } : {}),
+    });
+    if (response.status === 401) throw new AdminFailure('EXPIRED', 401);
+    if (response.status === 403) throw new AdminFailure('FORBIDDEN', 403);
+    if (!response.ok) {
+      const failure = await json(response, 16384);
+      if (
+        [400, 404, 409, 410, 413, 422, 503].includes(response.status) &&
+        typeof failure.code === 'string' &&
+        mediaErrorCodes.includes(failure.code)
+      )
+        return output(
+          {
+            code: failure.code,
+            message:
+              'Unable to complete the media request. Reload or contact the operator.',
+          },
+          response.status,
+        );
+      throw new AdminFailure('UNAVAILABLE', 502);
+    }
+    const result = mediaResponse(await json(response, 32768), target);
+    if (session.expiresAt <= Date.now()) throw new AdminFailure('EXPIRED', 401);
+    return output(result, response.status);
+  } catch (e) {
+    const f =
+      e instanceof AdminFailure ? e : new AdminFailure('UNAVAILABLE', 502);
+    const response = output({ code: f.code, message: f.message }, f.status);
+    return f.status === 401 || f.status === 403 ? save(response, c) : response;
   }
 }

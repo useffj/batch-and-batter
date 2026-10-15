@@ -4,7 +4,13 @@ import {
   pendingCreation,
   rememberCreation,
 } from '../../lib/admin/creation-state';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import { AdminNavigation } from './navigation';
 import { adminRequest, ClientFailure } from '../../lib/admin/client';
 import { productRequest, submissionGate } from '../../lib/admin/product-client';
@@ -26,9 +32,11 @@ import {
 export function Products({
   expiresAt,
   catalogScope,
+  renderMedia,
 }: {
   expiresAt: number;
   catalogScope?: string;
+  renderMedia?: (product: CatalogProduct) => ReactNode;
 }) {
   const storageKey = catalogScope
     ? 'bb-product-create:' + catalogScope
@@ -336,6 +344,7 @@ export function Products({
             }}
           />
         )}
+        {editing && editing !== 'new' && renderMedia?.(editing)}
         {!busy && !error && loaded && !products.length && (
           <section className="admin-card">
             <h2>{cursor ? 'No products on this page' : 'No cookies yet'}</h2>

@@ -1,3 +1,9 @@
+import type { MediaOrchestration } from './media-orchestration';
+import {
+  adminMedia,
+  mediaRoutes,
+  type MediaApiRepository,
+} from './admin-media';
 import { adminScheduled, scheduledRoutes } from './admin-scheduled';
 import { handler as health } from './health';
 import { cartApi, cartRoutes } from './cart-api';
@@ -55,6 +61,14 @@ export function createHandler(
   getCarts: () => CartService = () => {
     throw new Error('Cart service is not configured');
   },
+  getMedia: () => MediaApiRepository = () => {
+    throw new AdminError(
+      503,
+      'MEDIA_STORAGE_UNAVAILABLE',
+      'Media metadata is unavailable.',
+    );
+  },
+  getMediaServices: () => MediaOrchestration | undefined = () => undefined,
 ) {
   return async (
     event: ApiEvent,
@@ -81,6 +95,7 @@ export function createHandler(
       return cartApi(event, getCarts, context);
     if (event.routeKey === 'GET /health') return complete(await health());
     if (
+      mediaRoutes.includes(event.routeKey) ||
       catalogRoutes.includes(event.routeKey) ||
       event.routeKey === 'GET /admin/me' ||
       event.routeKey === 'GET /admin/storefront/assignment' ||
@@ -94,6 +109,16 @@ export function createHandler(
     ) {
       try {
         const identity = requireAdmin(event);
+        if (mediaRoutes.includes(event.routeKey)) {
+          const result = await adminMedia(
+            event,
+            getRepository,
+            getMedia,
+            identity.subject,
+            getMediaServices(),
+          );
+          return json(result.status, result.body);
+        }
         if (event.routeKey === 'GET /admin/me') return json(200, identity);
         if (event.routeKey === 'GET /admin/storefront/assignment') {
           const repository = getRepository();

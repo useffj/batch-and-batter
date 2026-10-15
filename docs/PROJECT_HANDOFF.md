@@ -2,6 +2,61 @@
 
 Last reviewed: **October 9, 2026 (America/Denver)**. Documentation-only checkpoint; no cloud inspection or hosted execution performed for this update.
 
+## October 14, 2026 — 1B-2 accumulated media checkpoint
+
+This checkpoint supersedes the implementation-status statements in the earlier
+slice entries below. The 43-file foundation includes synthetic media UI, companion
+metadata records, atomic persistence, protected APIs and SSR relays, isolated Sharp
+processing, S3 POST authorization and durable dispatch contracts. Product META,
+per-Drop pricing/inventory and payment behavior are preserved.
+
+THIS PR DOES NOT ENABLE LIVE IMAGE UPLOADS. MERGING DOES NOT AUTHORIZE DEPLOYMENT.
+Production entrypoints inject neither storage nor dispatch, and the deployed
+Product page does not connect the synthetic media panel. Customer delivery remains
+absent. No IAM, bucket or live data changes are included.
+
+The approved lease contract checks eligibility immediately before submission;
+an in-flight transaction may commit after expiry only while revision, PROCESSING
+state and attempt token remain current. Takeover/terminalization fences old writes.
+Duplicate completions recover the original receipt despite differing timestamps.
+READY is not publication; manifest attachment and Product visibility remain gates.
+
+Validation: 1,036 backend tests, 10 artifact checks and 32 DynamoDB Local groups
+passed during the unchanged lease correction. Fresh checkpoint frontend 488,
+processor 10 and infrastructure 37 tests passed, with type checks, web lint,
+production builds, formatting and offline CDK synthesis. Backend and processor
+production audits have zero findings. Processor execution is darwin/arm64 only.
+
+Remaining gates: Linux Lambda native packaging/resource measurements, reviewed
+runtime assembly and frontend persistence integration, narrowly approved IAM/CORS/
+retention/infrastructure changes, catalog migration/readiness, public delivery and
+separately authorized live acceptance. DynamoDB Local is not managed-service
+concurrency or clock-skew proof. No security exception is granted.
+
+See PRODUCT_MEDIA_STORAGE.md and PRODUCT_MEDIA_PERSISTENCE.md for current contracts;
+the older foundation proposals are historical. Hosted duplicate-activation
+acceptance remains **NOT PASSED**.
+
+## October 14, 2026 — 1B-2A local media foundation
+
+PR #60 merged as `193e7a7146718eb87de8434ee5ecca244efe5fba`; all post-merge
+CI checks passed. Local work now uses `codex/admin-product-media-1b2a` from that
+verified baseline. The synthetic Product editor supports image selection, alt
+text, primary/order changes, replacement and removal, with tab-memory previews
+and object-URL cleanup. It is not wired into the deployed Product route. No
+Product media schema or persistent association was invented or implemented.
+
+See [Cookie media foundation and minimum persistence proposal](PRODUCT_MEDIA_FOUNDATION.md)
+for exact bounds, preview instructions, tests and the unapproved Catalog/API/S3/IAM
+design. Fresh validation: 475 frontend tests, type check, lint, production build,
+formatting and whitespace checks passed. Synthetic browser checks included
+375px layout, keyboard controls, navigation retention and reload clearing.
+Persistence contract approval is required before backend, schema, IAM or bucket
+changes. Historical catalog migration/readiness remains separate. No commit,
+push, deployment, live upload, AWS data/configuration change, or payment operation
+occurred. Original testing workspace unchanged; duplicate-activation acceptance
+remains **NOT PASSED**.
+
 ## October 14, 2026 — 1B-1A integration review follow-up
 
 This later review supersedes the validation gaps in the implementation entry
