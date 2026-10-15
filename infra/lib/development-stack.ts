@@ -433,6 +433,16 @@ export class DevelopmentStack extends Stack {
         apigateway.HttpMethod.POST,
         'AdminFulfillmentWriteIntegration',
       ],
+      [
+        '/admin/customers/search',
+        apigateway.HttpMethod.POST,
+        'AdminCustomerSearchIntegration',
+      ],
+      [
+        '/admin/customers/history',
+        apigateway.HttpMethod.POST,
+        'AdminCustomerHistoryIntegration',
+      ],
       ['/admin/orders', apigateway.HttpMethod.GET, 'AdminOrdersIntegration'],
       [
         '/admin/orders/{orderId}',
@@ -550,6 +560,7 @@ export class DevelopmentStack extends Stack {
       new iam.PolicyStatement({
         actions: ['dynamodb:Query'],
         resources: [
+          commerceTable.tableArn,
           `${commerceTable.tableArn}/index/GSI1`,
           `${commerceTable.tableArn}/index/GSI2`,
         ],

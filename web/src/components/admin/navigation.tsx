@@ -2,7 +2,8 @@
 export function AdminNavigation({
   current,
 }: {
-  current: 'overview' | 'products' | 'drops' | 'orders' | 'fulfillment';
+  current:
+    'overview' | 'products' | 'drops' | 'orders' | 'fulfillment' | 'customers';
 }) {
   return (
     <aside className="admin-sidebar">
@@ -40,10 +41,16 @@ export function AdminNavigation({
         >
           Fulfillment
         </a>
+        <a
+          href="/admin/customers"
+          aria-current={current === 'customers' ? 'page' : undefined}
+        >
+          Customers
+        </a>
       </nav>
       <p className="admin-eyebrow">Coming later</p>
       <ul className="admin-future">
-        {['Customers', 'Messaging', 'Settings'].map((x) => (
+        {['Messaging', 'Settings'].map((x) => (
           <li key={x}>{x}</li>
         ))}
       </ul>
