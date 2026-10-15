@@ -755,7 +755,17 @@ export async function mediaRelay(
     let path: string;
     try {
       path = mediaPath(target, method);
-      if (new URL(request.url).search) throw new Error();
+      const query = new URL(request.url).searchParams;
+      if (target.kind === 'ready') {
+        if (
+          query.get('view') !== 'ready' ||
+          [...query.keys()].some((k) => !['view', 'after'].includes(k)) ||
+          query.getAll('view').length !== 1 ||
+          query.getAll('after').length > 1 ||
+          (query.get('after') ?? undefined) !== target.after
+        )
+          throw new Error();
+      } else if (query.size) throw new Error();
     } catch {
       throw new AdminFailure('REQUEST', 400);
     }

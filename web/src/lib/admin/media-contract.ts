@@ -1,7 +1,8 @@
 import { id, record } from './contract';
 export type MediaTarget = {
   productId: string;
-  kind: 'manifest' | 'uploads' | 'status' | 'complete' | 'asset';
+  kind: 'manifest' | 'uploads' | 'status' | 'complete' | 'asset' | 'ready';
+  after?: string;
   itemId?: string;
 };
 const exact = (v: Record<string, unknown>, keys: string[]) => {
@@ -18,6 +19,7 @@ export function mediaPath(t: MediaTarget, method: string) {
   if (
     !{
       manifest: ['GET', 'PUT'],
+      ready: ['GET'],
       uploads: ['POST'],
       status: ['GET'],
       complete: ['POST'],
@@ -25,6 +27,20 @@ export function mediaPath(t: MediaTarget, method: string) {
     }[t.kind].includes(method)
   )
     throw new Error('Invalid media method');
+  if (t.kind === 'ready') {
+    if (
+      t.after !== undefined &&
+      (t.after.split('.').length !== 2 ||
+        t.after.split('.')[0] !== t.productId ||
+        id(t.after.split('.')[1]) !== t.after.split('.')[1])
+    )
+      throw new Error('Invalid cursor');
+    return (
+      path +
+      '?view=ready' +
+      (t.after ? '&after=' + encodeURIComponent(t.after) : '')
+    );
+  }
   if (t.kind === 'uploads') return path + '/uploads';
   if (t.kind === 'asset') return path + '/assets/' + id(t.itemId);
   if (t.kind === 'status' || t.kind === 'complete') {
@@ -125,6 +141,22 @@ function asset(value: unknown, productId: string) {
 }
 export function mediaResponse(value: unknown, t: MediaTarget) {
   const v = record(value);
+  if (t.kind === 'ready') {
+    exact(v, ['assets', 'nextCursor']);
+    if (!Array.isArray(v.assets) || v.assets.length > 12)
+      throw new Error('Invalid discovery');
+    const assets = v.assets.map((x) => asset(x, t.productId));
+    if (
+      assets.some((a) => a.state !== 'READY') ||
+      new Set(assets.map((a) => a.mediaId)).size !== assets.length
+    )
+      throw new Error('Invalid discovery');
+    if (v.nextCursor !== null) {
+      if (typeof v.nextCursor !== 'string') throw new Error('Invalid cursor');
+      mediaPath({ ...t, after: v.nextCursor }, 'GET');
+    }
+    return { assets, nextCursor: v.nextCursor as string | null };
+  }
   if (t.kind === 'manifest') {
     exact(v, ['manifest']);
     const m = record(v.manifest);
@@ -191,6 +223,7 @@ export function mediaResponse(value: unknown, t: MediaTarget) {
   };
 }
 export const mediaErrorCodes = [
+  'INVALID_MEDIA_CURSOR',
   'PRODUCT_NOT_FOUND',
   'ASSET_NOT_FOUND',
   'UPLOAD_NOT_FOUND',

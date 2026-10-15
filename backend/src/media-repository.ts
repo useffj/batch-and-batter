@@ -3,11 +3,12 @@ import { isDeepStrictEqual } from 'node:util';
 import { z } from 'zod';
 import {
   GetCommand,
+  QueryCommand,
   TransactWriteCommand,
   type DynamoDBDocumentClient,
   type TransactWriteCommandInput,
 } from '@aws-sdk/lib-dynamodb';
-import { productSchema } from './domain';
+import { idSchema, productSchema } from './domain';
 import { catalogKeys } from './keys';
 import { integrityReadyKey, slugKey } from './product-integrity';
 import { generateUlid } from './ulid';
@@ -80,6 +81,65 @@ export class MediaRepository {
     const v = await this.read(mediaKeys.manifest(productId), manifestSchema);
     if (v && v.productId !== productId) return fail('MEDIA_RECORD_INVALID');
     return v;
+  }
+  async readyAssets(productId: string, after?: string) {
+    const key = mediaKeys.manifest(productId);
+    let start: Key | undefined;
+    if (after !== undefined) {
+      const parts = after.split('.');
+      if (
+        parts.length !== 2 ||
+        parts[0] !== productId ||
+        !idSchema.safeParse(parts[1]).success
+      )
+        return fail('INVALID_MEDIA_CURSOR');
+      start = mediaKeys.asset(productId, parts[1]);
+    }
+    // One bounded partition query per request, including filtered/empty pages.
+    let page;
+    try {
+      page = await this.client.send(
+        new QueryCommand({
+          TableName: this.table,
+          ConsistentRead: true,
+          Limit: 12,
+          KeyConditionExpression: 'PK = :pk AND begins_with(SK, :prefix)',
+          ExpressionAttributeValues: { ':pk': key.PK, ':prefix': 'ASSET#' },
+          ...(start ? { ExclusiveStartKey: start } : {}),
+        }),
+      );
+    } catch {
+      return fail('MEDIA_STORAGE_UNAVAILABLE');
+    }
+    const manifest = await this.manifest(productId);
+    const attached = new Set(manifest?.images.map((i) => i.mediaId));
+    const assets: MediaAsset[] = [];
+    for (const item of page.Items ?? []) {
+      const { PK, SK, ...body } = item;
+      const parsed = assetSchema.safeParse(body);
+      if (
+        !parsed.success ||
+        PK !== key.PK ||
+        parsed.data.productId !== productId ||
+        SK !== 'ASSET#' + parsed.data.mediaId
+      )
+        return fail('MEDIA_RECORD_INVALID');
+      if (parsed.data.state === 'READY' && !attached.has(parsed.data.mediaId))
+        assets.push(parsed.data);
+    }
+    const last = page.LastEvaluatedKey;
+    if (
+      last &&
+      (last.PK !== key.PK ||
+        typeof last.SK !== 'string' ||
+        !last.SK.startsWith('ASSET#') ||
+        !idSchema.safeParse(last.SK.slice(6)).success)
+    )
+      return fail('MEDIA_RECORD_INVALID');
+    return {
+      assets,
+      nextCursor: last ? productId + '.' + last.SK.slice(6) : null,
+    };
   }
   async asset(productId: string, mediaId: string) {
     const v = await this.read(mediaKeys.asset(productId, mediaId), assetSchema);

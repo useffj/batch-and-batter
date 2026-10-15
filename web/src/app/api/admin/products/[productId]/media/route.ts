@@ -8,7 +8,13 @@ export async function GET(
   const p = await context.params;
   return mediaRelay(
     request,
-    { productId: p.productId, kind: 'manifest' },
+    new URL(request.url).searchParams.get('view') === 'ready'
+      ? {
+          productId: p.productId,
+          kind: 'ready',
+          after: new URL(request.url).searchParams.get('after') ?? undefined,
+        }
+      : { productId: p.productId, kind: 'manifest' },
     process.env,
   );
 }

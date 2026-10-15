@@ -811,6 +811,121 @@ try {
       // Public image delivery is absent; attachment alone is not visibility approval.
     },
   );
+  await check(
+    'READY discovery is bounded, paginated, Product scoped and independent of age',
+    async (s) => {
+      const assets = [];
+      for (let n = 0; n < 15; n++) assets.push(await ready(s));
+      const before = await s.repo.readyAssets(product.productId);
+      assert.equal(before.assets.length, 12);
+      assert.ok(before.nextCursor);
+      const second = await s.repo.readyAssets(
+        product.productId,
+        before.nextCursor,
+      );
+      assert.equal(second.assets.length, 3);
+      assert.equal(
+        new Set([...before.assets, ...second.assets].map((a) => a.mediaId))
+          .size,
+        15,
+      );
+      s.advance(MEDIA.graceMs + 1);
+      assert.equal(
+        (await s.repo.readyAssets(product.productId)).assets.length,
+        12,
+      );
+      await replace(s, 0, [assets[0]]);
+      let page,
+        cursor,
+        all = [];
+      do {
+        page = await s.repo.readyAssets(product.productId, cursor);
+        all.push(...page.assets);
+        cursor = page.nextCursor ?? undefined;
+      } while (cursor);
+      assert.equal(all.length, 14);
+      assert.ok(!all.some((a) => a.mediaId === assets[0].mediaId));
+      await replace(s, 1, []);
+      await s.repo.fenceDeletion(product.productId, assets[1].mediaId);
+      await put(s, {
+        ...assets[2],
+        state: 'DELETED',
+        revision: 2,
+        ...mediaKeys.asset(product.productId, assets[2].mediaId),
+      });
+      all = [];
+      cursor = undefined;
+      do {
+        page = await s.repo.readyAssets(product.productId, cursor);
+        all.push(...page.assets);
+        cursor = page.nextCursor ?? undefined;
+      } while (cursor);
+      assert.equal(all.length, 12);
+      for (const a of assets.slice(0, 3))
+        await rejected(replace(s, 2, [a]), 'ASSET_STATE_CONFLICT');
+      const foreign = generateUlid();
+      assert.deepEqual((await s.repo.readyAssets(foreign)).assets, []);
+      await rejected(
+        s.repo.readyAssets(foreign, before.nextCursor),
+        'INVALID_MEDIA_CURSOR',
+      );
+      // A fresh repository represents a fresh authorized browser session, with no browser record.
+      assert.equal(
+        (
+          await new MediaRepository(client, s.table, s.clock).readyAssets(
+            product.productId,
+          )
+        ).assets.length <= 12,
+        true,
+      );
+    },
+  );
+  await check(
+    'cleanup commits after reads but before attachment transaction: attachment loses',
+    async (s) => {
+      const a = await ready(s);
+      s.advance(MEDIA.graceMs);
+      const d = delayedCompletion(s);
+      const pending = d.repo.replaceManifest(product.productId, {
+        expectedRevision: 0,
+        images: [{ mediaId: a.mediaId, alt: 'Synthetic' }],
+      });
+      await d.submitted;
+      await s.repo.fenceDeletion(product.productId, a.mediaId);
+      d.release();
+      await rejected(pending, 'MEDIA_REVISION_CONFLICT');
+      assert.equal(
+        (await s.repo.asset(product.productId, a.mediaId)).state,
+        'DELETING',
+      );
+      assert.equal(await s.repo.manifest(product.productId), undefined);
+    },
+  );
+  await check(
+    'attachment after seven days commits before cleanup transaction: cleanup loses',
+    async (s) => {
+      const a = await ready(s);
+      s.advance(MEDIA.graceMs);
+      const d = delayedCompletion(s);
+      const pending = d.repo.fenceDeletion(product.productId, a.mediaId);
+      await d.submitted;
+      await replace(s, 0, [a]);
+      d.release();
+      await rejected(pending, 'DELETION_CONFLICT');
+      assert.equal(
+        (await s.repo.asset(product.productId, a.mediaId)).state,
+        'ATTACHED',
+      );
+      assert.deepEqual(
+        (await s.repo.readyAssets(product.productId)).assets,
+        [],
+      );
+      await rejected(
+        s.repo.fenceDeletion(product.productId, a.mediaId),
+        'DELETION_NOT_ELIGIBLE',
+      );
+    },
+  );
   console.log(`${passed} media DynamoDB Local integration groups passed`);
 } finally {
   for (const TableName of tables)

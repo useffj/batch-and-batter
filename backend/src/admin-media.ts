@@ -23,7 +23,7 @@ export const mediaRoutes = [
 ];
 export type MediaApiRepository = Pick<
   MediaRepository,
-  'manifest' | 'asset' | 'upload' | 'replaceManifest'
+  'manifest' | 'asset' | 'upload' | 'replaceManifest' | 'readyAssets'
 >;
 export const MEDIA_JSON_LIMIT = 16384;
 const hash = z.string().regex(/^[a-f0-9]{64}$/);
@@ -91,6 +91,7 @@ function unavailable(code: string): never {
 }
 export function mediaFailure(e: MediaConflict) {
   const codes: Record<string, number> = {
+    INVALID_MEDIA_CURSOR: 400,
     PRODUCT_NOT_FOUND: 404,
     ASSET_NOT_FOUND: 404,
     UPLOAD_NOT_FOUND: 404,
@@ -126,7 +127,22 @@ export async function adminMedia(
   services?: MediaOrchestration,
 ) {
   const productId = validate(idSchema, e.pathParameters?.productId);
-  if (Object.keys(e.queryStringParameters ?? {}).length)
+  const query = e.queryStringParameters ?? {};
+  const discovery = e.routeKey === mediaRoutes[0] && query.view === 'ready';
+  if (
+    discovery &&
+    (Object.keys(query).some((k) => !['view', 'after'].includes(k)) ||
+      (query.after !== undefined &&
+        (query.after.split('.').length !== 2 ||
+          query.after.split('.')[0] !== productId ||
+          !idSchema.safeParse(query.after.split('.')[1]).success)))
+  )
+    throw new AdminError(
+      400,
+      'INVALID_MEDIA_CURSOR',
+      'Invalid discovery cursor.',
+    );
+  if (!discovery && Object.keys(query).length)
     throw new AdminError(
       400,
       'VALIDATION_ERROR',
@@ -167,6 +183,16 @@ export async function adminMedia(
     throw new AdminError(404, 'PRODUCT_NOT_FOUND', 'Product not found.');
   const repo = media();
   try {
+    if (discovery) {
+      const page = await repo.readyAssets(productId, query.after);
+      return {
+        status: 200,
+        body: {
+          assets: page.assets.map(mediaAssetDto),
+          nextCursor: page.nextCursor,
+        },
+      };
+    }
     if (e.routeKey === mediaRoutes[0])
       return {
         status: 200,

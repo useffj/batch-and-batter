@@ -1,6 +1,10 @@
 'use client';
 import { useEffect, useState, useSyncExternalStore } from 'react';
-import { GalleryModel, mediaClient } from '../../lib/admin/gallery-client';
+import {
+  GalleryModel,
+  ReadyDiscovery,
+  mediaClient,
+} from '../../lib/admin/gallery-client';
 import {
   GalleryUpload,
   type PreviewTransfer,
@@ -33,6 +37,19 @@ export function ProductGallery({
     upload.snapshot,
     upload.snapshot,
   );
+  const [discovery] = useState(
+    () => new ReadyDiscovery(productId, mediaClient()),
+  );
+  const ready = useSyncExternalStore(
+    discovery.subscribe,
+    discovery.snapshot,
+    discovery.snapshot,
+  );
+  const [candidate, setCandidate] = useState('');
+  const [recoveryAlt, setRecoveryAlt] = useState('');
+  useEffect(() => {
+    void discovery.load();
+  }, [discovery, s.manifest?.revision]);
   const [selected, setSelected] = useState('');
   const [replace, setReplace] = useState<string>();
   const current = s.draft.find((i) => i.mediaId === selected) ?? s.draft[0];
@@ -227,6 +244,113 @@ export function ProductGallery({
               </button>
             )}
           </div>
+          <section
+            className="gallery-upload"
+            aria-label="Ready images awaiting attachment"
+          >
+            <h3>Ready images awaiting attachment</h3>
+            <p>
+              These private images are processed but not attached. Select an
+              image, describe it, add it to the draft, then Save gallery.
+            </p>
+            {ready.busy && <p role="status">Loading ready images…</p>}
+            {ready.message && <p role="alert">{ready.message}</p>}
+            {!ready.busy &&
+              !ready.message &&
+              !ready.assets.some(
+                (a) => !s.draft.some((i) => i.mediaId === a.mediaId),
+              ) && <p>No unattached ready images on this page.</p>}
+            <ul className="gallery-tiles">
+              {ready.assets
+                .filter((a) => !s.draft.some((i) => i.mediaId === a.mediaId))
+                .map((a, n) => (
+                  <li key={a.mediaId}>
+                    <button
+                      type="button"
+                      aria-pressed={candidate === a.mediaId}
+                      disabled={disabled || s.draft.length >= 6}
+                      onClick={() => {
+                        setCandidate(a.mediaId);
+                        setRecoveryAlt('');
+                      }}
+                    >
+                      <span className="gallery-placeholder">
+                        Preview unavailable
+                      </span>
+                      <strong>Ready image {n + 1}</strong>
+                      <span>
+                        {a.width} × {a.height} · Not attached
+                      </span>
+                    </button>
+                  </li>
+                ))}
+            </ul>
+            {candidate &&
+              ready.assets.some((a) => a.mediaId === candidate) &&
+              !s.draft.some((i) => i.mediaId === candidate) && (
+                <div className="gallery-panel">
+                  <label>
+                    Alternative text for recovered image
+                    <textarea
+                      maxLength={160}
+                      value={recoveryAlt}
+                      disabled={disabled}
+                      onChange={(e) => setRecoveryAlt(e.target.value)}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    disabled={
+                      disabled ||
+                      s.draft.length >= 6 ||
+                      !recoveryAlt.trim() ||
+                      recoveryAlt.trim().length > 160
+                    }
+                    onClick={() => {
+                      model.edit([
+                        ...s.draft,
+                        { mediaId: candidate, alt: recoveryAlt.trim() },
+                      ]);
+                      setSelected(candidate);
+                      setCandidate('');
+                      setRecoveryAlt('');
+                    }}
+                  >
+                    Add recovered image to draft
+                  </button>
+                </div>
+              )}
+            {s.draft.length >= 6 && (
+              <p>
+                Gallery is full. Remove an image from the draft before adding
+                another.
+              </p>
+            )}
+            <div className="gallery-actions">
+              <button
+                type="button"
+                disabled={ready.busy}
+                onClick={() => {
+                  setCandidate('');
+                  void discovery.load();
+                }}
+              >
+                Refresh ready images
+              </button>
+              {ready.nextCursor && (
+                <button
+                  type="button"
+                  disabled={ready.busy}
+                  onClick={() => {
+                    setCandidate('');
+                    void discovery.load(true);
+                  }}
+                >
+                  Next ready images
+                </button>
+              )}
+            </div>
+          </section>
           <div className="gallery-upload">
             <h3>{replace ? 'Replace selected image' : 'Add an image'}</h3>
             <p>

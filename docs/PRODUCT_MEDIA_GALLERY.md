@@ -56,11 +56,10 @@ Alt text must be supplied for the new image. Public delivery remains absent.
 Run `node scripts/preview-admin-products.mjs` from web. The loopback-only preview
 uses the actual frontend media client and components with `scripts/media-fixture.ts`.
 It rejects non-mocked fetches; no AWS client or valid credentials are present.
-Synthetic manifests and synthetic server-side upload receipts persist in this
-preview tab under `bb-synthetic-media-manifests` and `bb-synthetic-media-uploads`.
-The receipts contain identifiers, declared content hash/type/size, state and
-original deadlines, never forms, credentials or binary data. These are isolated
-fixture records, not a production browser cache of backend records.
+For 1B-2G, synthetic manifests and upload receipts live in the loopback preview
+server's memory, shared across tabs and independent of browser storage. They reset
+on server restart. This fixture is not durable production storage; authoritative
+DynamoDB behavior is separately exercised by the local repository integration tests.
 Controls simulate conflicting writers, lost save acknowledgements, unavailable
 uploads, synthetic processing and unauthorized responses. The fixture is never
 imported by production routes or components. Synthetic image IDs are valid ULIDs;
@@ -117,12 +116,9 @@ loop. Explicitly abandoning a local workflow does not delete its server intent.
 File reselection validates MIME, size and SHA-256 before permitting a retry. READY,
 FAILED, expiry and authentication failures clear the record; authentication failure
 also blocks the in-memory workflow. READY does not attach or publish. A READY image
-not added and saved before another reload is not rediscovered by this minimal
-recovery feature. This is a required correction before live DEV upload activation:
-an administrator must be able to recover and explicitly attach the original READY
-asset after reload without creating a duplicate upload. The mechanism needs a
-targeted follow-up; no implementation expansion is authorized in this checkpoint.
-This slice does not provide complete end-to-end upload recovery.
+not added and saved before another reload was not rediscovered by 1B-2F's minimal
+upload recovery. The 1B-2G discovery extension below resolves that local limitation
+without creating replacement uploads. This does not enable production transfer.
 Recovery does not persist unsaved manifest edits or a replacement target.
 
 Focused review confirmed authoritative manifest loading, stable IDs/order/primary,
@@ -169,3 +165,41 @@ review; the READY recovery release gate above was made explicit.
 MERGING DOES NOT AUTHORIZE DEPLOYMENT.
 
 REAL IMAGE UPLOADS REMAIN DISABLED.
+
+## 1B-2G browser-independent READY recovery
+
+Opening a saved Product now reads its manifest and a separate bounded READY page
+from the protected media read contract. The READY section offers explicit selection,
+nonblank alternative text (maximum 160 characters), Add to draft and the existing
+Save action. The six-image limit, primary ordering, revision conflicts and ambiguous
+save reconciliation are unchanged. No image attaches or becomes public on discovery.
+No image URLs are invented; previews remain unavailable.
+
+Discovery does not read or write sessionStorage and never creates an upload. New
+client instances, refreshed tabs and newly authorized sessions use backend asset
+records. Refresh starts again at the first page; Next follows the server cursor,
+including empty pages. Failed/authentication responses clear displayed candidates.
+Pagination and manifest reads do not form a snapshot; a stale candidate can fail
+Save safely. Administrators must reload authoritative state after conflicts.
+
+Unsaved draft edits and replacement targets still do not survive reload. Production
+binary transfer, customer image delivery, cleanup and live release remain disabled
+or separately authorized. Seven-day cleanup eligibility is not attachment expiry.
+
+Fresh targeted validation: 204 frontend administrator tests and 59 backend media
+tests passed. Prior full frontend 526, full backend 1036, processor 10 and
+infrastructure 37 results remain historical. The new tests cover storage-independent
+discovery, explicit attachment/removal, sanitized Product-scoped responses and
+fail-closed authorization. DynamoDB Local passed 35 groups.
+
+Frontend type checking, lint and production build passed; backend build and all
+10 artifact checks passed. Repository formatting and git diff whitespace checks
+passed. Browser checks confirmed discovery after reload, mandatory alt text and
+explicit draft/Save, and the saved recovered attachment after closing/reopening a
+fresh tab. The preview holds synthetic media on its local server, not in the tab.
+Storage-free client tests and authenticated relay tests cover recovery without
+old sessionStorage; no real Cognito login or hosted acceptance was performed.
+Local screenshot: `/tmp/bb-ready-rediscovery.png`. No commit, push, AWS operation,
+live write, cleanup execution or original testing-workspace modification occurred.
+Next: focused review of this local diff before a separately authorized GitHub
+checkpoint. Hosted duplicate-activation acceptance remains **NOT PASSED**.

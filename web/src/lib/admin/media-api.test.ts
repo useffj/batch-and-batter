@@ -331,3 +331,33 @@ it('upload authorization is scoped, short-lived and rejects arbitrary fields or 
       ),
     ).toThrow();
 });
+
+it('READY query reuses encrypted session relay, validates cursor and remains no-store', async () => {
+  const s = await setup(() => json({ assets: [], nextCursor: null }));
+  const t: MediaTarget = { productId, kind: 'ready' };
+  const request = new Request(
+    'https://shop.test/api/admin/products/' + productId + '/media?view=ready',
+    { headers: { cookie: s.cookie } },
+  );
+  const r = await mediaRelay(request, t, config, s.fetcher);
+  expect(r.status).toBe(200);
+  expect(r.headers.get('cache-control')).toContain('no-store');
+  expect(s.calls.at(-1)?.url).toBe(
+    'https://api.test/admin/products/' + productId + '/media?view=ready',
+  );
+  expect(JSON.stringify(await r.json())).not.toContain('synthetic.access');
+  const bad = await mediaRelay(
+    new Request(request.url + '&extra=x', { headers: { cookie: s.cookie } }),
+    t,
+    config,
+    s.fetcher,
+  );
+  expect(bad.status).toBe(400);
+  const noSession = await mediaRelay(
+    new Request(request.url),
+    t,
+    config,
+    s.fetcher,
+  );
+  expect(noSession.status).toBe(401);
+});

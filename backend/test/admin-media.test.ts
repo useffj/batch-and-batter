@@ -47,6 +47,7 @@ function event(index = 0, body?: unknown): ApiEvent {
 function repo(overrides: Partial<MediaApiRepository> = {}): MediaApiRepository {
   return {
     manifest: async () => undefined,
+    readyAssets: async () => ({ assets: [], nextCursor: null }),
     asset: async () => undefined,
     upload: async () => undefined,
     replaceManifest: async () => {
@@ -380,4 +381,19 @@ test('accepted dispatch returns 202 QUEUED rather than READY', async () => {
   assert.equal(r.statusCode, 202);
   assert.equal(JSON.parse(r.body).upload.state, 'QUEUED');
   assert.equal(dispatch, 1);
+});
+
+test('READY discovery uses existing admin/product boundary and rejects foreign cursors', async () => {
+  const e = event();
+  e.queryStringParameters = { view: 'ready' };
+  const r = await handler()(e);
+  assert.equal(r.statusCode, 200);
+  assert.deepEqual(JSON.parse(r.body), { assets: [], nextCursor: null });
+  assert.equal(r.headers['cache-control'], 'no-store');
+  assert.equal((await handler(repo(), false)(e)).statusCode, 404);
+  e.queryStringParameters.after = otherProductId + '.' + otherProductId;
+  assert.equal((await handler()(e)).statusCode, 400);
+  e.queryStringParameters = { view: 'ready' };
+  e.requestContext.authorizer = undefined;
+  assert.equal((await handler()(e)).statusCode, 401);
 });
