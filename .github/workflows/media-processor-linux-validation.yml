@@ -55,8 +55,8 @@ jobs:
           PYZIP
       - name: Resolve official Lambda image digest
         run: |
-          docker pull --platform linux/amd64 public.ecr.aws/lambda/nodejs:24
-          image=$(docker image inspect public.ecr.aws/lambda/nodejs:24 --format '{{index .RepoDigests 0}}')
+          image=public.ecr.aws/lambda/nodejs@sha256:9a096eb2cb6fa96419b5742e1b4a64b6bf7d3aa954beb92461a2a3e072061497
+          docker pull --platform linux/amd64 "$image"
           test "$(docker image inspect "$image" --format '{{.Architecture}}')" = amd64
           test "$(docker image inspect "$image" --format '{{.Os}}')" = linux
           echo "LAMBDA_VALIDATION_IMAGE=$image" >> "$GITHUB_ENV"
@@ -70,7 +70,7 @@ jobs:
           const path = require('node:path');
           const { createHash } = require('node:crypto');
           const { createRequire } = require('node:module');
-          const { execFileSync } = require('node:child_process');
+          const { spawnSync } = require('node:child_process');
           const { inflateRawSync } = require('node:zlib');
           const hash = bytes => createHash('sha256').update(bytes).digest('hex');
           const root = '/tmp/runtime';
@@ -124,10 +124,11 @@ jobs:
                 glibc: process.report.getReport().header.glibcVersionRuntime, memoryMiB: 1024,
                 cpus: 1, tmpMiB: 512, network: 'none', artifact: manifest.sha256,
                 compressedBytes: zip.length, uncompressedBytes: manifest.uncompressedBytes } }));
-              for (const name of ['png-small', 'jpeg-oriented', 'webp-small', 'png-medium', 'png-20mp', 'over-axis', 'over-pixels', 'invalid', 'over-bytes', 'checksum', 'fail-closed']) {
-                process.stdout.write(execFileSync(process.execPath, [__filename, '--case', name], {
-                  encoding: 'utf8', timeout: 30000, maxBuffer: 1024 * 1024,
-                }));
+              for (const name of ['native-negative', 'native-probe', 'png-small', 'jpeg-oriented', 'webp-small', 'png-medium', 'png-20mp', 'over-axis', 'over-pixels', 'invalid', 'over-bytes', 'checksum', 'fail-closed']) {
+                const child = spawnSync(process.execPath, [__filename, '--case', name], {
+                  timeout: 30000, stdio: ['ignore', 'inherit', 'inherit'],
+                });
+                assert.equal(child.status, 0, 'Packaged runtime case failed: ' + name);
               }
               // The only mounted artifact is read-only; validate runtime files were not changed.
               for (const [name, expected] of Object.entries(manifest.files)) assert.equal(hash(fs.readFileSync(path.join(root, name))), expected);
@@ -135,13 +136,88 @@ jobs:
               return;
             }
             const runtimeRequire = createRequire(root + '/package.json');
+            const name = process.argv.at(-1);
+            const sharpEntry = runtimeRequire.resolve('sharp');
+            // Version-pinned Sharp internals expose the exact binding used by its pipeline.
+            const selectedPath = path.join(path.dirname(sharpEntry), 'sharp.cjs');
+            function requireNativeBackend(binding) {
+              assert.equal(binding.libvipsVersion().isWasm, false, 'WASM_BACKEND_REJECTED');
+              assert.equal(binding._isUsingX64V2(), true, 'X64_V2_REQUIRED');
+            }
+            assert.ok(process.report.getReport().header.glibcVersionRuntime, 'GLIBC_REQUIRED');
+            if (name === 'native-negative') {
+              // Child-process-only loader fault injection; extracted artifact bytes stay intact.
+              const Module = require('node:module');
+              const original = Module._extensions['.node'];
+              Module._extensions['.node'] = (module, filename) => {
+                if (filename.includes('/@img/sharp-linux-x64/')) {
+                  const error = new Error('SYNTHETIC_NATIVE_LOAD_FAILURE');
+                  error.code = 'ERR_DLOPEN_FAILED'; throw error;
+                }
+                return original(module, filename);
+              };
+              assert.throws(() => runtimeRequire('@img/sharp-linux-x64/sharp.node'), /SYNTHETIC_NATIVE_LOAD_FAILURE/);
+              assert.throws(() => runtimeRequire('./missing-native.node'), { code: 'MODULE_NOT_FOUND' });
+              const fallback = runtimeRequire('sharp');
+              const selected = runtimeRequire(selectedPath);
+              assert.equal(selected.libvipsVersion().isWasm, true);
+              // Demonstrate that functional WASM image processing still fails acceptance.
+              await fallback({ create: { width: 480, height: 480, channels: 3, background: 'white' } }).png().toBuffer();
+              assert.throws(() => requireNativeBackend(selected), /WASM_BACKEND_REJECTED/);
+              console.log(JSON.stringify({ name, result: 'PASS', missingAndBrokenNativeRejected: true, workingWasmRejected: true }));
+              return;
+            }
+            let native, addon, library;
+            try {
+              const nativePackage = runtimeRequire('@img/sharp-linux-x64/package');
+              const vipsPackage = runtimeRequire('@img/sharp-libvips-linux-x64/package');
+              assert.equal(nativePackage.version, '0.35.5');
+              assert.equal(vipsPackage.version, '1.3.4');
+              const entry = runtimeRequire.resolve('@img/sharp-linux-x64/sharp.node');
+              addon = path.join(path.dirname(entry), 'lib', 'sharp-linux-x64-0.35.5.node');
+              library = runtimeRequire.resolve('@img/sharp-libvips-linux-x64/binary');
+              for (const file of [addon, library]) {
+                const header = fs.readFileSync(file).subarray(0, 20);
+                assert.equal(header.toString('hex', 0, 4), '7f454c46');
+                assert.equal(header[4], 2); assert.equal(header.readUInt16LE(18), 62);
+              }
+              if (name === 'native-probe') {
+                console.log(JSON.stringify({ nativeResolution: { entry, addon, library, node: process.version, arch: process.arch,
+                  glibc: process.report.getReport().header.glibcVersionRuntime, nativePackage: nativePackage.version, vipsPackage: vipsPackage.version,
+                  tmpMount: fs.readFileSync('/proc/self/mountinfo', 'utf8').split('\n').filter(line => line.split(' ')[4] === '/tmp') } }));
+                for (const file of [addon, library]) {
+                  const linked = spawnSync('/lib64/ld-linux-x86-64.so.2', ['--list', file], { encoding: 'utf8', timeout: 5000 });
+                  console.log(JSON.stringify({ linker: { file, status: linked.status, error: linked.error?.code,
+                    stdout: linked.stdout?.slice(0, 8000), stderr: linked.stderr?.slice(0, 8000) } }));
+                }
+              }
+              // Public package export, not the unexported package root.
+              native = runtimeRequire('@img/sharp-linux-x64/sharp.node');
+              requireNativeBackend(native);
+            } catch (error) {
+              console.error(JSON.stringify({ nativeLoadFailure: { code: error.code, message: String(error.message).slice(0, 4000), addon, library } }));
+              throw new Error('STRICT_NATIVE_VALIDATION_FAILED');
+            }
             const sharp = runtimeRequire('sharp');
+            const selected = runtimeRequire(selectedPath);
+            assert.equal(selected, native, 'SHARP_SELECTED_DIFFERENT_BINDING');
+            requireNativeBackend(selected);
+            assert.equal(sharp.versions.emscripten, undefined, 'WASM_VERSIONS_REJECTED');
+            assert.ok(require.cache[addon], 'NATIVE_ADDON_NOT_LOADED');
+            const loaded = process.report.getReport().sharedObjects;
+            assert.ok(loaded.includes(addon), 'NATIVE_ADDON_NOT_MAPPED');
+            assert.ok(loaded.includes(library), 'NATIVE_LIBVIPS_NOT_MAPPED');
+            if (name === 'native-probe') {
+              await sharp({ create: { width: 480, height: 480, channels: 3, background: 'white' } }).jpeg().toBuffer();
+              console.log(JSON.stringify({ name, result: 'PASS', backend: selected.libvipsVersion(), addon, library,
+                mapped: loaded.filter(x => x.startsWith(root)), versions: sharp.versions }));
+              return;
+            }
             const packaged = runtimeRequire('./index.cjs');
             assert.equal(typeof packaged.handler, 'function');
             assert.equal(sharp.versions.sharp, '0.35.5');
             assert.ok(sharp.versions.vips);
             assert.equal(sharp.concurrency(), 1);
-            const name = process.argv.at(-1);
             const event = { version: 1, productId: '01K00000000000000000000001', subject: 'synthetic-linux-test', uploadId: 'a'.repeat(64) };
             if (name === 'fail-closed') {
               await assert.rejects(packaged.handler({}), /^Error: MEDIA_PROCESSOR_CONFIGURATION_INVALID$/);
@@ -200,6 +276,7 @@ jobs:
       - name: Execute unchanged ZIP in isolated AL2023 runtime
         run: |
           set -o pipefail
+          set +e
           timeout 360 docker run --rm --platform linux/amd64 \
             --network none --memory 1024m --memory-swap 1024m --cpus 1 \
             --read-only --cap-drop ALL --security-opt no-new-privileges \
@@ -207,7 +284,10 @@ jobs:
             --mount "type=bind,src=$PWD/media-processor/out/processor-linux-x64.zip,dst=/input/artifact.zip,readonly" \
             --mount "type=bind,src=$RUNNER_TEMP/processor-checks,dst=/checks,readonly" \
             --entrypoint /var/lang/bin/node "$LAMBDA_VALIDATION_IMAGE" /checks/check.cjs \
-            | tee "$RUNNER_TEMP/processor-evidence.jsonl"
+            2>&1 | tee "$RUNNER_TEMP/processor-evidence.jsonl"
+          runtime_status=${PIPESTATUS[0]}
+          set -e
           printf '\n## Actual ZIP runtime evidence\n```json\n' >> "$GITHUB_STEP_SUMMARY"
           cat "$RUNNER_TEMP/processor-evidence.jsonl" >> "$GITHUB_STEP_SUMMARY"
           printf '\n```\nNo AWS access or deployment. Container measurements do not establish managed Lambda equivalence.\n' >> "$GITHUB_STEP_SUMMARY"
+          exit "$runtime_status"
