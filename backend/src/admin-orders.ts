@@ -1,3 +1,4 @@
+import { readFulfillment } from './fulfillment-state';
 import {
   GetCommand,
   QueryCommand,
@@ -76,6 +77,19 @@ export class AdminOrders {
   ) {
     if (!table) throw Error('Commerce table required');
   }
+  async present(order: Order, details = false) {
+    const state = await readFulfillment(this.client, this.table, order.orderId);
+    return {
+      ...orderDto(order, details),
+      fulfillmentStatus: state?.status ?? null,
+      fulfillment: state ?? {
+        orderId: order.orderId,
+        revision: 0,
+        status: null,
+        history: [],
+      },
+    };
+  }
   async get(id: string) {
     const key = orderKey(id);
     const r = await this.client.send(
@@ -106,7 +120,7 @@ export class AdminOrders {
       const o = r.Item ? await this.get(idSchema.parse(r.Item.orderId)) : null;
       if (o && o.displayOrderNumber !== input.reference)
         throw Error('Reference mismatch');
-      return { orders: o ? [orderDto(o)] : [], nextCursor: null };
+      return { orders: o ? [await this.present(o)] : [], nextCursor: null };
     }
     if (!input.dropId && !input.pickupDate)
       throw new AdminError(
@@ -179,7 +193,7 @@ export class AdminOrders {
         (!input.pickupDate || o.pickup.date === input.pickupDate) &&
         (!input.status || o.status === input.status)
       )
-        orders.push(orderDto(o));
+        orders.push(await this.present(o));
     }
     return {
       orders,
@@ -197,7 +211,7 @@ export async function adminOrders(event: ApiEvent, repository: AdminOrders) {
       validate(idSchema, event.pathParameters.orderId),
     );
     if (!o) throw new AdminError(404, 'ORDER_NOT_FOUND', 'Order not found.');
-    return { order: orderDto(o, true) };
+    return { order: await repository.present(o, true) };
   }
   return repository.list(
     validate(querySchema, event.queryStringParameters ?? {}),

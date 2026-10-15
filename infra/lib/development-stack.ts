@@ -228,7 +228,11 @@ export class DevelopmentStack extends Stack {
     for (const table of [commerceTable, operationsTable]) {
       role.addToPolicy(
         new iam.PolicyStatement({
-          actions: ['dynamodb:GetItem', 'dynamodb:PutItem'],
+          actions: [
+            'dynamodb:GetItem',
+            'dynamodb:PutItem',
+            ...(table === commerceTable ? ['dynamodb:ConditionCheckItem'] : []),
+          ],
           resources: [table.tableArn],
         }),
       );
@@ -418,6 +422,16 @@ export class DevelopmentStack extends Stack {
         '/admin/products/{productId}',
         apigateway.HttpMethod.PUT,
         'AdminReplaceProductIntegration',
+      ],
+      [
+        '/admin/fulfillment',
+        apigateway.HttpMethod.GET,
+        'AdminFulfillmentIntegration',
+      ],
+      [
+        '/admin/orders/{orderId}/fulfillment',
+        apigateway.HttpMethod.POST,
+        'AdminFulfillmentWriteIntegration',
       ],
       ['/admin/orders', apigateway.HttpMethod.GET, 'AdminOrdersIntegration'],
       [
