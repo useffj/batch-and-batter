@@ -926,6 +926,49 @@ try {
       );
     },
   );
+  if (process.argv.includes('--processor-runtime')) {
+    const {
+      createProcessor,
+    } = require('../../media-processor/out/host/index.cjs');
+    await check(
+      'packaged processor reaches durable READY and replays without attachment',
+      async (s) => {
+        const i = await prepare(s),
+          objects = new Map();
+        const worker = createProcessor(s.repo, {
+          source: async () => source,
+          output: async (intent, attempt, variant) => {
+            const key = outputKey(
+              intent,
+              attempt,
+              variant.size,
+              variant.format,
+            );
+            assert.ok(!objects.has(key));
+            objects.set(key, variant.data);
+            return key;
+          },
+        });
+        assert.equal((await worker(envelope(i))).state, 'READY');
+        assert.equal(
+          (await s.repo.upload(product.productId, owner, i.uploadId)).state,
+          'READY',
+        );
+        assert.equal(
+          (await s.repo.asset(product.productId, i.mediaId)).state,
+          'READY',
+        );
+        assert.equal(await s.repo.manifest(product.productId), undefined);
+        assert.equal(objects.size, 4);
+        assert.equal((await worker(envelope(i))).state, 'READY');
+        assert.equal(objects.size, 4);
+        assert.deepEqual(await get(s, catalogKeys.product(product.productId)), {
+          ...product,
+          ...catalogKeys.product(product.productId),
+        });
+      },
+    );
+  }
   console.log(`${passed} media DynamoDB Local integration groups passed`);
 } finally {
   for (const TableName of tables)

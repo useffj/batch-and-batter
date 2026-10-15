@@ -1,0 +1,346 @@
+name: Media processor AL2023 artifact validation
+
+on:
+  push:
+    branches:
+      - codex/media-processor-runtime-1b2h
+
+permissions:
+  contents: read
+
+jobs:
+  validate-processor-al2023:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      AWS_EC2_METADATA_DISABLED: 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - name: Install and validate pinned dependencies
+        run: |
+          npm install --global npm@11.11.0
+          npm --prefix backend ci
+          npm --prefix media-processor ci
+          npm --prefix media-processor run typecheck
+          npm --prefix media-processor test
+          npm --prefix backend audit --omit=dev
+          npm --prefix media-processor audit --omit=dev
+          npm --prefix media-processor run build:linux
+          git diff --exit-code -- backend/package-lock.json media-processor/package-lock.json
+      - name: Inspect ZIP and prepare independent file hashes
+        run: |
+          mkdir -p "$RUNNER_TEMP/processor-checks"
+          python3 <<'PYZIP'
+          import hashlib, json, os, pathlib, re, zipfile
+          artifact = pathlib.Path('media-processor/out/processor-linux-x64.zip')
+          with zipfile.ZipFile(artifact) as archive:
+              entries = archive.infolist()
+              names = [e.filename for e in entries]
+              assert artifact.stat().st_size < 50 * 1024 * 1024
+              size = sum(e.file_size for e in entries)
+              assert size < 250 * 1024 * 1024
+              assert 'index.cjs' in names
+              assert any('@img/sharp-linux-x64/' in n and n.endswith('.node') for n in names)
+              assert any('@img/sharp-libvips-linux-x64/' in n and '.so' in n for n in names)
+              assert not any(re.search(r'darwin|test-support|/typescript/|/esbuild/|/\.env|\.pem$', n) for n in names)
+              files = {e.filename: hashlib.sha256(archive.read(e)).hexdigest() for e in entries if not e.is_dir()}
+              report = dict(sha256=hashlib.sha256(artifact.read_bytes()).hexdigest(), uncompressedBytes=size, files=files)
+              pathlib.Path(os.environ['RUNNER_TEMP'], 'processor-checks/manifest.json').write_text(json.dumps(report))
+              print(json.dumps(dict(zipSha256=report['sha256'], compressedBytes=artifact.stat().st_size, uncompressedBytes=size, entries=len(entries))))
+          PYZIP
+      - name: Resolve official Lambda image digest
+        run: |
+          image=public.ecr.aws/lambda/nodejs@sha256:9a096eb2cb6fa96419b5742e1b4a64b6bf7d3aa954beb92461a2a3e072061497
+          docker pull --platform linux/amd64 "$image"
+          test "$(docker image inspect "$image" --format '{{.Architecture}}')" = amd64
+          test "$(docker image inspect "$image" --format '{{.Os}}')" = linux
+          echo "LAMBDA_VALIDATION_IMAGE=$image" >> "$GITHUB_ENV"
+          printf 'Official Lambda base image: `%s`\n' "$image" >> "$GITHUB_STEP_SUMMARY"
+          docker image inspect "$image" --format '{{.Id}} {{.Architecture}} {{.Os}}'
+      - name: Prepare synthetic packaged-runtime checks
+        run: |
+          cat > "$RUNNER_TEMP/processor-checks/check.cjs" <<'JS'
+          const assert = require('node:assert/strict');
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const { createHash } = require('node:crypto');
+          const { createRequire } = require('node:module');
+          const { spawnSync } = require('node:child_process');
+          const { inflateRawSync } = require('node:zlib');
+          const hash = bytes => createHash('sha256').update(bytes).digest('hex');
+          const root = '/opt/media-artifact';
+          async function main() {
+            assert.equal(process.platform, 'linux');
+            assert.equal(process.arch, 'x64');
+            assert.match(process.version, /^v24\./);
+            const os = fs.readFileSync('/etc/os-release', 'utf8');
+            assert.match(os, /^ID="?amzn"?$/m);
+            assert.match(os, /^VERSION_ID="?2023"?$/m);
+            const mounts = fs.readFileSync('/proc/self/mountinfo', 'utf8').split('\n');
+            function mountAt(location) {
+              const line = mounts.find(line => line.split(' ')[4] === location);
+              assert.ok(line, 'MISSING_MOUNT: ' + location);
+              const [mount, superblock] = line.split(' - ');
+              return { line, options: mount.split(' ')[5].split(','), filesystem: superblock.split(' ')[0] };
+            }
+            const artifactMount = mountAt(root), temporaryMount = mountAt('/tmp');
+            assert.equal(artifactMount.filesystem, 'tmpfs');
+            for (const option of ['rw', 'nosuid', 'nodev']) assert.ok(artifactMount.options.includes(option));
+            assert.ok(!artifactMount.options.includes('noexec'), 'ARTIFACT_MOUNT_NOEXEC');
+            assert.ok(temporaryMount.options.includes('noexec'), 'TMP_MUST_REMAIN_NOEXEC');
+            if (!process.argv.includes('--case')) {
+              // Extract the immutable ZIP inside the container using only Node built-ins.
+              // Independent Python ZIP hashes below verify every extracted file's bytes.
+              const zip = fs.readFileSync('/input/artifact.zip');
+              const manifest = JSON.parse(fs.readFileSync('/checks/manifest.json'));
+              assert.equal(hash(zip), manifest.sha256);
+              const end = zip.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+              assert.ok(end >= 0);
+              assert.equal(end + 22 + zip.readUInt16LE(end + 20), zip.length);
+              let offset = zip.readUInt32LE(end + 16);
+              const seen = new Set();
+              for (let n = 0; n < zip.readUInt16LE(end + 10); n++) {
+                assert.equal(zip.readUInt32LE(offset), 0x02014b50);
+                const method = zip.readUInt16LE(offset + 10);
+                const compressed = zip.readUInt32LE(offset + 20);
+                const size = zip.readUInt32LE(offset + 24);
+                const length = zip.readUInt16LE(offset + 28);
+                const name = zip.toString('utf8', offset + 46, offset + 46 + length);
+                const local = zip.readUInt32LE(offset + 42);
+                const mode = zip.readUInt32LE(offset + 38) >>> 16;
+                assert.ok(!path.isAbsolute(name) && !name.split('/').includes('..'));
+                assert.notEqual(mode & 0o170000, 0o120000, 'No ZIP symlinks');
+                assert.ok(!seen.has(name)); seen.add(name);
+                const target = path.join(root, name);
+                if (name.endsWith('/')) fs.mkdirSync(target, { recursive: true });
+                else {
+                  assert.equal(zip.readUInt32LE(local), 0x04034b50);
+                  const start = local + 30 + zip.readUInt16LE(local + 26) + zip.readUInt16LE(local + 28);
+                  const packed = zip.subarray(start, start + compressed);
+                  assert.ok([0, 8].includes(method));
+                  const bytes = method === 8 ? inflateRawSync(packed, { maxOutputLength: size }) : packed;
+                  assert.equal(bytes.length, size);
+                  assert.equal(hash(bytes), manifest.files[name]);
+                  fs.mkdirSync(path.dirname(target), { recursive: true });
+                  fs.writeFileSync(target, bytes, { mode: mode & 0o777 || 0o644 });
+                }
+                offset += 46 + length + zip.readUInt16LE(offset + 30) + zip.readUInt16LE(offset + 32);
+              }
+              assert.equal([...seen].filter(x => !x.endsWith('/')).length, Object.keys(manifest.files).length);
+              console.log(JSON.stringify({ environment: { node: process.version, arch: process.arch, os,
+                glibc: process.report.getReport().header.glibcVersionRuntime, memoryMiB: 1024,
+                cpus: 1, tmpMiB: 512, artifactTmpfsMiB: 128, mounts: [artifactMount.line, temporaryMount.line], network: 'none', artifact: manifest.sha256,
+                compressedBytes: zip.length, uncompressedBytes: manifest.uncompressedBytes } }));
+              for (const name of ['native-negative', 'native-probe', 'png-small', 'jpeg-oriented', 'webp-small', 'png-medium', 'png-20mp', 'over-axis', 'over-pixels', 'invalid', 'over-bytes', 'checksum', 'fail-closed']) {
+                const child = spawnSync(process.execPath, [__filename, '--case', name], {
+                  timeout: 30000, stdio: ['ignore', 'inherit', 'inherit'],
+                });
+                assert.equal(child.status, 0, 'Packaged runtime case failed: ' + name);
+              }
+              // The only mounted artifact is read-only; validate runtime files were not changed.
+              for (const [name, expected] of Object.entries(manifest.files)) assert.equal(hash(fs.readFileSync(path.join(root, name))), expected);
+              assert.equal(hash(fs.readFileSync('/input/artifact.zip')), manifest.sha256);
+              const memory = {};
+              for (const file of ['memory.current', 'memory.peak', 'memory.max']) {
+                const location = '/sys/fs/cgroup/' + file;
+                if (fs.existsSync(location)) memory[file] = fs.readFileSync(location, 'utf8').trim();
+              }
+              console.log(JSON.stringify({ containerMemoryBytes: memory,
+                limitation: 'Cgroup memory includes tmpfs artifact pages and process memory; separate tmpfs capacities are not preallocated and share the 1024 MiB container limit' }));
+              return;
+            }
+            const runtimeRequire = createRequire(root + '/package.json');
+            const name = process.argv.at(-1);
+            const sharpEntry = runtimeRequire.resolve('sharp');
+            // Version-pinned Sharp internals expose the exact binding used by its pipeline.
+            const selectedPath = path.join(path.dirname(sharpEntry), 'sharp.cjs');
+            function requireNativeBackend(binding) {
+              assert.equal(binding.libvipsVersion().isWasm, false, 'WASM_BACKEND_REJECTED');
+              assert.equal(binding._isUsingX64V2(), true, 'X64_V2_REQUIRED');
+            }
+            assert.ok(process.report.getReport().header.glibcVersionRuntime, 'GLIBC_REQUIRED');
+            if (name === 'native-negative') {
+              // Child-process-only loader fault injection; extracted artifact bytes stay intact.
+              const Module = require('node:module');
+              const original = Module._extensions['.node'];
+              Module._extensions['.node'] = (module, filename) => {
+                if (filename.includes('/@img/sharp-linux-x64/')) {
+                  const error = new Error('SYNTHETIC_NATIVE_LOAD_FAILURE');
+                  error.code = 'ERR_DLOPEN_FAILED'; throw error;
+                }
+                return original(module, filename);
+              };
+              assert.throws(() => runtimeRequire('@img/sharp-linux-x64/sharp.node'), /SYNTHETIC_NATIVE_LOAD_FAILURE/);
+              assert.throws(() => runtimeRequire('./missing-native.node'), { code: 'MODULE_NOT_FOUND' });
+              const fallback = runtimeRequire('sharp');
+              const selected = runtimeRequire(selectedPath);
+              assert.equal(selected.libvipsVersion().isWasm, true);
+              // Demonstrate that functional WASM image processing still fails acceptance.
+              await fallback({ create: { width: 480, height: 480, channels: 3, background: 'white' } }).png().toBuffer();
+              assert.throws(() => requireNativeBackend(selected), /WASM_BACKEND_REJECTED/);
+              console.log(JSON.stringify({ name, result: 'PASS', missingAndBrokenNativeRejected: true, workingWasmRejected: true }));
+              return;
+            }
+            let native, addon, library;
+            try {
+              const nativePackage = runtimeRequire('@img/sharp-linux-x64/package');
+              const vipsPackage = runtimeRequire('@img/sharp-libvips-linux-x64/package');
+              assert.equal(nativePackage.version, '0.35.5');
+              assert.equal(vipsPackage.version, '1.3.4');
+              const entry = runtimeRequire.resolve('@img/sharp-linux-x64/sharp.node');
+              addon = path.join(path.dirname(entry), 'lib', 'sharp-linux-x64-0.35.5.node');
+              library = runtimeRequire.resolve('@img/sharp-libvips-linux-x64/binary');
+              for (const file of [addon, library]) {
+                const header = fs.readFileSync(file).subarray(0, 20);
+                assert.equal(header.toString('hex', 0, 4), '7f454c46');
+                assert.equal(header[4], 2); assert.equal(header.readUInt16LE(18), 62);
+              }
+              if (name === 'native-probe') {
+                console.log(JSON.stringify({ nativeResolution: { entry, addon, library, node: process.version, arch: process.arch,
+                  glibc: process.report.getReport().header.glibcVersionRuntime, nativePackage: nativePackage.version, vipsPackage: vipsPackage.version,
+                  tmpMount: fs.readFileSync('/proc/self/mountinfo', 'utf8').split('\n').filter(line => line.split(' ')[4] === '/tmp') } }));
+                for (const file of [addon, library]) {
+                  const linked = spawnSync('/lib64/ld-linux-x86-64.so.2', ['--list', file], { encoding: 'utf8', timeout: 5000 });
+                  console.log(JSON.stringify({ linker: { file, status: linked.status, error: linked.error?.code,
+                    stdout: linked.stdout?.slice(0, 8000), stderr: linked.stderr?.slice(0, 8000) } }));
+                }
+              }
+              // Public package export, not the unexported package root.
+              native = runtimeRequire('@img/sharp-linux-x64/sharp.node');
+              requireNativeBackend(native);
+            } catch (error) {
+              console.error(JSON.stringify({ nativeLoadFailure: { code: error.code, message: String(error.message).slice(0, 4000), addon, library } }));
+              throw new Error('STRICT_NATIVE_VALIDATION_FAILED');
+            }
+            const sharp = runtimeRequire('sharp');
+            const selected = runtimeRequire(selectedPath);
+            assert.equal(selected, native, 'SHARP_SELECTED_DIFFERENT_BINDING');
+            requireNativeBackend(selected);
+            assert.equal(sharp.versions.emscripten, undefined, 'WASM_VERSIONS_REJECTED');
+            assert.ok(require.cache[addon], 'NATIVE_ADDON_NOT_LOADED');
+            if (name === 'native-probe') {
+              await sharp({ create: { width: 480, height: 480, channels: 3, background: 'white' } }).jpeg().toBuffer();
+            }
+            const artifactRoot = fs.realpathSync(root);
+            function canonical(file) {
+              try { return fs.realpathSync(file); } catch { return null; }
+            }
+            const belongs = file => file !== null && file.startsWith(artifactRoot + '/');
+            const loaded = process.report.getReport().sharedObjects;
+            const mappings = fs.readFileSync('/proc/self/maps', 'utf8').split('\n').flatMap(line => {
+              const match = line.match(/^[0-9a-f]+-[0-9a-f]+\s+(\S+)\s+[0-9a-f]+\s+(\S+)\s+(\d+)\s+(.+)$/);
+              if (!match) return [];
+              const [, permissions, device, inode, rawPath] = match;
+              if (!rawPath.startsWith(root + '/') && !/^(?:sharp-.*\.node|libvips.*\.so.*)$/.test(path.basename(rawPath))) return [];
+              const resolved = canonical(rawPath);
+              return [{ rawPath, permissions, device, inode, canonicalPath: resolved, belongsToArtifact: belongs(resolved) }];
+            });
+            const comparisons = [addon, library].map(expected => {
+              const resolved = canonical(expected);
+              const exists = fs.existsSync(expected);
+              const inode = exists ? fs.statSync(expected, { bigint: true }).ino.toString() : null;
+              return { expected, exists, canonicalPath: resolved, inode, belongsToArtifact: belongs(resolved),
+                literalReportMatch: loaded.includes(expected),
+                canonicalReportMatch: resolved !== null && loaded.some(file => canonical(file) === resolved),
+                executableMappings: mappings.filter(m => resolved !== null && m.canonicalPath === resolved && m.inode === inode && m.permissions.includes('x') && m.belongsToArtifact) };
+            });
+            // Emit only bounded native paths/permissions, never unrelated mappings or environment.
+            if (name === 'native-probe') console.log(JSON.stringify({ nativeMappingEvidence: {
+              reportPaths: loaded.filter(file => file.startsWith(root + '/')).slice(0, 32).map(rawPath => ({ rawPath, canonicalPath: canonical(rawPath) })),
+              mappings: mappings.slice(0, 32), comparisons,
+            } }));
+            assert.ok(mappings.length <= 32, 'NATIVE_MAPPING_DIAGNOSTIC_BOUND');
+            for (const [index, comparison] of comparisons.entries()) {
+              assert.ok(comparison.exists && comparison.belongsToArtifact, 'EXPECTED_NATIVE_FILE_OUTSIDE_ARTIFACT');
+              assert.ok(comparison.canonicalReportMatch, index === 0 ? 'NATIVE_ADDON_NOT_MAPPED' : 'NATIVE_LIBVIPS_NOT_MAPPED');
+              assert.ok(comparison.executableMappings.length > 0, 'PACKAGED_NATIVE_EXECUTABLE_MAPPING_MISSING');
+            }
+            if (name === 'native-probe') {
+              console.log(JSON.stringify({ name, result: 'PASS', backend: selected.libvipsVersion(), addon, library,
+                versions: sharp.versions }));
+              return;
+            }
+            const packaged = runtimeRequire('./index.cjs');
+            assert.equal(typeof packaged.handler, 'function');
+            assert.equal(sharp.versions.sharp, '0.35.5');
+            assert.ok(sharp.versions.vips);
+            assert.equal(sharp.concurrency(), 1);
+            const event = { version: 1, productId: '01K00000000000000000000001', subject: 'synthetic-linux-test', uploadId: 'a'.repeat(64) };
+            if (name === 'fail-closed') {
+              await assert.rejects(packaged.handler({}), /^Error: MEDIA_PROCESSOR_CONFIGURATION_INVALID$/);
+              let claims = 0;
+              const worker = packaged.createProcessor({ claim: async () => { claims++; throw Error('synthetic-private-detail'); } }, {});
+              await assert.rejects(worker({ ...event, bucket: 'untrusted' }), /^Error: MEDIA_PROCESSOR_FAILED$/);
+              assert.equal(claims, 0);
+              await assert.rejects(worker(event), /^Error: MEDIA_PROCESSOR_FAILED$/);
+              assert.equal(claims, 1);
+              console.log(JSON.stringify({ name, result: 'PASS', sharp: sharp.versions })); return;
+            }
+            const dimensions = name === 'png-medium' ? [1600, 1200] : name === 'png-20mp' ? [5000, 4000] : name === 'over-axis' ? [8001, 480] : name === 'over-pixels' ? [5000, 4001] : [640, 480];
+            const format = name.startsWith('jpeg') ? 'jpeg' : name.startsWith('webp') ? 'webp' : 'png';
+            let pipeline = sharp({ create: { width: dimensions[0], height: dimensions[1], channels: 3, background: '#9b643c' } }).toFormat(format);
+            if (name === 'jpeg-oriented') pipeline = pipeline.withMetadata({ orientation: 6 });
+            let bytes = name === 'invalid' ? Buffer.from('synthetic invalid image') : name === 'over-bytes' ? Buffer.alloc(8 * 1024 * 1024 + 1) : await pipeline.toBuffer();
+            if (name === 'jpeg-oriented') assert.equal((await sharp(bytes).metadata()).orientation, 6);
+            const variants = []; let complete, failures = 0;
+            const worker = packaged.createProcessor({
+              claim: async () => ({ state: 'PROCESSING', request: { bytes: bytes.length, contentType: 'image/' + format, sha256: name === 'checksum' ? '0'.repeat(64) : hash(bytes) } }),
+              complete: async (p, s, u, a, result) => { complete = result; },
+              failProcessing: async (p, s, u, a, code) => { assert.equal(code, 'INVALID_MEDIA'); failures++; },
+            }, {
+              source: async () => bytes,
+              output: async (intent, attempt, variant) => {
+                const meta = await sharp(variant.data).metadata();
+                assert.equal(meta.format, variant.format);
+                assert.equal(meta.width, variant.width); assert.equal(meta.height, variant.height);
+                for (const key of ['exif', 'icc', 'xmp', 'orientation']) assert.equal(meta[key], undefined);
+                assert.equal(hash(variant.data), variant.sha256);
+                assert.ok(variant.data.length <= 1024 * 1024);
+                variants.push({ format: variant.format, bytes: variant.data.length, width: meta.width, height: meta.height });
+                return 'synthetic-private/' + attempt + '/' + variant.size + '.' + variant.format;
+              },
+            });
+            const start = performance.now();
+            const result = await worker(event);
+            const durationMs = Math.round(performance.now() - start);
+            const peakRssMiB = process.resourceUsage().maxRSS / 1024;
+            const rejected = ['over-axis', 'over-pixels', 'invalid', 'over-bytes', 'checksum'].includes(name);
+            assert.equal(result.state, rejected ? 'FAILED' : 'READY');
+            assert.equal(failures, rejected ? 1 : 0);
+            if (rejected) { assert.equal(complete, undefined); assert.equal(variants.length, 0); }
+            else {
+              assert.deepEqual([...new Set(variants.map(v => v.format))].sort(), ['jpeg', 'webp']);
+              assert.equal(complete.width, name === 'jpeg-oriented' ? 480 : dimensions[0]);
+              assert.equal(complete.height, name === 'jpeg-oriented' ? 640 : dimensions[1]);
+              assert.ok(variants.reduce((total, v) => total + v.bytes, 0) <= 6 * 1024 * 1024);
+            }
+            assert.ok(durationMs < 30000); assert.ok(peakRssMiB < 1024);
+            console.log(JSON.stringify({ name, dimensions, inputBytes: bytes.length, durationMs, peakRssMiB, variants, result,
+              limitation: 'Synthetic uniform fixtures; whole-process RSS includes generation; no managed Lambda, network latency or concurrency equivalence' }));
+          }
+          main().catch(error => { console.error(error); process.exitCode = 1; });
+          JS
+      - name: Execute unchanged ZIP in isolated AL2023 runtime
+        run: |
+          set -o pipefail
+          set +e
+          timeout 360 docker run --rm --platform linux/amd64 \
+            --network none --memory 1024m --memory-swap 1024m --cpus 1 \
+            --read-only --cap-drop ALL --security-opt no-new-privileges \
+            --tmpfs /tmp:rw,noexec,nosuid,nodev,size=512m \
+            --tmpfs /opt/media-artifact:rw,exec,nosuid,nodev,size=128m \
+            --mount "type=bind,src=$PWD/media-processor/out/processor-linux-x64.zip,dst=/input/artifact.zip,readonly" \
+            --mount "type=bind,src=$RUNNER_TEMP/processor-checks,dst=/checks,readonly" \
+            --entrypoint /var/lang/bin/node "$LAMBDA_VALIDATION_IMAGE" /checks/check.cjs \
+            2>&1 | tee "$RUNNER_TEMP/processor-evidence.jsonl"
+          runtime_status=${PIPESTATUS[0]}
+          set -e
+          printf '\n## Actual ZIP runtime evidence\n```json\n' >> "$GITHUB_STEP_SUMMARY"
+          cat "$RUNNER_TEMP/processor-evidence.jsonl" >> "$GITHUB_STEP_SUMMARY"
+          printf '\n```\nNo AWS access or deployment. Container measurements do not establish managed Lambda equivalence.\n' >> "$GITHUB_STEP_SUMMARY"
+          exit "$runtime_status"
