@@ -1,0 +1,105 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowSSLRequestsOnly",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": "s3:*",
+      "Resource": [
+        "arn:aws:s3:::cdk-hnb659fds-assets-302154194958-us-east-2",
+        "arn:aws:s3:::cdk-hnb659fds-assets-302154194958-us-east-2/*"
+      ],
+      "Condition": {
+        "Bool": {
+          "aws:SecureTransport": "false"
+        }
+      }
+    },
+    {
+      "Sid": "ProtectAcceptedArtifacts",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": [
+        "s3:PutObject",
+        "s3:DeleteObject",
+        "s3:DeleteObjectVersion",
+        "s3:PutObjectTagging",
+        "s3:DeleteObjectTagging",
+        "s3:PutObjectVersionTagging",
+        "s3:DeleteObjectVersionTagging",
+        "s3:PutObjectAcl",
+        "s3:PutObjectVersionAcl"
+      ],
+      "Resource": [
+        "arn:aws:s3:::cdk-hnb659fds-assets-302154194958-us-east-2/admin-release/1A-DEV8B/c605ed5f-35c8-4c4e-80f0-70fe79d8b21a/api-3301a523d92ec3c48246ec922226042f678cb1353de01b31aca2700581a2697a.zip",
+        "arn:aws:s3:::cdk-hnb659fds-assets-302154194958-us-east-2/authentication-wait/57a4c98fd6e773bd4b31aa53e248b0151376a85ea7640bb759f613ce5f4f5205.zip",
+        "arn:aws:s3:::cdk-hnb659fds-assets-302154194958-us-east-2/dev-ledger-reviewed/6697aafd6f62df7224ee22845578f44be908f430ed53bee74fce4f6cf690997c.zip"
+      ]
+    },
+    {
+      "Sid": "ProtectPublishedArtifacts",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": [
+        "s3:DeleteObject",
+        "s3:DeleteObjectVersion",
+        "s3:PutObjectTagging",
+        "s3:DeleteObjectTagging",
+        "s3:PutObjectVersionTagging",
+        "s3:DeleteObjectVersionTagging",
+        "s3:PutObjectAcl",
+        "s3:PutObjectVersionAcl"
+      ],
+      "Resource": "arn:aws:s3:::cdk-hnb659fds-assets-302154194958-us-east-2/api-releases/*"
+    },
+    {
+      "Sid": "DedicatedPublisherOnly",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": "s3:PutObject",
+      "Resource": "arn:aws:s3:::cdk-hnb659fds-assets-302154194958-us-east-2/api-releases/*",
+      "Condition": {
+        "ArnNotEquals": {
+          "aws:PrincipalArn": "arn:aws:iam::302154194958:role/batch-and-batter-dev-api-artifact-publisher"
+        }
+      }
+    },
+    {
+      "Sid": "ConditionalHeaderRequired",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": "s3:PutObject",
+      "Resource": "arn:aws:s3:::cdk-hnb659fds-assets-302154194958-us-east-2/api-releases/*",
+      "Condition": {
+        "Null": {
+          "s3:if-none-match": "true"
+        }
+      }
+    },
+    {
+      "Sid": "ConditionalCreateOnly",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": "s3:PutObject",
+      "Resource": "arn:aws:s3:::cdk-hnb659fds-assets-302154194958-us-east-2/api-releases/*",
+      "Condition": {
+        "StringNotEquals": {
+          "s3:if-none-match": "*"
+        }
+      }
+    },
+    {
+      "Sid": "CopyPathsBlocked",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": "s3:PutObject",
+      "Resource": "arn:aws:s3:::cdk-hnb659fds-assets-302154194958-us-east-2/api-releases/*",
+      "Condition": {
+        "Null": {
+          "s3:x-amz-copy-source": "false"
+        }
+      }
+    }
+  ]
+}
