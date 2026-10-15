@@ -80,7 +80,23 @@ export class DevelopmentStack extends Stack {
         removalPolicy: RemovalPolicy.DESTROY,
       });
       if (name === 'Catalog') catalogTable = table;
-      if (name === 'Commerce') commerceTable = table;
+      if (name === 'Commerce') {
+        commerceTable = table;
+        for (const index of ['GSI1', 'GSI2'])
+          table.addGlobalSecondaryIndex({
+            indexName: index,
+            partitionKey: {
+              name: index + 'PK',
+              type: dynamodb.AttributeType.STRING,
+            },
+            sortKey: {
+              name: index + 'SK',
+              type: dynamodb.AttributeType.STRING,
+            },
+            projectionType: dynamodb.ProjectionType.INCLUDE,
+            nonKeyAttributes: ['orderId', 'status', 'dropId'],
+          });
+      }
       if (name === 'Operations') operationsTable = table;
       new CfnOutput(this, `${name}TableName`, { value: table.tableName });
     }
@@ -403,6 +419,12 @@ export class DevelopmentStack extends Stack {
         apigateway.HttpMethod.PUT,
         'AdminReplaceProductIntegration',
       ],
+      ['/admin/orders', apigateway.HttpMethod.GET, 'AdminOrdersIntegration'],
+      [
+        '/admin/orders/{orderId}',
+        apigateway.HttpMethod.GET,
+        'AdminOrderDetailsIntegration',
+      ],
       ['/admin/drops', apigateway.HttpMethod.GET, 'AdminListDropsIntegration'],
       [
         '/admin/drops/{dropId}/draft',
@@ -509,6 +531,15 @@ export class DevelopmentStack extends Stack {
       commerceTable,
       operationsTable,
       recovery,
+    );
+    role.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ['dynamodb:Query'],
+        resources: [
+          `${commerceTable.tableArn}/index/GSI1`,
+          `${commerceTable.tableArn}/index/GSI2`,
+        ],
+      }),
     );
     new CfnOutput(this, 'HttpApiEndpoint', { value: api.apiEndpoint });
   }

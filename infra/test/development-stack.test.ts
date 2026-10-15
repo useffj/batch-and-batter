@@ -6,6 +6,25 @@ import { App } from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
 import { DevelopmentStack } from '../lib/development-stack';
 
+const orderIndexes = ['GSI1', 'GSI2'].map((index) => ({
+  IndexName: index,
+  KeySchema: [
+    { AttributeName: index + 'PK', KeyType: 'HASH' },
+    { AttributeName: index + 'SK', KeyType: 'RANGE' },
+  ],
+  Projection: {
+    ProjectionType: 'INCLUDE',
+    NonKeyAttributes: ['orderId', 'status', 'dropId'],
+  },
+}));
+const orderAttributes = ['GSI1PK', 'GSI1SK', 'GSI2PK', 'GSI2SK'].map(
+  (AttributeName) => ({ AttributeName, AttributeType: 'S' }),
+);
+function allowOrderIndexes(expected: any) {
+  expected.Properties.AttributeDefinitions.push(...orderAttributes);
+  expected.Properties.GlobalSecondaryIndexes = orderIndexes;
+}
+
 const mediaRoutes = [
   'GET /admin/products/{productId}/media',
   'PUT /admin/products/{productId}/media',
@@ -88,12 +107,14 @@ test('three on-demand tables have only the approved string PK/SK foundation', ()
       AttributeDefinitions: [
         { AttributeName: 'PK', AttributeType: 'S' },
         { AttributeName: 'SK', AttributeType: 'S' },
+        ...(name === 'commerce' ? orderAttributes : []),
       ],
       KeySchema: [
         { AttributeName: 'PK', KeyType: 'HASH' },
         { AttributeName: 'SK', KeyType: 'RANGE' },
       ],
-      GlobalSecondaryIndexes: Match.absent(),
+      GlobalSecondaryIndexes:
+        name === 'commerce' ? orderIndexes : Match.absent(),
       LocalSecondaryIndexes: Match.absent(),
       DeletionProtectionEnabled: false,
     });
@@ -110,7 +131,7 @@ test('application Node 24 Lambda preserves its identity and serves exactly the t
   template.hasResourceProperties('AWS::ApiGatewayV2::Api', {
     ProtocolType: 'HTTP',
   });
-  template.resourceCountIs('AWS::ApiGatewayV2::Route', 41);
+  template.resourceCountIs('AWS::ApiGatewayV2::Route', 43);
   const functionId = Object.keys(
     template.findResources('AWS::Lambda::Function'),
   )[0];
@@ -135,6 +156,8 @@ test('application Node 24 Lambda preserves its identity and serves exactly the t
       'GET /drops/current',
       'GET /drops/{dropId}',
       'GET /health',
+      'GET /admin/orders',
+      'GET /admin/orders/{orderId}',
       'GET /admin/drops',
       'PUT /admin/drops/{dropId}/draft',
       'GET /admin/products',
@@ -416,6 +439,8 @@ test('all twenty-two admin routes bind the JWT authorizer to the existing pool, 
     ...compositionRoutes,
     ...mediaRoutes,
     'GET /admin/me',
+    'GET /admin/orders',
+    'GET /admin/orders/{orderId}',
     'GET /admin/drops',
     'PUT /admin/drops/{dropId}/draft',
     'GET /admin/products',
@@ -480,13 +505,14 @@ test('tables, pool including MFA, client and JWT authorizer exactly preserve the
   );
   for (const [id, expected] of Object.entries(baseline)) {
     const { Metadata: _metadata, ...actual } = template.toJSON().Resources[id];
+    if (id === 'CommerceTable6CC80189') allowOrderIndexes(expected);
     assert.deepEqual(actual, expected, `Protected resource changed: ${id}`);
   }
 });
 
 test('every route integration invokes only the existing Lambda through route-scoped API Gateway permissions', () => {
-  template.resourceCountIs('AWS::ApiGatewayV2::Integration', 41);
-  template.resourceCountIs('AWS::Lambda::Permission', 41);
+  template.resourceCountIs('AWS::ApiGatewayV2::Integration', 43);
+  template.resourceCountIs('AWS::Lambda::Permission', 43);
   for (const resource of Object.values(
     template.findResources('AWS::ApiGatewayV2::Integration'),
   )) {
@@ -594,12 +620,13 @@ test('Phase 5A2 changes only approved properties of Phase 5A1 resources', () => 
     if (id.startsWith('ApplicationRoleDefaultPolicy')) {
       assert.equal(
         actual.Properties.PolicyDocument.Statement.length,
-        expected.Properties.PolicyDocument.Statement.length + 4,
+        expected.Properties.PolicyDocument.Statement.length + 5,
       );
       expected.Properties.PolicyDocument.Statement.push(
-        ...actual.Properties.PolicyDocument.Statement.slice(-4),
+        ...actual.Properties.PolicyDocument.Statement.slice(-5),
       );
     }
+    if (id === 'CommerceTable6CC80189') allowOrderIndexes(expected);
     assert.deepEqual(actual, expected, `Unapproved resource change: ${id}`);
   }
   const added = Object.entries(current)
@@ -610,9 +637,9 @@ test('Phase 5A2 changes only approved properties of Phase 5A1 resources', () => 
     added,
     [
       ...Array(32).fill('AWS::CloudWatch::Alarm'),
-      ...Array(17).fill('AWS::ApiGatewayV2::Route'),
-      ...Array(17).fill('AWS::ApiGatewayV2::Integration'),
-      ...Array(17).fill('AWS::Lambda::Permission'),
+      ...Array(19).fill('AWS::ApiGatewayV2::Route'),
+      ...Array(19).fill('AWS::ApiGatewayV2::Integration'),
+      ...Array(19).fill('AWS::Lambda::Permission'),
       ...Array(3).fill('AWS::SQS::Queue'),
       'AWS::KMS::Key',
       'AWS::KMS::Alias',
@@ -692,7 +719,7 @@ test('automatic opening has exact group trust, minimal policies and bounded asyn
   });
   const applicationPolicy = policies.find((p) => p !== schedulerPolicy)!;
   const statements = applicationPolicy.Properties.PolicyDocument.Statement;
-  assert.equal(statements.length, 12);
+  assert.equal(statements.length, 13);
   assert.deepEqual(statements.slice(0, 2), [
     {
       Action: ['scheduler:CreateSchedule', 'scheduler:GetSchedule'],

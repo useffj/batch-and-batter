@@ -1,3 +1,4 @@
+import { AdminOrders } from './admin-orders';
 import { MediaRepository } from './media-repository';
 import type { MediaApiRepository } from './admin-media';
 import { createPaymentHttp } from './payment-http-runtime';
@@ -23,8 +24,16 @@ export function createEntrypoint(
   getSchedules: () => OpeningSchedules,
   getCarts?: () => CartService,
   getMedia?: () => MediaApiRepository,
+  getOrders?: () => AdminOrders,
 ) {
-  const http = createHandler(getRepository, getSchedules, getCarts, getMedia);
+  const http = createHandler(
+    getRepository,
+    getSchedules,
+    getCarts,
+    getMedia,
+    undefined,
+    getOrders,
+  );
   let payment: ReturnType<typeof createPaymentHttp> | undefined;
   const automatic = createAutoOpenHandler(getRepository);
   return (event: unknown, context?: InvocationContext) => {
@@ -51,6 +60,7 @@ let repository: DynamoCatalogRepository | undefined;
 let schedules: SchedulerOpeningSchedules | undefined;
 let carts: DynamoCartRepository | undefined;
 let media: MediaRepository | undefined;
+let orders: AdminOrders | undefined;
 export const handler = createEntrypoint(
   () =>
     (repository ??= new DynamoCatalogRepository(
@@ -89,5 +99,10 @@ export const handler = createEntrypoint(
     (media ??= new MediaRepository(
       DynamoDBDocumentClient.from(new DynamoDBClient({ maxAttempts: 1 })),
       process.env.CATALOG_TABLE_NAME ?? '',
+    )),
+  () =>
+    (orders ??= new AdminOrders(
+      DynamoDBDocumentClient.from(new DynamoDBClient({ maxAttempts: 1 })),
+      process.env.COMMERCE_TABLE_NAME ?? '',
     )),
 );

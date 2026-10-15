@@ -103,6 +103,9 @@ async function fixture(products = 1, captureFixture = false, scope?: string) {
 }
 test('capture claim, dispatch, evidence and paid conversion preserve ownership until atomic settlement', async () => {
   const f = await fixture();
+  const originalOrder = structuredClone(
+    f.s.row('commerce', orderKey(f.cart().orderId))!,
+  );
   await f.authorize();
   assert.equal(f.attempt().status, 'AUTHORIZED');
   await f.run();
@@ -128,6 +131,17 @@ test('capture claim, dispatch, evidence and paid conversion preserve ownership u
     'paid',
   );
   assert.equal(f.provider.calls.filter((c) => c.kind === 'capture').length, 1);
+  const savedOrder = f.s.row('commerce', orderKey(f.cart().orderId))!;
+  for (const key of [
+    'displayOrderNumber',
+    'GSI1PK',
+    'GSI1SK',
+    'GSI2PK',
+    'GSI2SK',
+    'items',
+    'totalCents',
+  ])
+    assert.deepEqual(savedOrder[key], originalOrder[key]);
 });
 test('different-key capture claim uses six distinct actions', async () => {
   const f = await fixture();
