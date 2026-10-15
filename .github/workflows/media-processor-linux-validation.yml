@@ -1,0 +1,213 @@
+name: Media processor AL2023 artifact validation
+
+on:
+  push:
+    branches:
+      - codex/media-processor-runtime-1b2h
+
+permissions:
+  contents: read
+
+jobs:
+  validate-processor-al2023:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      AWS_EC2_METADATA_DISABLED: 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - name: Install and validate pinned dependencies
+        run: |
+          npm install --global npm@11.11.0
+          npm --prefix backend ci
+          npm --prefix media-processor ci
+          npm --prefix media-processor run typecheck
+          npm --prefix media-processor test
+          npm --prefix backend audit --omit=dev
+          npm --prefix media-processor audit --omit=dev
+          npm --prefix media-processor run build:linux
+          git diff --exit-code -- backend/package-lock.json media-processor/package-lock.json
+      - name: Inspect ZIP and prepare independent file hashes
+        run: |
+          mkdir -p "$RUNNER_TEMP/processor-checks"
+          python3 <<'PYZIP'
+          import hashlib, json, os, pathlib, re, zipfile
+          artifact = pathlib.Path('media-processor/out/processor-linux-x64.zip')
+          with zipfile.ZipFile(artifact) as archive:
+              entries = archive.infolist()
+              names = [e.filename for e in entries]
+              assert artifact.stat().st_size < 50 * 1024 * 1024
+              size = sum(e.file_size for e in entries)
+              assert size < 250 * 1024 * 1024
+              assert 'index.cjs' in names
+              assert any('@img/sharp-linux-x64/' in n and n.endswith('.node') for n in names)
+              assert any('@img/sharp-libvips-linux-x64/' in n and '.so' in n for n in names)
+              assert not any(re.search(r'darwin|test-support|/typescript/|/esbuild/|/\.env|\.pem$', n) for n in names)
+              files = {e.filename: hashlib.sha256(archive.read(e)).hexdigest() for e in entries if not e.is_dir()}
+              report = dict(sha256=hashlib.sha256(artifact.read_bytes()).hexdigest(), uncompressedBytes=size, files=files)
+              pathlib.Path(os.environ['RUNNER_TEMP'], 'processor-checks/manifest.json').write_text(json.dumps(report))
+              print(json.dumps(dict(zipSha256=report['sha256'], compressedBytes=artifact.stat().st_size, uncompressedBytes=size, entries=len(entries))))
+          PYZIP
+      - name: Resolve official Lambda image digest
+        run: |
+          docker pull --platform linux/amd64 public.ecr.aws/lambda/nodejs:24
+          image=$(docker image inspect public.ecr.aws/lambda/nodejs:24 --format '{{index .RepoDigests 0}}')
+          test "$(docker image inspect "$image" --format '{{.Architecture}}')" = amd64
+          test "$(docker image inspect "$image" --format '{{.Os}}')" = linux
+          echo "LAMBDA_VALIDATION_IMAGE=$image" >> "$GITHUB_ENV"
+          printf 'Official Lambda base image: `%s`\n' "$image" >> "$GITHUB_STEP_SUMMARY"
+          docker image inspect "$image" --format '{{.Id}} {{.Architecture}} {{.Os}}'
+      - name: Prepare synthetic packaged-runtime checks
+        run: |
+          cat > "$RUNNER_TEMP/processor-checks/check.cjs" <<'JS'
+          const assert = require('node:assert/strict');
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const { createHash } = require('node:crypto');
+          const { createRequire } = require('node:module');
+          const { execFileSync } = require('node:child_process');
+          const { inflateRawSync } = require('node:zlib');
+          const hash = bytes => createHash('sha256').update(bytes).digest('hex');
+          const root = '/tmp/runtime';
+          async function main() {
+            assert.equal(process.platform, 'linux');
+            assert.equal(process.arch, 'x64');
+            assert.match(process.version, /^v24\./);
+            const os = fs.readFileSync('/etc/os-release', 'utf8');
+            assert.match(os, /^ID="?amzn"?$/m);
+            assert.match(os, /^VERSION_ID="?2023"?$/m);
+            if (!process.argv.includes('--case')) {
+              // Extract the immutable ZIP inside the container using only Node built-ins.
+              // Independent Python ZIP hashes below verify every extracted file's bytes.
+              const zip = fs.readFileSync('/input/artifact.zip');
+              const manifest = JSON.parse(fs.readFileSync('/checks/manifest.json'));
+              assert.equal(hash(zip), manifest.sha256);
+              const end = zip.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+              assert.ok(end >= 0);
+              assert.equal(end + 22 + zip.readUInt16LE(end + 20), zip.length);
+              let offset = zip.readUInt32LE(end + 16);
+              const seen = new Set();
+              for (let n = 0; n < zip.readUInt16LE(end + 10); n++) {
+                assert.equal(zip.readUInt32LE(offset), 0x02014b50);
+                const method = zip.readUInt16LE(offset + 10);
+                const compressed = zip.readUInt32LE(offset + 20);
+                const size = zip.readUInt32LE(offset + 24);
+                const length = zip.readUInt16LE(offset + 28);
+                const name = zip.toString('utf8', offset + 46, offset + 46 + length);
+                const local = zip.readUInt32LE(offset + 42);
+                const mode = zip.readUInt32LE(offset + 38) >>> 16;
+                assert.ok(!path.isAbsolute(name) && !name.split('/').includes('..'));
+                assert.notEqual(mode & 0o170000, 0o120000, 'No ZIP symlinks');
+                assert.ok(!seen.has(name)); seen.add(name);
+                const target = path.join(root, name);
+                if (name.endsWith('/')) fs.mkdirSync(target, { recursive: true });
+                else {
+                  assert.equal(zip.readUInt32LE(local), 0x04034b50);
+                  const start = local + 30 + zip.readUInt16LE(local + 26) + zip.readUInt16LE(local + 28);
+                  const packed = zip.subarray(start, start + compressed);
+                  assert.ok([0, 8].includes(method));
+                  const bytes = method === 8 ? inflateRawSync(packed, { maxOutputLength: size }) : packed;
+                  assert.equal(bytes.length, size);
+                  assert.equal(hash(bytes), manifest.files[name]);
+                  fs.mkdirSync(path.dirname(target), { recursive: true });
+                  fs.writeFileSync(target, bytes, { mode: mode & 0o777 || 0o644 });
+                }
+                offset += 46 + length + zip.readUInt16LE(offset + 30) + zip.readUInt16LE(offset + 32);
+              }
+              assert.equal([...seen].filter(x => !x.endsWith('/')).length, Object.keys(manifest.files).length);
+              console.log(JSON.stringify({ environment: { node: process.version, arch: process.arch, os,
+                glibc: process.report.getReport().header.glibcVersionRuntime, memoryMiB: 1024,
+                cpus: 1, tmpMiB: 512, network: 'none', artifact: manifest.sha256,
+                compressedBytes: zip.length, uncompressedBytes: manifest.uncompressedBytes } }));
+              for (const name of ['png-small', 'jpeg-oriented', 'webp-small', 'png-medium', 'png-20mp', 'over-axis', 'over-pixels', 'invalid', 'over-bytes', 'checksum', 'fail-closed']) {
+                process.stdout.write(execFileSync(process.execPath, [__filename, '--case', name], {
+                  encoding: 'utf8', timeout: 30000, maxBuffer: 1024 * 1024,
+                }));
+              }
+              // The only mounted artifact is read-only; validate runtime files were not changed.
+              for (const [name, expected] of Object.entries(manifest.files)) assert.equal(hash(fs.readFileSync(path.join(root, name))), expected);
+              assert.equal(hash(fs.readFileSync('/input/artifact.zip')), manifest.sha256);
+              return;
+            }
+            const runtimeRequire = createRequire(root + '/package.json');
+            const sharp = runtimeRequire('sharp');
+            const packaged = runtimeRequire('./index.cjs');
+            assert.equal(typeof packaged.handler, 'function');
+            assert.equal(sharp.versions.sharp, '0.35.5');
+            assert.ok(sharp.versions.vips);
+            assert.equal(sharp.concurrency(), 1);
+            const name = process.argv.at(-1);
+            const event = { version: 1, productId: '01K00000000000000000000001', subject: 'synthetic-linux-test', uploadId: 'a'.repeat(64) };
+            if (name === 'fail-closed') {
+              await assert.rejects(packaged.handler({}), /^Error: MEDIA_PROCESSOR_CONFIGURATION_INVALID$/);
+              let claims = 0;
+              const worker = packaged.createProcessor({ claim: async () => { claims++; throw Error('synthetic-private-detail'); } }, {});
+              await assert.rejects(worker({ ...event, bucket: 'untrusted' }), /^Error: MEDIA_PROCESSOR_FAILED$/);
+              assert.equal(claims, 0);
+              await assert.rejects(worker(event), /^Error: MEDIA_PROCESSOR_FAILED$/);
+              assert.equal(claims, 1);
+              console.log(JSON.stringify({ name, result: 'PASS', sharp: sharp.versions })); return;
+            }
+            const dimensions = name === 'png-medium' ? [1600, 1200] : name === 'png-20mp' ? [5000, 4000] : name === 'over-axis' ? [8001, 480] : name === 'over-pixels' ? [5000, 4001] : [640, 480];
+            const format = name.startsWith('jpeg') ? 'jpeg' : name.startsWith('webp') ? 'webp' : 'png';
+            let pipeline = sharp({ create: { width: dimensions[0], height: dimensions[1], channels: 3, background: '#9b643c' } }).toFormat(format);
+            if (name === 'jpeg-oriented') pipeline = pipeline.withMetadata({ orientation: 6 });
+            let bytes = name === 'invalid' ? Buffer.from('synthetic invalid image') : name === 'over-bytes' ? Buffer.alloc(8 * 1024 * 1024 + 1) : await pipeline.toBuffer();
+            if (name === 'jpeg-oriented') assert.equal((await sharp(bytes).metadata()).orientation, 6);
+            const variants = []; let complete, failures = 0;
+            const worker = packaged.createProcessor({
+              claim: async () => ({ state: 'PROCESSING', request: { bytes: bytes.length, contentType: 'image/' + format, sha256: name === 'checksum' ? '0'.repeat(64) : hash(bytes) } }),
+              complete: async (p, s, u, a, result) => { complete = result; },
+              failProcessing: async (p, s, u, a, code) => { assert.equal(code, 'INVALID_MEDIA'); failures++; },
+            }, {
+              source: async () => bytes,
+              output: async (intent, attempt, variant) => {
+                const meta = await sharp(variant.data).metadata();
+                assert.equal(meta.format, variant.format);
+                assert.equal(meta.width, variant.width); assert.equal(meta.height, variant.height);
+                for (const key of ['exif', 'icc', 'xmp', 'orientation']) assert.equal(meta[key], undefined);
+                assert.equal(hash(variant.data), variant.sha256);
+                assert.ok(variant.data.length <= 1024 * 1024);
+                variants.push({ format: variant.format, bytes: variant.data.length, width: meta.width, height: meta.height });
+                return 'synthetic-private/' + attempt + '/' + variant.size + '.' + variant.format;
+              },
+            });
+            const start = performance.now();
+            const result = await worker(event);
+            const durationMs = Math.round(performance.now() - start);
+            const peakRssMiB = process.resourceUsage().maxRSS / 1024;
+            const rejected = ['over-axis', 'over-pixels', 'invalid', 'over-bytes', 'checksum'].includes(name);
+            assert.equal(result.state, rejected ? 'FAILED' : 'READY');
+            assert.equal(failures, rejected ? 1 : 0);
+            if (rejected) { assert.equal(complete, undefined); assert.equal(variants.length, 0); }
+            else {
+              assert.deepEqual([...new Set(variants.map(v => v.format))].sort(), ['jpeg', 'webp']);
+              assert.equal(complete.width, name === 'jpeg-oriented' ? 480 : dimensions[0]);
+              assert.equal(complete.height, name === 'jpeg-oriented' ? 640 : dimensions[1]);
+              assert.ok(variants.reduce((total, v) => total + v.bytes, 0) <= 6 * 1024 * 1024);
+            }
+            assert.ok(durationMs < 30000); assert.ok(peakRssMiB < 1024);
+            console.log(JSON.stringify({ name, dimensions, inputBytes: bytes.length, durationMs, peakRssMiB, variants, result,
+              limitation: 'Synthetic uniform fixtures; whole-process RSS includes generation; no managed Lambda, network latency or concurrency equivalence' }));
+          }
+          main().catch(error => { console.error(error); process.exitCode = 1; });
+          JS
+      - name: Execute unchanged ZIP in isolated AL2023 runtime
+        run: |
+          set -o pipefail
+          timeout 360 docker run --rm --platform linux/amd64 \
+            --network none --memory 1024m --memory-swap 1024m --cpus 1 \
+            --read-only --cap-drop ALL --security-opt no-new-privileges \
+            --tmpfs /tmp:rw,size=512m \
+            --mount "type=bind,src=$PWD/media-processor/out/processor-linux-x64.zip,dst=/input/artifact.zip,readonly" \
+            --mount "type=bind,src=$RUNNER_TEMP/processor-checks,dst=/checks,readonly" \
+            --entrypoint /var/lang/bin/node "$LAMBDA_VALIDATION_IMAGE" /checks/check.cjs \
+            | tee "$RUNNER_TEMP/processor-evidence.jsonl"
+          printf '\n## Actual ZIP runtime evidence\n```json\n' >> "$GITHUB_STEP_SUMMARY"
+          cat "$RUNNER_TEMP/processor-evidence.jsonl" >> "$GITHUB_STEP_SUMMARY"
+          printf '\n```\nNo AWS access or deployment. Container measurements do not establish managed Lambda equivalence.\n' >> "$GITHUB_STEP_SUMMARY"

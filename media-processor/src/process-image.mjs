@@ -173,7 +173,7 @@ export async function processImage(bytes, expected) {
       }
     }
     return {
-      processingVersion: 1,
+      processingVersion: /** @type {const} */ (1),
       width: raw.width,
       height: raw.height,
       variants,

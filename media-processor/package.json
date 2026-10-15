@@ -8,15 +8,21 @@
     "npm": ">=11 <12"
   },
   "scripts": {
-    "test": "node --test test/*.test.mjs",
-    "typecheck": "tsc --noEmit --allowJs --checkJs --module nodenext --target es2023 --skipLibCheck src/*.mjs",
-    "build": "node scripts/build.mjs"
+    "test": "npm run build && node --test test/*.test.mjs",
+    "typecheck": "tsc --strict --noEmit --allowJs --checkJs --module commonjs --moduleResolution node --esModuleInterop --target es2023 --skipLibCheck src/handler.ts src/process-image.mjs",
+    "build": "node scripts/build.mjs",
+    "build:linux": "node scripts/build.mjs --linux",
+    "measure": "node scripts/measure.mjs"
   },
   "dependencies": {
+    "@aws-sdk/client-dynamodb": "3.1137.0",
+    "@aws-sdk/client-s3": "3.1137.0",
+    "@aws-sdk/lib-dynamodb": "3.1137.0",
     "sharp": "0.35.5"
   },
   "devDependencies": {
     "@types/node": "24.10.1",
+    "esbuild": "0.28.2",
     "typescript": "5.9.3"
   }
 }
