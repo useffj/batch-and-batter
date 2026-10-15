@@ -1,0 +1,78 @@
+.weekly-drops {
+  max-width: 78rem;
+  width: 100%;
+}
+.weekly-drops section {
+  margin: 1.5rem 0;
+  padding: 1.5rem;
+  background: white;
+  border: 1px solid #e8e0d6;
+  border-radius: 12px;
+}
+.weekly-drops header,
+.weekly-drops section[aria-label='Saved Drops'] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  justify-content: space-between;
+}
+.weekly-drops fieldset {
+  border: 0;
+  padding: 0;
+  min-width: 0;
+}
+.weekly-drops label {
+  display: block;
+  margin: 0.6rem 0;
+  font-weight: 500;
+}
+.weekly-drops input:not([type='checkbox']),
+.weekly-drops textarea {
+  display: block;
+  width: 100%;
+  max-width: 32rem;
+  padding: 0.7rem;
+  border: 1px solid #cfc5b8;
+  border-radius: 6px;
+  font: inherit;
+}
+.weekly-drops button {
+  margin: 0.3rem;
+  padding: 0.7rem 1rem;
+  border: 1px solid #cfc5b8;
+  border-radius: 6px;
+  background: #faf7f2;
+  color: #433a32;
+  font: inherit;
+  cursor: pointer;
+}
+.weekly-drops button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.weekly-drops button:focus-visible,
+.weekly-drops input:focus-visible {
+  outline: 3px solid #997148;
+  outline-offset: 3px;
+}
+.weekly-drops h1 {
+  font-size: 2rem;
+}
+.weekly-drops h2 {
+  font-size: 1.5rem;
+}
+.weekly-drops h3 {
+  font-size: 1.15rem;
+}
+.weekly-drops [role='status'] {
+  color: #774825;
+  min-height: 1.5rem;
+}
+@media (max-width: 600px) {
+  .weekly-drops section {
+    padding: 1rem;
+  }
+  .weekly-drops button {
+    max-width: 100%;
+  }
+}

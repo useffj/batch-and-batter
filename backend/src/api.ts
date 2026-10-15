@@ -1,3 +1,4 @@
+import { adminWeekly, weeklyRoutes } from './admin-weekly';
 import type { MediaOrchestration } from './media-orchestration';
 import {
   adminMedia,
@@ -95,6 +96,7 @@ export function createHandler(
       return cartApi(event, getCarts, context);
     if (event.routeKey === 'GET /health') return complete(await health());
     if (
+      weeklyRoutes.includes(event.routeKey) ||
       mediaRoutes.includes(event.routeKey) ||
       catalogRoutes.includes(event.routeKey) ||
       event.routeKey === 'GET /admin/me' ||
@@ -109,6 +111,10 @@ export function createHandler(
     ) {
       try {
         const identity = requireAdmin(event);
+        if (weeklyRoutes.includes(event.routeKey)) {
+          const result = await adminWeekly(event, getRepository);
+          return json(result.status, result.body);
+        }
         if (mediaRoutes.includes(event.routeKey)) {
           const result = await adminMedia(
             event,

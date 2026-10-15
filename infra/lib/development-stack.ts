@@ -403,6 +403,12 @@ export class DevelopmentStack extends Stack {
         apigateway.HttpMethod.PUT,
         'AdminReplaceProductIntegration',
       ],
+      ['/admin/drops', apigateway.HttpMethod.GET, 'AdminListDropsIntegration'],
+      [
+        '/admin/drops/{dropId}/draft',
+        apigateway.HttpMethod.PUT,
+        'AdminSaveWeeklyDraftIntegration',
+      ],
       [
         '/admin/drops',
         apigateway.HttpMethod.POST,

@@ -94,3 +94,23 @@ export async function mediaRelay(
   }
   return relayMedia(request, target, { ...config, ADMIN_SESSION_KEY: key });
 }
+
+export async function weeklyDropRelay(
+  request: Request,
+  segments: string[],
+  config: RuntimeConfig,
+) {
+  try {
+    const key = await loadSessionKey(config);
+    const { dropRelay } = await import('./server');
+    return dropRelay(request, segments, { ...config, ADMIN_SESSION_KEY: key });
+  } catch {
+    return NextResponse.json(
+      { message: messages.CONFIGURATION },
+      {
+        status: 503,
+        headers: { 'Cache-Control': 'no-store, private', Vary: 'Cookie' },
+      },
+    );
+  }
+}

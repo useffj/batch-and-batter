@@ -1,4 +1,9 @@
-import { ProductIntegrity, type CreationIdentity } from './product-integrity';
+import { weeklyDraftSchema, type WeeklyDraft } from './weekly-draft';
+import {
+  ProductIntegrity,
+  integrityReadyKey,
+  type CreationIdentity,
+} from './product-integrity';
 import {
   GetCommand,
   ScanCommand,
@@ -29,6 +34,11 @@ import {
 } from './domain';
 
 export interface CatalogRepository {
+  saveWeeklyDraft?(input: WeeklyDraft): Promise<Drop>;
+  listDrops?(cursor?: {
+    PK: string;
+    SK: string;
+  }): Promise<{ drops: Drop[]; cursor?: { PK: string; SK: string } }>;
   changeScheduled(
     dropId: string,
     revision: string,
@@ -929,6 +939,149 @@ export class DynamoCatalogRepository implements CatalogRepository {
       item,
       previous,
     );
+  }
+  async listDrops(cursor?: { PK: string; SK: string }) {
+    const page = await this.client.send(
+      new ScanCommand({
+        TableName: this.tableName,
+        Limit: 50,
+        ConsistentRead: true,
+        ExclusiveStartKey: cursor,
+        FilterExpression: 'begins_with(#pk,:drop) AND #sk=:meta',
+        ExpressionAttributeNames: { '#pk': 'PK', '#sk': 'SK' },
+        ExpressionAttributeValues: { ':drop': 'DROP#', ':meta': 'META' },
+      }),
+    );
+    return {
+      drops: (page.Items ?? []).map((item) => {
+        const { PK, SK, ...data } = item;
+        const drop = dropSchema.parse(data);
+        return decode(item, dropSchema, catalogKeys.drop(drop.dropId));
+      }),
+      ...(page.LastEvaluatedKey
+        ? { cursor: page.LastEvaluatedKey as { PK: string; SK: string } }
+        : {}),
+    };
+  }
+  async saveWeeklyDraft(value: WeeklyDraft) {
+    const input = weeklyDraftSchema.parse(value),
+      id = input.drop.dropId;
+    const previous = await this.getDrop(id);
+    if (!previous) throw new CatalogWriteError('DROP_NOT_FOUND');
+    if (previous.status !== 'DRAFT')
+      throw new CatalogWriteError('DROP_NOT_EDITABLE');
+    if (previous.updatedAt !== input.revision)
+      throw new CatalogWriteError('COMPOSITION_CONFLICT');
+    const [relations, inventories, pickups] = await Promise.all([
+      this.getDropProducts(id),
+      this.getDropInventory(id),
+      this.getPickupDates(id),
+    ]);
+    if (inventories.some((i) => i.reserved !== 0 || i.sold !== 0))
+      throw new CatalogWriteError('INVENTORY_NOT_EDITABLE');
+    const next = dropSchema.parse({
+      ...input.drop,
+      createdAt: previous.createdAt,
+      updatedAt: updatedAt(previous.updatedAt),
+    });
+    const actions: NonNullable<TransactWriteCommandInput['TransactItems']> = [
+      this.draftRevisionPut(previous, next),
+      {
+        ConditionCheck: {
+          TableName: this.tableName,
+          Key: integrityReadyKey,
+          ConditionExpression: '#version=:version AND #state=:ready',
+          ExpressionAttributeNames: {
+            '#version': 'version',
+            '#state': 'state',
+          },
+          ExpressionAttributeValues: { ':version': 1, ':ready': 'READY' },
+        },
+      },
+    ];
+    for (const [index, p] of input.products.entries()) {
+      actions.push({
+        ConditionCheck: {
+          TableName: this.tableName,
+          Key: catalogKeys.product(p.productId),
+          ConditionExpression: 'attribute_exists(PK) AND active=:active',
+          ExpressionAttributeValues: { ':active': true },
+        },
+      });
+      actions.push({
+        Put: {
+          TableName: this.tableName,
+          Item: {
+            ...catalogKeys.dropProduct(id, p.productId),
+            dropId: id,
+            productId: p.productId,
+            priceCents: p.priceCents,
+            cookieUnits:
+              relations.find((r) => r.productId === p.productId)?.cookieUnits ??
+              1,
+            displayOrder: index,
+            active: true,
+          },
+        },
+      });
+      const exists = inventories.some((i) => i.productId === p.productId);
+      actions.push({
+        Put: {
+          TableName: this.tableName,
+          Item: {
+            ...catalogKeys.inventory(id, p.productId),
+            dropId: id,
+            productId: p.productId,
+            total: p.inventoryTotal,
+            reserved: 0,
+            sold: 0,
+            updatedAt: next.updatedAt,
+          },
+          ...(exists
+            ? this.inventoryZeroCondition()
+            : { ConditionExpression: 'attribute_not_exists(PK)' }),
+        },
+      });
+    }
+    const selected = new Set(input.products.map((p) => p.productId));
+    for (const r of relations.filter((r) => !selected.has(r.productId)))
+      actions.push({
+        Delete: {
+          TableName: this.tableName,
+          Key: catalogKeys.dropProduct(id, r.productId),
+        },
+      });
+    for (const i of inventories.filter((i) => !selected.has(i.productId)))
+      actions.push({
+        Delete: {
+          TableName: this.tableName,
+          Key: catalogKeys.inventory(id, i.productId),
+          ...this.inventoryZeroCondition(),
+        },
+      });
+    for (const p of input.pickups)
+      actions.push({
+        Put: {
+          TableName: this.tableName,
+          Item: { ...p, ...catalogKeys.pickup(id, p.date) },
+        },
+      });
+    for (const p of pickups.filter(
+      (p) => !input.pickups.some((x) => x.date === p.date),
+    ))
+      actions.push({
+        Delete: {
+          TableName: this.tableName,
+          Key: catalogKeys.pickup(id, p.date),
+        },
+      });
+    if (actions.length > 100)
+      throw new CatalogWriteError('COMPOSITION_CONFLICT');
+    await this.sendTransaction(
+      actions,
+      actions.map(() => 'COMPOSITION_CONFLICT'),
+    );
+    return next;
   }
   async createDraftDrop(drop: Drop) {
     const item = dropSchema.parse(drop);
