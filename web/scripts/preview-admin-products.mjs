@@ -1,5 +1,7 @@
 // Local-only synthetic component preview; never added to Next routes or builds.
 import { createServer } from 'vite';
+import { mediaFixture } from './media-fixture.ts';
+const mediaBackend = mediaFixture();
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -19,7 +21,7 @@ import React, {useEffect, useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import {Products} from '/@fs/${web}src/components/admin/products.tsx';
 import {ProductGallery} from '/@fs/${web}src/components/admin/gallery.tsx';
-import {mediaFixture} from '/@fs/${web}scripts/media-fixture.ts';
+
 import {AdminNavigation} from '/@fs/${web}src/components/admin/navigation.tsx';
 import {summaryOf} from '/@fs/${web}src/lib/admin/products.ts';
 import '/@fs/${web}src/app/globals.css';
@@ -33,14 +35,15 @@ let products = new URLSearchParams(location.search).has('empty') ? [] : [origina
 let calls=saved?.calls||0;const receipts=new Map(saved?.receipts||[]);let loseOnce=saved?.loseOnce??new URLSearchParams(location.search).has('lost');
 if(saved)products=saved.products;
 const persist=()=>{if(recoveryMode)sessionStorage.setItem(fixtureKey,JSON.stringify({products,calls,receipts:[...receipts],loseOnce}));};
-const galleryFixture=mediaFixture(sessionStorage);
+const nativeFetch=window.fetch.bind(window);
+const galleryFixture=Object.fromEntries(['conflict','lost','enable','deny'].map(action=>[action,()=>nativeFetch('/__synthetic-media/control/'+action,{method:'POST'})]));
 window.fetch=async(input,init={})=>{
  const url=new URL(String(input),location.origin);if(url.origin!==location.origin || !url.pathname.startsWith('/api/admin/')) throw new Error('Preview blocks all non-mocked requests');
  await new Promise(r=>setTimeout(r,150));
  const reply=(body,status=200)=>new Response(JSON.stringify(body),{status,headers:{'content-type':'application/json'}});
  if(url.pathname==='/api/admin/logout') return reply({revocationConfirmed:false});
  if(new URLSearchParams(location.search).has('error'))return reply({code:'UNAVAILABLE',message:'Synthetic service failure.'},503);
- const media=await galleryFixture.handle(url,init);if(media)return media;
+ if(url.pathname.includes('/media'))return nativeFetch('/__synthetic-media'+url.pathname+url.search,init);
  const id=url.pathname.split('/')[4];const method=init.method||'GET';
  if(url.searchParams.has('creationKey'))return reply({creation:receipts.get(url.searchParams.get('creationKey'))?.product||null});
  if(method==='GET')return id?products.some(p=>p.productId===id)?reply({product:products.find(p=>p.productId===id)}):reply({code:'PRODUCT_NOT_FOUND',message:'Synthetic product missing.'},404):reply({products:products.map(summaryOf),nextCursor:null,loadedAt:new Date().toISOString()});
@@ -70,13 +73,64 @@ function Preview() {
    document.addEventListener('click',navigate);
    return ()=>document.removeEventListener('click',navigate);
  },[]);
- return <><aside aria-label="Synthetic media controls"><button onClick={()=>galleryFixture.conflict()}>Simulate next gallery conflict</button><button onClick={()=>galleryFixture.lost()}>Lose next gallery save response</button><button onClick={()=>galleryFixture.enable()}>Enable synthetic processing</button><button onClick={()=>galleryFixture.deny()}>Simulate unauthorized media</button></aside><div style={{padding:'12px',background:'#ffedb6',fontFamily:'sans-serif'}} role="note"><strong>SYNTHETIC LOCAL PREVIEW</strong> — in-memory fixtures only. No authentication, AWS, or real business-data access. Sidebar navigation preserves this session; media manifests and synthetic upload receipts persist in this tab; Product fixtures reset on refresh unless recovery mode is selected. {recoveryMode&&<strong>Recovery mode: synthetic fixtures persist in this tab only.</strong>} <a href="/?empty">Empty (reset)</a> · <a href="/?error">Error (reset)</a> · <a href="/?lost">Lost response (reset)</a> · <a href="/?recover&amp;lost">Reload recovery (synthetic only)</a> · <a href="/">Catalog</a></div>{section==='products'?<Products renderMedia={(product,onDirty)=><ProductGallery key={product.productId} productId={product.productId} recoveryScope="synthetic-preview-gallery" name={product.name} onDirty={onDirty} transfer={async()=>{await new Promise(r=>setTimeout(r,400));}}/>} catalogScope="synthetic-preview" key={visit} expiresAt={Date.now()+900000}/>:<div className="admin-shell"><AdminNavigation current="overview"/><main className="admin-main"><h1>Preview overview</h1><p>This preview demonstrates product management only. Use Products to return to your synthetic catalog. Changes remain in memory; explicit recovery mode also preserves synthetic fixtures across reloads in this tab.</p></main></div>}</>;
+ return <><aside aria-label="Synthetic media controls"><button onClick={()=>galleryFixture.conflict()}>Simulate next gallery conflict</button><button onClick={()=>galleryFixture.lost()}>Lose next gallery save response</button><button onClick={()=>galleryFixture.enable()}>Enable synthetic processing</button><button onClick={()=>galleryFixture.deny()}>Simulate unauthorized media</button></aside><div style={{padding:'12px',background:'#ffedb6',fontFamily:'sans-serif'}} role="note"><strong>SYNTHETIC LOCAL PREVIEW</strong> — in-memory fixtures only. No authentication, AWS, or real business-data access. Sidebar navigation preserves this session; media state persists in the local synthetic server across tabs; Product fixtures reset on refresh unless recovery mode is selected. {recoveryMode&&<strong>Recovery mode: synthetic fixtures persist in this tab only.</strong>} <a href="/?empty">Empty (reset)</a> · <a href="/?error">Error (reset)</a> · <a href="/?lost">Lost response (reset)</a> · <a href="/?recover&amp;lost">Reload recovery (synthetic only)</a> · <a href="/">Catalog</a></div>{section==='products'?<Products renderMedia={(product,onDirty)=><ProductGallery key={product.productId} productId={product.productId} recoveryScope="synthetic-preview-gallery" name={product.name} onDirty={onDirty} transfer={async()=>{await new Promise(r=>setTimeout(r,400));}}/>} catalogScope="synthetic-preview" key={visit} expiresAt={Date.now()+900000}/>:<div className="admin-shell"><AdminNavigation current="overview"/><main className="admin-main"><h1>Preview overview</h1><p>This preview demonstrates product management only. Use Products to return to your synthetic catalog. Changes remain in memory; explicit recovery mode also preserves synthetic fixtures across reloads in this tab.</p></main></div>}</>;
 }
 createRoot(document.getElementById('root')).render(<Preview/>);
 `,
 );
 const server = await createServer({
   configFile: false,
+  plugins: [
+    {
+      name: 'isolated-media-backend',
+      configureServer(server) {
+        server.middlewares.use(async (req, res, next) => {
+          if (!req.url?.startsWith('/__synthetic-media/')) return next();
+          try {
+            if (req.url.startsWith('/__synthetic-media/control/')) {
+              const action = req.url.split('/').at(-1);
+              if (
+                req.method !== 'POST' ||
+                !['conflict', 'lost', 'enable', 'deny'].includes(action)
+              )
+                throw new Error();
+              mediaBackend[action]();
+              res.end('{}');
+              return;
+            }
+            let body = '';
+            for await (const chunk of req) {
+              body += chunk;
+              if (body.length > 32768) throw new Error();
+            }
+            const response = await mediaBackend.handle(
+              new URL(
+                req.url.replace('/__synthetic-media', ''),
+                'http://127.0.0.1',
+              ),
+              {
+                method: req.method,
+                headers: req.headers,
+                ...(body ? { body } : {}),
+              },
+            );
+            if (!response) {
+              res.statusCode = 404;
+              res.end('{}');
+              return;
+            }
+            res.statusCode = response.status;
+            res.setHeader('Content-Type', 'application/json');
+            res.setHeader('Cache-Control', 'no-store');
+            res.end(await response.text());
+          } catch {
+            res.statusCode = 503;
+            res.end('{"code":"UNAVAILABLE"}');
+          }
+        });
+      },
+    },
+  ],
   root,
   esbuild: { jsx: 'automatic' },
   resolve: {

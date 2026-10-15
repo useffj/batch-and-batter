@@ -13,7 +13,7 @@ request hashes, lease histories and receipts. Processor metadata must contain
 complete JPEG/WebP pairs, valid dimensions, bounded bytes and exact immutable
 Product/media/attempt-scoped keys. Image bytes are never stored.
 
-`MediaRepository` uses only strongly consistent keyed reads and transactions in
+`MediaRepository` uses only strongly consistent keyed reads, bounded partition queries and transactions in
 the existing Catalog table. It introduces no scan, table, index or TTL policy.
 Read operations are manifest, asset and administrator-scoped upload lookup.
 
@@ -64,6 +64,15 @@ READY/RETIRED assets require seven days and no manifest reference before a
 conditional DELETING fence. Both the asset and the manifest revision (or absence)
 are checked in the transaction; attachment cannot race with the fence. ATTACHED
 assets do not expire. There is no deletion executor or scheduled cleanup.
+
+Approved 1B-2G policy: seven days is cleanup eligibility, not an attachment
+deadline or automatic expiration. An authoritative READY asset remains discoverable
+and attachable after seven days until cleanup actually commits DELETING. DELETING,
+DELETED and RETIRED assets cannot be newly attached. Each lifecycle transition
+advances the asset revision. Attachment and fencing condition that revision and
+the manifest revision in their respective transactions: attachment winning blocks
+fencing; fencing winning blocks attachment. Preliminary reads alone do not grant
+attachment eligibility. Existing ATTACHED assets retain protection regardless of age.
 
 Attempt history and original intent expiry allow future operator inventory of
 incomplete output prefixes. A conservative seven-day output grace starts after
@@ -165,3 +174,32 @@ checks passed. Frontend 488, processor 10 and infrastructure 37 test passes rema
 historical; those suites were not rerun. No managed AWS writes, commit, push or
 deployment occurred. The source-control review may resume, not bypass its remaining
 gates. Hosted duplicate-activation acceptance remains **NOT PASSED**.
+
+## 1B-2G READY discovery
+
+The existing protected GET `/admin/products/{productId}/media` accepts
+`view=ready` and an optional `after=<productId>.<mediaId>` cursor. One strongly
+consistent Query evaluates at most 12 `ASSET#` records in the Product's existing
+`PRODUCT_MEDIA#<productId>` partition. No scan, index, table or discovery write is
+introduced. A cursor is validated against the requested Product. Empty filtered
+pages can still return a continuation cursor; pagination is not a snapshot.
+
+Only valid READY assets absent from the current manifest are returned. ATTACHED,
+RETIRED, DELETING and DELETED assets are excluded. FAILED/EXPIRED upload operations
+do not produce eligible assets; discovery reads durable assets, not expiring upload
+receipts. Receipt compaction does not establish asset expiry. Responses contain
+only the existing sanitized asset DTO and cursor, never keys, leases or credentials.
+
+Existing catalog administrators can read Product media and edit its manifest;
+discovery retains that Product-scoped boundary. Upload status and idempotent receipt
+lookup remain restricted to their originating administrator. No new ownership
+policy, permission or authorization bypass is introduced. The existing session
+relay preserves encrypted HttpOnly cookies, no-store responses and same-origin
+write protection. A candidate can become stale after discovery; the authoritative
+revision-checked Save remains the arbiter, including concurrent cleanup.
+
+Fresh local validation: 35 DynamoDB Local groups passed, including bounded
+pagination, discovery before/after seven days, post-grace attachment, excluded
+states and both delayed-transaction attachment/cleanup race orders. These use
+real local conditional transactions, not only preflight-read mocks. This does not
+establish complete managed-DynamoDB concurrency coverage or authorize cleanup.

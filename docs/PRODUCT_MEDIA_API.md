@@ -90,3 +90,16 @@ backend and Next production builds, web lint, formatting, whitespace checks and
 offline CDK synthesis with lookups disabled passed. The 21 DynamoDB Local groups
 and 10 processor regressions remain historical evidence from the unchanged
 persistence/processor slice; they were not rerun in this API assignment.
+
+## 1B-2G compatible READY discovery extension
+
+GET base additionally accepts `?view=ready` and optional Product-scoped
+`after=<productId>.<mediaId>`. It returns `{assets, nextCursor}` using the existing
+sanitized asset DTO. Each request evaluates at most 12 asset records; filtered
+empty pages may have a continuation cursor. Unknown/repeated relay query fields
+and foreign Product cursors are rejected. No other route's query contract changes.
+The administrator boundary, no-store response and existing session protections
+remain unchanged. Discovery performs no writes or upload creation. Seven days is
+cleanup eligibility, not expiry: authoritative READY assets remain attachable until
+a successful DELETING fence. Save still enforces revisions and eligible asset state.
+See PRODUCT_MEDIA_PERSISTENCE.md for transaction and retention details.

@@ -608,3 +608,93 @@ it('storage failure after authorization blocks transfer and preserves the unreso
   await u.run();
   expect(s.requests).toHaveLength(1);
 });
+
+it('READY discovery survives new clients without browser storage, and attachment stays explicit', async () => {
+  const { ReadyDiscovery } = await import('./gallery-client');
+  const s = setup();
+  const first = new ReadyDiscovery(productId, s.call);
+  await first.load();
+  expect(first.state.assets).toHaveLength(1);
+  const id = first.state.assets[0].mediaId;
+  const fresh = new ReadyDiscovery(productId, s.call);
+  await fresh.load();
+  expect(fresh.state.assets[0].mediaId).toBe(id);
+  expect(s.requests.every((r) => r.init.method === 'GET')).toBe(true);
+  await s.model.load();
+  expect(s.model.state.draft.some((a) => a.mediaId === id)).toBe(false);
+  s.model.edit([
+    ...s.model.state.draft,
+    { mediaId: id, alt: 'Recovered synthetic cookie' },
+  ]);
+  expect(s.requests.every((r) => r.init.method === 'GET')).toBe(true);
+  await s.model.save();
+  await fresh.load();
+  expect(fresh.state.assets).toHaveLength(0);
+  s.model.edit(s.model.state.draft.filter((a) => a.mediaId !== id));
+  await s.model.save();
+  await fresh.load();
+  expect(fresh.state.assets).toHaveLength(0);
+  expect(s.requests.some((r) => r.url.includes('/uploads'))).toBe(false);
+});
+it('READY discovery uses no browser state and clears results on authorization failure', async () => {
+  const { ReadyDiscovery } = await import('./gallery-client');
+  const s = setup();
+  const d = new ReadyDiscovery(productId, s.call);
+  await d.load();
+  s.fixture.deny();
+  await d.load();
+  expect(d.state.assets).toEqual([]);
+  expect(d.state.message).toContain('Sign in');
+});
+it('READY discovery rejects unsafe metadata, foreign products and invalid cursors', async () => {
+  const { mediaResponse, mediaPath } = await import('./media-contract');
+  const t = { productId, kind: 'ready' as const };
+  expect(() =>
+    mediaPath(
+      { ...t, after: '01K00000000000000000000002.01K00000000000000000000003' },
+      'GET',
+    ),
+  ).toThrow();
+  expect(() =>
+    mediaResponse({ assets: [], nextCursor: 'invalid' }, t),
+  ).toThrow();
+  expect(() =>
+    mediaResponse({ assets: [], nextCursor: null, objectKey: 'private' }, t),
+  ).toThrow();
+  const s = setup();
+  const v = (await s.call(t)) as {
+    assets: Record<string, unknown>[];
+    nextCursor: null;
+  };
+  for (const patch of [
+    { productId: '01K00000000000000000000002' },
+    { state: 'DELETING' },
+    { key: 'private' },
+  ])
+    expect(() =>
+      mediaResponse({ ...v, assets: [{ ...v.assets[0], ...patch }] }, t),
+    ).toThrow();
+});
+
+it('READY discovery follows empty bounded pages without looping or accumulating results', async () => {
+  const { ReadyDiscovery } = await import('./gallery-client');
+  const cursor = productId + '.01K00000000000000000000005';
+  const call = vi
+    .fn()
+    .mockResolvedValueOnce({ assets: [], nextCursor: cursor })
+    .mockResolvedValueOnce({ assets: [], nextCursor: null });
+  const d = new ReadyDiscovery(productId, call);
+  await d.load();
+  expect(d.state.nextCursor).toBe(cursor);
+  expect(call).toHaveBeenCalledTimes(1);
+  await d.load(true);
+  expect(call.mock.calls[1][0].after).toBe(cursor);
+  expect(d.state.nextCursor).toBeNull();
+  await d.load(true);
+  expect(call).toHaveBeenCalledTimes(2);
+  call.mockResolvedValue({ assets: [], nextCursor: cursor });
+  await d.load();
+  await d.load(true);
+  expect(d.state.message).not.toBe('');
+  expect(d.state.nextCursor).toBeNull();
+});

@@ -1,6 +1,7 @@
 // Explicit local-preview fixture. Never imported by a deployable route/component.
 import type { Manifest } from '../src/lib/admin/gallery-client';
 export function mediaFixture(storage?: Pick<Storage, 'getItem' | 'setItem'>) {
+  const retired = new Set<string>();
   const saved = storage?.getItem('bb-synthetic-media-manifests');
   const manifests = new Map<string, Manifest>(saved ? JSON.parse(saved) : []);
   const uploads = new Map<
@@ -102,6 +103,40 @@ export function mediaFixture(storage?: Pick<Storage, 'getItem' | 'setItem'>) {
       if (unauthorized) return reply({ code: 'UNAUTHENTICATED' }, 401);
       const [, productId, suffix] = match,
         method = init.method ?? 'GET';
+      if (!suffix && url.searchParams.get('view') === 'ready') {
+        const m = manifest(productId);
+        const candidates = [
+          {
+            productId,
+            mediaId: '01K00000000000000000000005',
+            state: 'READY',
+            uploadId: 'f'.repeat(64),
+            expiresAt: 0,
+            polls: 0,
+          },
+          ...[...uploads.values()].filter(
+            (u) => u.productId === productId && u.state === 'READY',
+          ),
+        ]
+          .filter(
+            (u) =>
+              !m.images.some((i) => i.mediaId === u.mediaId) &&
+              !retired.has(productId + ':' + u.mediaId),
+          )
+          .sort((a, b) => a.mediaId.localeCompare(b.mediaId));
+        const after = url.searchParams.get('after')?.split('.')[1];
+        const available = candidates.filter((a) => !after || a.mediaId > after);
+        const page = available.slice(0, 12);
+        return reply({
+          assets: page.map(
+            (a) => dto(a as NonNullable<ReturnType<typeof uploads.get>>).result,
+          ),
+          nextCursor:
+            available.length > 12
+              ? productId + '.' + page.at(-1)!.mediaId
+              : null,
+        });
+      }
       if (!suffix) {
         const m = manifest(productId);
         if (method === 'GET') return reply({ manifest: m });
@@ -114,6 +149,13 @@ export function mediaFixture(storage?: Pick<Storage, 'getItem' | 'setItem'>) {
         }
         if (req.expectedRevision !== m.revision)
           return reply({ code: 'MEDIA_REVISION_CONFLICT' }, 409);
+        for (const old of m.images)
+          if (
+            !req.images.some(
+              (i: { mediaId: string }) => i.mediaId === old.mediaId,
+            )
+          )
+            retired.add(productId + ':' + old.mediaId);
         m.revision++;
         m.images = structuredClone(req.images);
         persist();

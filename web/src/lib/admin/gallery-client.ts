@@ -244,3 +244,54 @@ export class GalleryModel {
     return !!this.pending;
   }
 }
+
+export type ReadyAsset = {
+  productId: string;
+  mediaId: string;
+  state: unknown;
+  width: number;
+  height: number;
+};
+export class ReadyDiscovery {
+  state: {
+    assets: ReadyAsset[];
+    nextCursor: string | null;
+    busy: boolean;
+    message: string;
+  } = { assets: [], nextCursor: null, busy: false, message: '' };
+  private listeners = new Set<() => void>();
+  constructor(
+    private productId: string,
+    private call: MediaCall,
+  ) {}
+  subscribe = (fn: () => void) => {
+    this.listeners.add(fn);
+    return () => {
+      this.listeners.delete(fn);
+    };
+  };
+  snapshot = () => this.state;
+  private update(p: Partial<typeof this.state>) {
+    this.state = { ...this.state, ...p };
+    this.listeners.forEach((fn) => fn());
+  }
+  async load(more = false) {
+    if (this.state.busy || (more && !this.state.nextCursor)) return;
+    const after = more ? this.state.nextCursor! : undefined;
+    this.update({ busy: true, message: '', assets: [] });
+    try {
+      const result = (await this.call({
+        productId: this.productId,
+        kind: 'ready',
+        after,
+      })) as { assets: ReadyAsset[]; nextCursor: string | null };
+      if (result.nextCursor && result.nextCursor === after)
+        throw new Error('Non-progressing cursor');
+      this.update({ assets: result.assets, nextCursor: result.nextCursor });
+    } catch (e) {
+      this.update({ assets: [], nextCursor: null, message: mediaMessage(e) });
+    } finally {
+      this.update({ busy: false });
+    }
+  }
+}
