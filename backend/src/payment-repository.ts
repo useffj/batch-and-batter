@@ -1,3 +1,4 @@
+import { customerLookupRecords } from './customer-lookup';
 import {
   newOrderReference,
   referenceKey,
@@ -445,6 +446,7 @@ export class PaymentRepository {
         createdAt: started,
       }),
       newPut(this.commerce, { ...referenceKey(displayOrderNumber), orderId }),
+      ...customerLookupRecords(order).map((row) => newPut(this.commerce, row)),
     ];
     try {
       await this.client.send(

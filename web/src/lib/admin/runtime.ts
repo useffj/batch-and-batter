@@ -157,3 +157,26 @@ export async function fulfillmentRelay(
     );
   }
 }
+
+export async function customerRelay(
+  request: Request,
+  action: 'search' | 'history',
+  config: RuntimeConfig,
+) {
+  try {
+    const key = await loadSessionKey(config);
+    const { customersRelay } = await import('./server');
+    return customersRelay(request, action, {
+      ...config,
+      ADMIN_SESSION_KEY: key,
+    });
+  } catch {
+    return NextResponse.json(
+      { message: messages.CONFIGURATION },
+      {
+        status: 503,
+        headers: { 'Cache-Control': 'no-store, private', Vary: 'Cookie' },
+      },
+    );
+  }
+}

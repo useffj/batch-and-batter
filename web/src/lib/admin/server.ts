@@ -1064,3 +1064,59 @@ export async function relayFulfillment(
     );
   }
 }
+
+// Read-only searches use POST bodies to keep customer terms out of URLs.
+export async function customersRelay(
+  request: Request,
+  action: 'search' | 'history',
+  c: AdminConfig,
+  fetcher: typeof fetch = fetch,
+) {
+  try {
+    const config = settings(c);
+    if (request.method !== 'POST') throw new AdminFailure('REQUEST', 405);
+    if (new URL(request.url).search) throw new AdminFailure('REQUEST', 400);
+    if (
+      request.headers.get('origin') !== config.origin ||
+      (request.headers.has('sec-fetch-site') &&
+        request.headers.get('sec-fetch-site') !== 'same-origin')
+    )
+      throw new AdminFailure('REQUEST', 403);
+    const session = await authorize(
+      request.headers.get('cookie') ?? '',
+      c,
+      fetcher,
+    );
+    const payload = await json(request, 4096, new AdminFailure('REQUEST', 413));
+    if (session.expiresAt <= Date.now()) throw new AdminFailure('EXPIRED', 401);
+    const r = await fetcher(config.api + '/admin/customers/' + action, {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer ' + session.token,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+      cache: 'no-store',
+      redirect: 'error',
+      signal: AbortSignal.timeout(12000),
+    });
+    if (!r.ok)
+      return output(
+        {
+          message:
+            r.status === 400
+              ? 'Enter a full name, first/last name token, or exact email. Restart the search if continuation expired.'
+              : 'Unable to load customer records. Please retry or sign in again.',
+        },
+        [400, 401, 403].includes(r.status) ? r.status : 503,
+      );
+    const data = await json(r, 512 * 1024, new AdminFailure('INVALID'));
+    if (session.expiresAt <= Date.now()) throw new AdminFailure('EXPIRED', 401);
+    return output(data);
+  } catch (e) {
+    return output(
+      { message: e instanceof AdminFailure ? e.message : messages.UNAVAILABLE },
+      e instanceof AdminFailure ? e.status : 503,
+    );
+  }
+}

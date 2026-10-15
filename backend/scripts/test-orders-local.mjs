@@ -4,6 +4,7 @@ const require = createRequire(import.meta.url);
 const { CartStore, pid, tokenHash } = require('../dist/test/cart-store');
 const { dropId, pickup } = require('../dist/test/fixtures');
 const { catalogKeys } = require('../dist/src/keys');
+const { customerLookupRecords } = require('../dist/src/customer-lookup');
 const { PaymentRepository } = require('../dist/src/payment-repository');
 const { etag } = require('../dist/src/cart-domain');
 const { PutCommand, GetCommand } = require('@aws-sdk/lib-dynamodb');
@@ -93,6 +94,17 @@ try {
   assert.deepEqual(repeated, result);
   const saved = await f.repository.get(result.cart.orderId);
   assert(saved.displayOrderNumber);
+  for (const row of customerLookupRecords(saved)) {
+    const actual = await f.client.send(
+      new GetCommand({
+        TableName: f.table,
+        Key: { PK: row.PK, SK: row.SK },
+        ConsistentRead: true,
+      }),
+    );
+    assert.deepEqual(actual.Item, row);
+  }
+
   const lookup = await f.repository.list({
     reference: saved.displayOrderNumber,
   });

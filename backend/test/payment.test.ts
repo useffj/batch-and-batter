@@ -1,3 +1,4 @@
+import { customerLookupRecords } from '../src/customer-lookup';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { CartStore, pid, token, tokenHash } from './cart-store';
@@ -117,7 +118,7 @@ async function setup(count = 1) {
 const fails = (code: string) => (e: unknown) =>
   (e as { code?: string })?.code === code;
 
-test('handoff freezes snapshots, owns inventory, creates twelve distinct atomic actions including submission ownership and three durable records', async () => {
+test('handoff freezes snapshots, owns inventory, creates bounded distinct atomic actions including submission ownership and three durable records', async () => {
   const { s, repo, request, created, cart, inventory } = await setup(12);
   const stock = structuredClone(
     [...s.rows].filter(([k]) => k.includes('|INVENTORY#')),
@@ -155,7 +156,10 @@ test('handoff freezes snapshots, owns inventory, creates twelve distinct atomic 
   assert.ok(s.row('operations', work.workflow));
   assert.equal(work.workflow.deadline, c.paymentStartedAt);
   const actions = s.transactions.at(-1)!;
-  assert.equal(actions.length, 12);
+  assert.equal(actions.length, 12 + customerLookupRecords(o).length);
+  assert(actions.length <= 17);
+  for (const row of customerLookupRecords(o))
+    assert.deepEqual(s.row('commerce', row), row);
   assert.deepEqual(
     actions.map((a) =>
       a.Put ? 'Put' : a.Delete ? 'Delete' : 'ConditionCheck',
@@ -173,6 +177,7 @@ test('handoff freezes snapshots, owns inventory, creates twelve distinct atomic 
       'Put',
       'Put',
       'Put',
+      ...customerLookupRecords(o).map(() => 'Put'),
     ],
   );
   assert.equal(
@@ -249,7 +254,7 @@ test('lost transaction response resolves committed receipt without another Order
   const first = await repo.start(request);
   assert.deepEqual(await repo.start(request), first);
   assert.equal(
-    [...s.rows.keys()].filter((k) => k.includes('|ORDER#')).length,
+    [...s.rows.keys()].filter((k) => k.startsWith('commerce|ORDER#')).length,
     1,
   );
 });
@@ -273,7 +278,7 @@ for (const sameKey of [true, false])
         ),
       );
     assert.equal(
-      [...s.rows.keys()].filter((k) => k.includes('|ORDER#')).length,
+      [...s.rows.keys()].filter((k) => k.startsWith('commerce|ORDER#')).length,
       1,
     );
     assert.equal(
@@ -297,7 +302,7 @@ for (const status of ['PAUSED', 'CLOSED'])
     };
     await assert.rejects(repo.start(request), fails('DROP_NOT_OPEN'));
     assert.equal(
-      [...s.rows.keys()].filter((k) => k.includes('|ORDER#')).length,
+      [...s.rows.keys()].filter((k) => k.startsWith('commerce|ORDER#')).length,
       0,
     );
   });
@@ -353,7 +358,7 @@ for (const winner of ['PUT', 'DELETE', 'EXPIRY'])
     };
     await assert.rejects(repo.start(request), fails('CART_CONFLICT'));
     assert.equal(
-      [...s.rows.keys()].filter((k) => k.includes('|ORDER#')).length,
+      [...s.rows.keys()].filter((k) => k.startsWith('commerce|ORDER#')).length,
       0,
     );
   });
@@ -938,7 +943,9 @@ test('reference collision aborts the entire payment handoff without rebasing or 
   const { s, repo, request, cart } = await setup();
   const before = structuredClone([...s.rows]);
   s.before = (actions) => {
-    const lookup = actions.at(-1)!.Put!.Item!;
+    const lookup = actions.find((a) =>
+      String(a.Put?.Item?.PK).startsWith('ORDER_REFERENCE#'),
+    )!.Put!.Item!;
     s.put('commerce', { ...lookup, orderId: pid(999) });
     s.before = undefined;
   };
@@ -946,6 +953,24 @@ test('reference collision aborts the entire payment handoff without rebasing or 
   assert.equal(cart().status, 'ACTIVE');
   assert.deepEqual(
     [...s.rows].filter(([k]) => !k.includes('ORDER_REFERENCE#')),
+    before,
+  );
+});
+
+test('customer lookup collision aborts handoff atomically without financial or inventory changes', async () => {
+  const { s, repo, request, cart } = await setup();
+  const before = structuredClone([...s.rows]);
+  s.before = (actions) => {
+    const row = actions.find((a) =>
+      String(a.Put?.Item?.PK).startsWith('CUSTOMER_LOOKUP#'),
+    )!.Put!.Item!;
+    s.put('commerce', { ...row, orderId: pid(999) });
+    s.before = undefined;
+  };
+  await assert.rejects(repo.start(request));
+  assert.equal(cart().status, 'ACTIVE');
+  assert.deepEqual(
+    [...s.rows].filter(([k]) => !k.includes('CUSTOMER_LOOKUP#')),
     before,
   );
 });

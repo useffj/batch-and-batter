@@ -1,4 +1,9 @@
 import {
+  adminCustomers,
+  customerRoutes,
+  type AdminCustomers,
+} from './admin-customers';
+import {
   adminFulfillment,
   fulfillmentRoutes,
   type FulfillmentRepository,
@@ -82,6 +87,9 @@ export function createHandler(
   getFulfillment: () => FulfillmentRepository = () => {
     throw Error('Fulfillment unavailable');
   },
+  getCustomers: () => AdminCustomers = () => {
+    throw Error('Customers unavailable');
+  },
 ) {
   return async (
     event: ApiEvent,
@@ -108,6 +116,7 @@ export function createHandler(
       return cartApi(event, getCarts, context);
     if (event.routeKey === 'GET /health') return complete(await health());
     if (
+      customerRoutes.includes(event.routeKey) ||
       fulfillmentRoutes.includes(event.routeKey) ||
       orderRoutes.includes(event.routeKey) ||
       weeklyRoutes.includes(event.routeKey) ||
@@ -125,6 +134,8 @@ export function createHandler(
     ) {
       try {
         const identity = requireAdmin(event);
+        if (customerRoutes.includes(event.routeKey))
+          return json(200, await adminCustomers(event, getCustomers()));
         if (fulfillmentRoutes.includes(event.routeKey))
           return json(
             200,
