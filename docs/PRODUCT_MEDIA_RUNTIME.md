@@ -76,61 +76,73 @@ ZIP contents start at index.cjs, never an enclosing out directory. Test-support 
 build evidence stay outside both runtime folders and ZIPs. Generated files are
 ignored and must never be committed.
 
-Linux candidate contains Sharp 0.35.5 and @img/sharp-libvips-linux-x64 1.3.4
-(libvips 8.18.7). Both native libraries identify as ELF x86-64; no Darwin binaries
-are installed in the candidate. Host artifact loading, handler export, native
-encoding/decoding, variants and metadata stripping passed on Node v24.19.0,
-macOS ARM64. **Linux execution is NOT VERIFIED.** No Docker/Podman/Colima/Lima
-executable was available in the inspected local tooling. No permanent tooling was
-installed. Cross-installing Linux native files is not runtime compatibility proof.
+**Native Linux x64 execution PASSED** in
+[workflow run 38682038692](https://github.com/useffj/batch-and-batter/actions/runs/38682038692),
+against commit `0cdd8b6212ecee64e53f298d25d22c6bdddd4a2f`.
+The Ubuntu 24.04 runner executed the actual deployment ZIP inside the official
+Lambda Node.js image pinned to
+`public.ecr.aws/lambda/nodejs@sha256:9a096eb2cb6fa96419b5742e1b4a64b6bf7d3aa954beb92461a2a3e072061497`.
+The runtime was Node.js 24.21.0, Amazon Linux 2023.12, Linux x64 and glibc 2.34.
+Sharp 0.35.5 selected native libvips 8.18.7 (package 1.3.4), with `isWasm=false`.
 
-The validation-only `.github/workflows/media-processor-linux-validation.yml` now
-executes the actual immutable ZIP with synthetic adapters on Ubuntu 24.04 Docker,
-using the official Lambda Node.js 24 image resolved to an immutable digest.
-The workflow records that digest, verifies AL2023/x64/Node 24, and extracts inside
-the container using Node built-ins with independent per-file SHA-256 verification.
-No source tree or host node_modules is mounted. Runtime networking is disabled;
-read-only mounts/root, 1024 MiB memory, one CPU and 512 MiB tmpfs bound the test.
-Each fixture runs in a fresh process with a 30-second bound. The 20 MP fixture is
-the permitted pixel-limit case; oversized dimensions, pixels and bytes are rejected.
-Only synthetic adapters are injected, and no ZIP is uploaded as a GitHub artifact.
-CI results are pending at source checkpoint; consult the draft PR and run summary.
-The one-CPU container does not model reserved concurrency 2 or real AWS latency.
+The native addon and packaged libvips both loaded and had executable mappings.
+Canonical-path and inode comparisons against `/proc/self/maps` confirmed the
+mapped files belonged to the extracted artifact. Earlier failures were resolved:
+extraction moved off the noexec temporary filesystem, and canonical comparison
+replaced a literal comparison of equivalent libvips paths containing `../..`.
+The negative control proved that functional WASM processing cannot satisfy native
+acceptance. No dependency or processor business-logic changes were needed.
 
-Remaining gate: execute the actual Linux artifact with synthetic adapters
-in an approved disposable Linux x64 Node 24/AL2023 environment, without credentials
-or managed AWS access. Verify native resolution, handler loading, decoding/encoding,
-metadata stripping and resource behavior there before deployment readiness.
-AWS documents Node 24 on AL2023 in its
-[Node.js runtime guide](https://docs.aws.amazon.com/lambda/latest/dg/lambda-nodejs.html).
+The workflow extracted the unchanged ZIP inside the container and verified every
+file's SHA-256 before and after tests. It did not import a development installation
+or source tree. The packaged handler export and fail-closed behavior passed;
+the packaged processor factory executed with synthetic storage/persistence adapters.
+JPEG, PNG and WebP inputs, native JPEG/WebP outputs, orientation correction,
+metadata removal, invalid-image rejection, checksum checks and source dimension,
+pixel and byte limits passed. All 13 native-probe, negative-control and runtime
+cases passed. No managed AWS calls or credentials were used.
 
-## Local resource measurements
+Isolation remained: network disabled, read-only root, one CPU, 1024 MiB memory,
+128 MiB executable artifact tmpfs with nosuid/nodev, and a separate 512 MiB /tmp
+with noexec/nosuid/nodev. The mount capacities are not preallocated; their pages
+share the container memory limit. Each fixture runs in a fresh process with a
+30-second bound. No ZIP is published as a GitHub artifact.
 
-Each case runs the host packaged worker in a fresh process, with synthetic adapters
-and sequential variants. Peak RSS includes fixture generation and process startup;
-duration covers processing, not real S3/DynamoDB latency. Solid-color PNG fixtures
-are reproducible but do not model worst-case photographic entropy or Lambda CPU.
+## Native Linux resource measurements
 
-| Input                        | Source bytes | Processing ms | Peak RSS MiB | Outputs                 |
-| ---------------------------- | -----------: | ------------: | -----------: | ----------------------- |
-| 640 × 480                    |         5747 |            27 |        128.4 | 4; 396–2068 bytes each  |
-| 1600 × 1200                  |        28898 |           107 |        137.8 | 6; 396–11518 bytes each |
-| 5000 × 4000 (20 MP limit)    |       279252 |           314 |        200.6 | 6; 410–12268 bytes each |
-| 8001 × 480 (over axis limit) |        52663 |             2 |        131.3 | Rejected; no outputs    |
+These measurements come from the passing native workflow above, not earlier WASM
+or macOS measurements. Peak RSS includes fixture generation and process startup;
+duration covers processing with synthetic adapters, not real S3/DynamoDB latency.
 
-Observed host usage is below proposed 1024 MiB/30 seconds, but does not approve
-those limits for Lambda. Input over 8 MiB and stream overflow are separately
-rejected in tests. No memory/timeout increase is proposed. Linux resource and
-representative high-entropy image validation remain release prerequisites.
+| Input                     | Source bytes | Processing ms | Peak RSS MiB | Outputs                 |
+| ------------------------- | -----------: | ------------: | -----------: | ----------------------- |
+| 640 × 480                 |         5747 |            44 |        149.2 | 4; 396–2068 bytes each  |
+| 1600 × 1200               |        28898 |           214 |        173.5 | 6; 396–11518 bytes each |
+| 5000 × 4000 (20 MP limit) |       279252 |           495 |        236.6 | 6; 410–12268 bytes each |
+
+Peak whole-container memory was 293,134,336 bytes (**279.6 MiB**), including tmpfs.
+Observed usage was below proposed 1024 MiB/30-second limits. The oversized-axis,
+oversized-pixel, oversized-byte, invalid-image and checksum rejection cases passed
+without output. Existing 8 MiB input and 20 MP limits remain enforced.
+
+**Completed:** native AL2023 Linux container compatibility validation.
+**Outstanding:** managed Lambda deployment and acceptance. Solid-color synthetic
+fixtures do not guarantee production performance or represent photographic
+complexity, managed-service latency or reserved concurrency 2. Representative
+cookie photographs and real image-upload processing must be tested during
+separately authorized DEV acceptance. Approved Lambda memory, timeout, ephemeral
+storage and concurrency settings below are unchanged.
 
 ## Validation and limitations
 
-Fresh: 26 processor tests; 59 relevant backend media tests; 36 DynamoDB Local
+Previously recorded local validation: 26 processor tests; 59 relevant backend media tests; 36 DynamoDB Local
 groups including packaged-worker durable completion/replay; 10 backend artifact
 checks passed. Processor and backend production audits reported zero findings.
 Processor strict type checking, lint (zero warnings), repository formatting,
-whitespace checks and both host/Linux packaging passed. The Linux ZIP is 9,297,970
-bytes compressed and 24,610,455 bytes uncompressed, with 153 entries. These are
+whitespace checks and both host/Linux packaging passed. The actual ZIP tested by
+run 38682038692 was 13,054,883 bytes compressed and 34,464,814 bytes uncompressed,
+with 198 entries; SHA-256
+`e118db1c144784a2701a421b4b502beccc8ce752d5827783d743a5f12ca4f454`. These sizes are
 below the [AWS Lambda ZIP limits](https://docs.aws.amazon.com/lambda/latest/dg/gettingstarted-limits.html)
 of 50 MiB compressed for direct upload and 250 MiB uncompressed. Inspection found no macOS binaries, development tools,
 test helpers or credential markers. Existing pinned lockfile entries retain their
@@ -183,7 +195,9 @@ No hosted upload or payment acceptance occurred.
   provisioned concurrency. No fixed monthly estimate is defensible before volume
   and representative Lambda duration are known. No paid resources were created.
 
-Runtime/IAM/CORS review, Linux execution/resource validation, separate DEV deployment
-approval, catalog migration/readiness, real-upload acceptance, authenticated image
-delivery and customer publication controls remain required. Live uploads remain
+Native container validation is complete. Runtime/IAM/CORS approval, processor
+Lambda provisioning, catalog migration/readiness, separately authorized controlled
+DEV deployment, managed Lambda acceptance with representative cookie photographs
+and real uploads, authenticated image delivery, customer publication controls and
+authorized cleanup execution remain outstanding. Live uploads remain
 disabled. Hosted duplicate-activation acceptance remains **NOT PASSED**.
