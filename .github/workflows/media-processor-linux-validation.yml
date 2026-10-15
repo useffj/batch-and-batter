@@ -73,7 +73,7 @@ jobs:
           const { spawnSync } = require('node:child_process');
           const { inflateRawSync } = require('node:zlib');
           const hash = bytes => createHash('sha256').update(bytes).digest('hex');
-          const root = '/tmp/runtime';
+          const root = '/opt/media-artifact';
           async function main() {
             assert.equal(process.platform, 'linux');
             assert.equal(process.arch, 'x64');
@@ -81,6 +81,18 @@ jobs:
             const os = fs.readFileSync('/etc/os-release', 'utf8');
             assert.match(os, /^ID="?amzn"?$/m);
             assert.match(os, /^VERSION_ID="?2023"?$/m);
+            const mounts = fs.readFileSync('/proc/self/mountinfo', 'utf8').split('\n');
+            function mountAt(location) {
+              const line = mounts.find(line => line.split(' ')[4] === location);
+              assert.ok(line, 'MISSING_MOUNT: ' + location);
+              const [mount, superblock] = line.split(' - ');
+              return { line, options: mount.split(' ')[5].split(','), filesystem: superblock.split(' ')[0] };
+            }
+            const artifactMount = mountAt(root), temporaryMount = mountAt('/tmp');
+            assert.equal(artifactMount.filesystem, 'tmpfs');
+            for (const option of ['rw', 'nosuid', 'nodev']) assert.ok(artifactMount.options.includes(option));
+            assert.ok(!artifactMount.options.includes('noexec'), 'ARTIFACT_MOUNT_NOEXEC');
+            assert.ok(temporaryMount.options.includes('noexec'), 'TMP_MUST_REMAIN_NOEXEC');
             if (!process.argv.includes('--case')) {
               // Extract the immutable ZIP inside the container using only Node built-ins.
               // Independent Python ZIP hashes below verify every extracted file's bytes.
@@ -122,7 +134,7 @@ jobs:
               assert.equal([...seen].filter(x => !x.endsWith('/')).length, Object.keys(manifest.files).length);
               console.log(JSON.stringify({ environment: { node: process.version, arch: process.arch, os,
                 glibc: process.report.getReport().header.glibcVersionRuntime, memoryMiB: 1024,
-                cpus: 1, tmpMiB: 512, network: 'none', artifact: manifest.sha256,
+                cpus: 1, tmpMiB: 512, artifactTmpfsMiB: 128, mounts: [artifactMount.line, temporaryMount.line], network: 'none', artifact: manifest.sha256,
                 compressedBytes: zip.length, uncompressedBytes: manifest.uncompressedBytes } }));
               for (const name of ['native-negative', 'native-probe', 'png-small', 'jpeg-oriented', 'webp-small', 'png-medium', 'png-20mp', 'over-axis', 'over-pixels', 'invalid', 'over-bytes', 'checksum', 'fail-closed']) {
                 const child = spawnSync(process.execPath, [__filename, '--case', name], {
@@ -133,6 +145,13 @@ jobs:
               // The only mounted artifact is read-only; validate runtime files were not changed.
               for (const [name, expected] of Object.entries(manifest.files)) assert.equal(hash(fs.readFileSync(path.join(root, name))), expected);
               assert.equal(hash(fs.readFileSync('/input/artifact.zip')), manifest.sha256);
+              const memory = {};
+              for (const file of ['memory.current', 'memory.peak', 'memory.max']) {
+                const location = '/sys/fs/cgroup/' + file;
+                if (fs.existsSync(location)) memory[file] = fs.readFileSync(location, 'utf8').trim();
+              }
+              console.log(JSON.stringify({ containerMemoryBytes: memory,
+                limitation: 'Cgroup memory includes tmpfs artifact pages and process memory; separate tmpfs capacities are not preallocated and share the 1024 MiB container limit' }));
               return;
             }
             const runtimeRequire = createRequire(root + '/package.json');
@@ -280,7 +299,8 @@ jobs:
           timeout 360 docker run --rm --platform linux/amd64 \
             --network none --memory 1024m --memory-swap 1024m --cpus 1 \
             --read-only --cap-drop ALL --security-opt no-new-privileges \
-            --tmpfs /tmp:rw,size=512m \
+            --tmpfs /tmp:rw,noexec,nosuid,nodev,size=512m \
+            --tmpfs /opt/media-artifact:rw,exec,nosuid,nodev,size=128m \
             --mount "type=bind,src=$PWD/media-processor/out/processor-linux-x64.zip,dst=/input/artifact.zip,readonly" \
             --mount "type=bind,src=$RUNNER_TEMP/processor-checks,dst=/checks,readonly" \
             --entrypoint /var/lang/bin/node "$LAMBDA_VALIDATION_IMAGE" /checks/check.cjs \
