@@ -452,3 +452,65 @@ CloudFormation change-set review. Rollback must preserve every worker Code
 reference and payment parameter. No direct Lambda update, ordinary full-stack
 deploy, catalog migration, media activation or payment change is enabled.
 Hosted duplicate-activation acceptance remains NOT PASSED.
+
+## 1B-2K-E dormant SDK adapter and publication gate
+
+`infra/scripts/api-artifact-s3-adapter.cjs` provides an explicitly constructed
+S3 SDK v3 adapter using the backend's existing pinned SDK installation. Importing
+it constructs no client. Construction requires explicit temporary credentials
+and an explicit request handler; there is no default credential provider or
+transport. SDK retries are disabled (`maxAttempts: 1`). The adapter binds one key,
+byte count and SHA-256, bounds streamed read-back and paginated history, and
+sanitizes service errors. Its `kind` is `aws-dormant`, not `mock`.
+
+The existing publishing state machine and CLI remain mock-only, unchanged. No
+build or package script wires this adapter to live publishing. The adapter is
+not an authorization mechanism: a future operator-controlled integration must
+verify STS identity, fresh authorization and protection evidence before any
+write. Do not relabel a real adapter as a mock. No real publication is enabled
+by this milestone. Installed AWS protection is verified independently of the
+proposal-only status in the committed policy bundle.
+
+Future acceptance requires separately approved integration and one publication:
+
+1. Owner approves exact ZIP bytes/hash, source/build provenance, operation UUID,
+   candidate key and durable journal location. Reverify accepted/rollback bytes,
+   current versions, installed policy, lifecycle and KMS configuration.
+2. Verify the publisher role, approved trust and boundary. Materialize the
+   existing exact-key identity-policy template for this single candidate key;
+   validate it before separately authorized attachment. Its S3 rights are
+   PutObject (literal If-None-Match `*`), GetObject/GetObjectVersion and
+   ListBucketVersions constrained to the exact prefix. KMS GenerateDataKey and
+   Decrypt remain constrained to the approved key, account, S3 ViaService and
+   exact object encryption context. No deletion or deployment permissions.
+3. Independently obtain fresh protection/IAM/KMS evidence using an authorized
+   read-only operator. The publisher role intentionally has no IAM inspection
+   or bucket-policy administration permissions. An integration must validate
+   the installed policy's `Id: AccessControl` and exact canonical hash, then
+   explicitly map it to the existing state-machine evidence contract; it must
+   not weaken the current exact-policy comparison.
+4. Assume only the approved role, verify its session identity, and supply its
+   explicit short-lived credentials and transport. Recheck fresh evidence and
+   that the exact key has neither versions nor delete markers. Existing S3
+   delete markers permit conditional creation at the service layer, so complete
+   history inspection remains mandatory.
+5. Persist operation identity and ATTEMPTED before one conditional PUT, using
+   captured bytes, SHA-256 checksum, ExpectedBucketOwner, approved SSE-KMS key
+   and BucketKeyEnabled false. No ACL/tagging, multipart, copy, retry or new key.
+6. Preserve returned opaque VersionId; download that version, verify all bytes,
+   SHA-256, size, encryption and provenance, then verify current version/history.
+   Preserve the durable receipt. It must never authorize deployment.
+7. On 409, timeout, credential/KMS denial, malformed acknowledgement or failed
+   read-back, stop writes and retain the original journal/key. Reconcile only
+   authoritative exact-version evidence. A 412 is a collision. Never issue a
+   replacement PUT, delete, or extend authorization automatically. Interrupted
+   processes and stale locks require operator review under the existing contract.
+8. Review IAM after publication. Removal of the exact-key grant must be included
+   in the future authorization; do not leave an open-ended grant by assumption.
+   Stop without Lambda or CloudFormation deployment.
+
+IAM simulation and mocked SDK transport tests do not establish real role
+assumption, effective SCP/session/resource-policy authorization, KMS acceptance,
+network behavior or managed-S3 concurrency. These require separately authorized
+acceptance. No identity policy is attached now; full-stack deployment remains
+blocked and release-template output remains NOT DEPLOYABLE.
