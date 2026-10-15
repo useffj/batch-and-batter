@@ -223,13 +223,46 @@ jobs:
             requireNativeBackend(selected);
             assert.equal(sharp.versions.emscripten, undefined, 'WASM_VERSIONS_REJECTED');
             assert.ok(require.cache[addon], 'NATIVE_ADDON_NOT_LOADED');
-            const loaded = process.report.getReport().sharedObjects;
-            assert.ok(loaded.includes(addon), 'NATIVE_ADDON_NOT_MAPPED');
-            assert.ok(loaded.includes(library), 'NATIVE_LIBVIPS_NOT_MAPPED');
             if (name === 'native-probe') {
               await sharp({ create: { width: 480, height: 480, channels: 3, background: 'white' } }).jpeg().toBuffer();
+            }
+            const artifactRoot = fs.realpathSync(root);
+            function canonical(file) {
+              try { return fs.realpathSync(file); } catch { return null; }
+            }
+            const belongs = file => file !== null && file.startsWith(artifactRoot + '/');
+            const loaded = process.report.getReport().sharedObjects;
+            const mappings = fs.readFileSync('/proc/self/maps', 'utf8').split('\n').flatMap(line => {
+              const match = line.match(/^[0-9a-f]+-[0-9a-f]+\s+(\S+)\s+[0-9a-f]+\s+(\S+)\s+(\d+)\s+(.+)$/);
+              if (!match) return [];
+              const [, permissions, device, inode, rawPath] = match;
+              if (!rawPath.startsWith(root + '/') && !/^(?:sharp-.*\.node|libvips.*\.so.*)$/.test(path.basename(rawPath))) return [];
+              const resolved = canonical(rawPath);
+              return [{ rawPath, permissions, device, inode, canonicalPath: resolved, belongsToArtifact: belongs(resolved) }];
+            });
+            const comparisons = [addon, library].map(expected => {
+              const resolved = canonical(expected);
+              const exists = fs.existsSync(expected);
+              const inode = exists ? fs.statSync(expected, { bigint: true }).ino.toString() : null;
+              return { expected, exists, canonicalPath: resolved, inode, belongsToArtifact: belongs(resolved),
+                literalReportMatch: loaded.includes(expected),
+                canonicalReportMatch: resolved !== null && loaded.some(file => canonical(file) === resolved),
+                executableMappings: mappings.filter(m => resolved !== null && m.canonicalPath === resolved && m.inode === inode && m.permissions.includes('x') && m.belongsToArtifact) };
+            });
+            // Emit only bounded native paths/permissions, never unrelated mappings or environment.
+            if (name === 'native-probe') console.log(JSON.stringify({ nativeMappingEvidence: {
+              reportPaths: loaded.filter(file => file.startsWith(root + '/')).slice(0, 32).map(rawPath => ({ rawPath, canonicalPath: canonical(rawPath) })),
+              mappings: mappings.slice(0, 32), comparisons,
+            } }));
+            assert.ok(mappings.length <= 32, 'NATIVE_MAPPING_DIAGNOSTIC_BOUND');
+            for (const [index, comparison] of comparisons.entries()) {
+              assert.ok(comparison.exists && comparison.belongsToArtifact, 'EXPECTED_NATIVE_FILE_OUTSIDE_ARTIFACT');
+              assert.ok(comparison.canonicalReportMatch, index === 0 ? 'NATIVE_ADDON_NOT_MAPPED' : 'NATIVE_LIBVIPS_NOT_MAPPED');
+              assert.ok(comparison.executableMappings.length > 0, 'PACKAGED_NATIVE_EXECUTABLE_MAPPING_MISSING');
+            }
+            if (name === 'native-probe') {
               console.log(JSON.stringify({ name, result: 'PASS', backend: selected.libvipsVersion(), addon, library,
-                mapped: loaded.filter(x => x.startsWith(root)), versions: sharp.versions }));
+                versions: sharp.versions }));
               return;
             }
             const packaged = runtimeRequire('./index.cjs');
