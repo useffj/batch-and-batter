@@ -838,3 +838,89 @@ export async function mediaRelay(
     return f.status === 401 || f.status === 403 ? save(response, c) : response;
   }
 }
+
+// Fixed Drop routes only, with the same session and same-origin protections.
+export async function dropRelay(
+  request: Request,
+  segments: string[],
+  c: AdminConfig,
+  fetcher: typeof fetch = fetch,
+): Promise<NextResponse> {
+  try {
+    const config = settings(c),
+      method = request.method;
+    const [dropId, action] = segments;
+    if (
+      segments.length > 2 ||
+      (dropId && id(dropId) !== dropId) ||
+      !(
+        (!dropId && ['GET', 'POST'].includes(method)) ||
+        (dropId && action === 'composition' && method === 'GET') ||
+        (dropId && action === 'draft' && method === 'PUT') ||
+        (dropId &&
+          ['publish', 'open', 'pause', 'resume', 'close'].includes(action) &&
+          method === 'POST')
+      )
+    )
+      throw new AdminFailure('REQUEST', 405);
+    if (
+      method !== 'GET' &&
+      (request.headers.get('origin') !== config.origin ||
+        (request.headers.has('sec-fetch-site') &&
+          request.headers.get('sec-fetch-site') !== 'same-origin'))
+    )
+      throw new AdminFailure('REQUEST', 403);
+    const session = await authorize(
+      request.headers.get('cookie') ?? '',
+      c,
+      fetcher,
+    );
+    let path = '/admin/drops' + (dropId ? '/' + dropId + '/' + action : '');
+    const cursor = new URL(request.url).searchParams.get('cursor');
+    if (cursor) {
+      if (dropId || method !== 'GET' || !/^[A-Za-z0-9_-]{1,8192}$/.test(cursor))
+        throw new AdminFailure('REQUEST', 400);
+      path += '?cursor=' + cursor;
+    }
+    const payload =
+      method === 'GET'
+        ? undefined
+        : await json(request, 256 * 1024, new AdminFailure('REQUEST', 413));
+    const response = await fetcher(config.api + path, {
+      method,
+      headers: {
+        Authorization: 'Bearer ' + session.token,
+        'Content-Type': 'application/json',
+      },
+      body: payload ? JSON.stringify(payload) : undefined,
+      cache: 'no-store',
+      redirect: 'error',
+      signal: AbortSignal.timeout(15000),
+    });
+    const data = await json(
+      response,
+      4 * 1024 * 1024,
+      new AdminFailure('INVALID'),
+    );
+    if (!response.ok)
+      return output(
+        {
+          code: 'DROP_REQUEST_FAILED',
+          message:
+            response.status === 409
+              ? 'Drop changed or is not ready. Reload before retrying.'
+              : response.status === 400
+                ? 'Check the Drop details and try again.'
+                : 'Drop request could not be confirmed. Reload to check its current state.',
+        },
+        response.status,
+      );
+    if (session.expiresAt <= Date.now()) throw new AdminFailure('EXPIRED', 401);
+    return output(data, response.status);
+  } catch (e) {
+    return output(
+      { message: e instanceof AdminFailure ? e.message : messages.UNAVAILABLE },
+      e instanceof AdminFailure ? e.status : 503,
+    );
+  }
+}

@@ -110,7 +110,7 @@ test('application Node 24 Lambda preserves its identity and serves exactly the t
   template.hasResourceProperties('AWS::ApiGatewayV2::Api', {
     ProtocolType: 'HTTP',
   });
-  template.resourceCountIs('AWS::ApiGatewayV2::Route', 39);
+  template.resourceCountIs('AWS::ApiGatewayV2::Route', 41);
   const functionId = Object.keys(
     template.findResources('AWS::Lambda::Function'),
   )[0];
@@ -135,6 +135,8 @@ test('application Node 24 Lambda preserves its identity and serves exactly the t
       'GET /drops/current',
       'GET /drops/{dropId}',
       'GET /health',
+      'GET /admin/drops',
+      'PUT /admin/drops/{dropId}/draft',
       'GET /admin/products',
       'GET /admin/products/{productId}',
       'POST /admin/products',
@@ -414,6 +416,8 @@ test('all twenty-two admin routes bind the JWT authorizer to the existing pool, 
     ...compositionRoutes,
     ...mediaRoutes,
     'GET /admin/me',
+    'GET /admin/drops',
+    'PUT /admin/drops/{dropId}/draft',
     'GET /admin/products',
     'GET /admin/products/{productId}',
     'POST /admin/products',
@@ -481,8 +485,8 @@ test('tables, pool including MFA, client and JWT authorizer exactly preserve the
 });
 
 test('every route integration invokes only the existing Lambda through route-scoped API Gateway permissions', () => {
-  template.resourceCountIs('AWS::ApiGatewayV2::Integration', 39);
-  template.resourceCountIs('AWS::Lambda::Permission', 39);
+  template.resourceCountIs('AWS::ApiGatewayV2::Integration', 41);
+  template.resourceCountIs('AWS::Lambda::Permission', 41);
   for (const resource of Object.values(
     template.findResources('AWS::ApiGatewayV2::Integration'),
   )) {
@@ -606,9 +610,9 @@ test('Phase 5A2 changes only approved properties of Phase 5A1 resources', () => 
     added,
     [
       ...Array(32).fill('AWS::CloudWatch::Alarm'),
-      ...Array(15).fill('AWS::ApiGatewayV2::Route'),
-      ...Array(15).fill('AWS::ApiGatewayV2::Integration'),
-      ...Array(15).fill('AWS::Lambda::Permission'),
+      ...Array(17).fill('AWS::ApiGatewayV2::Route'),
+      ...Array(17).fill('AWS::ApiGatewayV2::Integration'),
+      ...Array(17).fill('AWS::Lambda::Permission'),
       ...Array(3).fill('AWS::SQS::Queue'),
       'AWS::KMS::Key',
       'AWS::KMS::Alias',
