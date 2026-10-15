@@ -114,3 +114,23 @@ export async function weeklyDropRelay(
     );
   }
 }
+
+export async function orderRelay(
+  request: Request,
+  orderId: string | undefined,
+  config: RuntimeConfig,
+) {
+  try {
+    const key = await loadSessionKey(config);
+    const { ordersRelay } = await import('./server');
+    return ordersRelay(request, orderId, { ...config, ADMIN_SESSION_KEY: key });
+  } catch {
+    return NextResponse.json(
+      { message: messages.CONFIGURATION },
+      {
+        status: 503,
+        headers: { 'Cache-Control': 'no-store, private', Vary: 'Cookie' },
+      },
+    );
+  }
+}

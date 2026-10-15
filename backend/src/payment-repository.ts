@@ -1,3 +1,8 @@
+import {
+  newOrderReference,
+  referenceKey,
+  orderIndexKeys,
+} from './order-reference';
 import type { PaymentReader } from './payment-provider';
 import {
   command,
@@ -304,7 +309,15 @@ export class PaymentRepository {
       createdAt: started,
       updatedAt: started,
     });
+    const displayOrderNumber = newOrderReference();
     const order = orderSchema.parse({
+      displayOrderNumber,
+      ...orderIndexKeys({
+        orderId,
+        dropId: cart.dropId,
+        createdAt: started,
+        pickup,
+      }),
       orderId,
       cartId: cart.cartId,
       dropId: cart.dropId,
@@ -431,6 +444,7 @@ export class PaymentRepository {
         orderId,
         createdAt: started,
       }),
+      newPut(this.commerce, { ...referenceKey(displayOrderNumber), orderId }),
     ];
     try {
       await this.client.send(

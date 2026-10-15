@@ -1,3 +1,4 @@
+import { orderReferencePattern, orderIndexKeys } from './order-reference';
 import { z } from 'zod';
 import {
   confirmationTokenId,
@@ -52,6 +53,11 @@ export const paymentAttemptSchema = z.strictObject({
 });
 export const orderSchema = z
   .strictObject({
+    displayOrderNumber: z.string().regex(orderReferencePattern).optional(),
+    GSI1PK: z.string().optional(),
+    GSI1SK: z.string().optional(),
+    GSI2PK: z.string().optional(),
+    GSI2SK: z.string().optional(),
     orderId: idSchema,
     cartId: idSchema,
     dropId: idSchema,
@@ -106,7 +112,15 @@ export const orderSchema = z
       o.subtotalCents ===
         o.items.reduce((n, i) => n + i.quantity * i.unitPriceCents, 0),
     'Invalid frozen totals',
-  );
+  )
+  .refine((o) => {
+    const keys = orderIndexKeys(o);
+    const values = Object.entries(keys);
+    return (
+      values.every(([k]) => o[k as keyof typeof keys] === undefined) ||
+      values.every(([k, v]) => o[k as keyof typeof keys] === v)
+    );
+  }, 'Invalid order index keys');
 export const attemptKey = (id: string) => ({
   PK: `PAYMENT_ATTEMPT#${idSchema.parse(id)}`,
   SK: 'META',

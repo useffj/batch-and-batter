@@ -117,7 +117,7 @@ async function setup(count = 1) {
 const fails = (code: string) => (e: unknown) =>
   (e as { code?: string })?.code === code;
 
-test('handoff freezes snapshots, owns inventory, creates eleven distinct atomic actions including submission ownership and three durable records', async () => {
+test('handoff freezes snapshots, owns inventory, creates twelve distinct atomic actions including submission ownership and three durable records', async () => {
   const { s, repo, request, created, cart, inventory } = await setup(12);
   const stock = structuredClone(
     [...s.rows].filter(([k]) => k.includes('|INVENTORY#')),
@@ -155,7 +155,7 @@ test('handoff freezes snapshots, owns inventory, creates eleven distinct atomic 
   assert.ok(s.row('operations', work.workflow));
   assert.equal(work.workflow.deadline, c.paymentStartedAt);
   const actions = s.transactions.at(-1)!;
-  assert.equal(actions.length, 11);
+  assert.equal(actions.length, 12);
   assert.deepEqual(
     actions.map((a) =>
       a.Put ? 'Put' : a.Delete ? 'Delete' : 'ConditionCheck',
@@ -168,6 +168,7 @@ test('handoff freezes snapshots, owns inventory, creates eleven distinct atomic 
       'Put',
       'Put',
       'Delete',
+      'Put',
       'Put',
       'Put',
       'Put',
@@ -910,4 +911,41 @@ test('local API rejects amount injection and does not log malicious error payloa
   } finally {
     console.info = original;
   }
+});
+
+test('public reference and both indexes are created atomically and retained on replay', async () => {
+  const { s, repo, request, cart } = await setup();
+  await repo.start(request);
+  const order = s.row('commerce', orderKey(cart().orderId!))!;
+  assert.match(
+    order.displayOrderNumber,
+    /^BB-[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{12}$/,
+  );
+  assert.equal(order.GSI1PK, 'PICKUP#' + order.pickup.date);
+  assert.equal(order.GSI2PK, 'DROP#' + order.dropId);
+  assert.equal(
+    s.row('commerce', {
+      PK: 'ORDER_REFERENCE#' + order.displayOrderNumber,
+      SK: 'META',
+    })!.orderId,
+    order.orderId,
+  );
+  const before = structuredClone([...s.rows]);
+  await repo.start(request);
+  assert.deepEqual([...s.rows], before);
+});
+test('reference collision aborts the entire payment handoff without rebasing or inventory changes', async () => {
+  const { s, repo, request, cart } = await setup();
+  const before = structuredClone([...s.rows]);
+  s.before = (actions) => {
+    const lookup = actions.at(-1)!.Put!.Item!;
+    s.put('commerce', { ...lookup, orderId: pid(999) });
+    s.before = undefined;
+  };
+  await assert.rejects(repo.start(request));
+  assert.equal(cart().status, 'ACTIVE');
+  assert.deepEqual(
+    [...s.rows].filter(([k]) => !k.includes('ORDER_REFERENCE#')),
+    before,
+  );
 });
