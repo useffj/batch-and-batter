@@ -18,8 +18,8 @@ await writeFile(
 import React, {useEffect, useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import {Products} from '/@fs/${web}src/components/admin/products.tsx';
-import {SyntheticProductMedia} from '/@fs/${web}src/components/admin/media-preview.tsx';
-import {PreviewMediaStore} from '/@fs/${web}src/lib/admin/media-preview.ts';
+import {ProductGallery} from '/@fs/${web}src/components/admin/gallery.tsx';
+import {mediaFixture} from '/@fs/${web}scripts/media-fixture.ts';
 import {AdminNavigation} from '/@fs/${web}src/components/admin/navigation.tsx';
 import {summaryOf} from '/@fs/${web}src/lib/admin/products.ts';
 import '/@fs/${web}src/app/globals.css';
@@ -33,12 +33,14 @@ let products = new URLSearchParams(location.search).has('empty') ? [] : [origina
 let calls=saved?.calls||0;const receipts=new Map(saved?.receipts||[]);let loseOnce=saved?.loseOnce??new URLSearchParams(location.search).has('lost');
 if(saved)products=saved.products;
 const persist=()=>{if(recoveryMode)sessionStorage.setItem(fixtureKey,JSON.stringify({products,calls,receipts:[...receipts],loseOnce}));};
+const galleryFixture=mediaFixture(sessionStorage);
 window.fetch=async(input,init={})=>{
  const url=new URL(String(input),location.origin);if(url.origin!==location.origin || !url.pathname.startsWith('/api/admin/')) throw new Error('Preview blocks all non-mocked requests');
  await new Promise(r=>setTimeout(r,150));
  const reply=(body,status=200)=>new Response(JSON.stringify(body),{status,headers:{'content-type':'application/json'}});
  if(url.pathname==='/api/admin/logout') return reply({revocationConfirmed:false});
  if(new URLSearchParams(location.search).has('error'))return reply({code:'UNAVAILABLE',message:'Synthetic service failure.'},503);
+ const media=await galleryFixture.handle(url,init);if(media)return media;
  const id=url.pathname.split('/')[4];const method=init.method||'GET';
  if(url.searchParams.has('creationKey'))return reply({creation:receipts.get(url.searchParams.get('creationKey'))?.product||null});
  if(method==='GET')return id?products.some(p=>p.productId===id)?reply({product:products.find(p=>p.productId===id)}):reply({code:'PRODUCT_NOT_FOUND',message:'Synthetic product missing.'},404):reply({products:products.map(summaryOf),nextCursor:null,loadedAt:new Date().toISOString()});
@@ -52,9 +54,6 @@ window.fetch=async(input,init={})=>{
  if(method==='PUT'&&(!previous||previous.updatedAt!==revision))return reply({code:'PRODUCT_CONFLICT',message:'Synthetic stale revision.'},409);
  const stamp=new Date().toISOString();const p={...fields,productId:id||'01K000000000000000'+String(++calls+10).padStart(8,'0'),createdAt:previous?.createdAt||stamp,updatedAt:stamp};products=[p,...products.filter(x=>x.productId!==p.productId)];if(method==='POST'){receipts.set(key,{hash,product:structuredClone(p)});if(loseOnce){loseOnce=false;persist();throw new Error('Synthetic lost response after commit');}}persist();return reply({product:p},method==='POST'?201:200);
 };
-const mediaStore=new PreviewMediaStore({decode:file=>createImageBitmap(file),create:file=>URL.createObjectURL(file),revoke:url=>URL.revokeObjectURL(url)});
-window.addEventListener('pagehide',()=>mediaStore.dispose(),{once:true});
-window.addEventListener('pageshow',event=>{if(event.persisted)location.reload();});
 function Preview() {
  const [section,setSection]=useState('products'),[visit,setVisit]=useState(0);
  useEffect(()=>{
@@ -71,7 +70,7 @@ function Preview() {
    document.addEventListener('click',navigate);
    return ()=>document.removeEventListener('click',navigate);
  },[]);
- return <><div style={{padding:'12px',background:'#ffedb6',fontFamily:'sans-serif'}} role="note"><strong>SYNTHETIC LOCAL PREVIEW</strong> — in-memory fixtures only. No authentication, AWS, or real business-data access. Sidebar navigation preserves this session; a full browser refresh resets fixtures unless explicit synthetic recovery mode is selected. {recoveryMode&&<strong>Recovery mode: synthetic fixtures persist in this tab only.</strong>} <a href="/?empty">Empty (reset)</a> · <a href="/?error">Error (reset)</a> · <a href="/?lost">Lost response (reset)</a> · <a href="/?recover&amp;lost">Reload recovery (synthetic only)</a> · <a href="/">Catalog</a></div>{section==='products'?<Products renderMedia={product=><SyntheticProductMedia key={product.productId} productId={product.productId} name={product.name} store={mediaStore}/>} catalogScope="synthetic-preview" key={visit} expiresAt={Date.now()+900000}/>:<div className="admin-shell"><AdminNavigation current="overview"/><main className="admin-main"><h1>Preview overview</h1><p>This preview demonstrates product management only. Use Products to return to your synthetic catalog. Changes remain in memory; explicit recovery mode also preserves synthetic fixtures across reloads in this tab.</p></main></div>}</>;
+ return <><aside aria-label="Synthetic media controls"><button onClick={()=>galleryFixture.conflict()}>Simulate next gallery conflict</button><button onClick={()=>galleryFixture.lost()}>Lose next gallery save response</button><button onClick={()=>galleryFixture.enable()}>Enable synthetic processing</button><button onClick={()=>galleryFixture.deny()}>Simulate unauthorized media</button></aside><div style={{padding:'12px',background:'#ffedb6',fontFamily:'sans-serif'}} role="note"><strong>SYNTHETIC LOCAL PREVIEW</strong> — in-memory fixtures only. No authentication, AWS, or real business-data access. Sidebar navigation preserves this session; media manifests and synthetic upload receipts persist in this tab; Product fixtures reset on refresh unless recovery mode is selected. {recoveryMode&&<strong>Recovery mode: synthetic fixtures persist in this tab only.</strong>} <a href="/?empty">Empty (reset)</a> · <a href="/?error">Error (reset)</a> · <a href="/?lost">Lost response (reset)</a> · <a href="/?recover&amp;lost">Reload recovery (synthetic only)</a> · <a href="/">Catalog</a></div>{section==='products'?<Products renderMedia={(product,onDirty)=><ProductGallery key={product.productId} productId={product.productId} recoveryScope="synthetic-preview-gallery" name={product.name} onDirty={onDirty} transfer={async()=>{await new Promise(r=>setTimeout(r,400));}}/>} catalogScope="synthetic-preview" key={visit} expiresAt={Date.now()+900000}/>:<div className="admin-shell"><AdminNavigation current="overview"/><main className="admin-main"><h1>Preview overview</h1><p>This preview demonstrates product management only. Use Products to return to your synthetic catalog. Changes remain in memory; explicit recovery mode also preserves synthetic fixtures across reloads in this tab.</p></main></div>}</>;
 }
 createRoot(document.getElementById('root')).render(<Preview/>);
 `,

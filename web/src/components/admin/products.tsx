@@ -11,6 +11,8 @@ import {
   useState,
   type ReactNode,
 } from 'react';
+import { ProductGallery } from './gallery';
+import { clearGalleryRecovery } from '../../lib/admin/gallery-upload';
 import { AdminNavigation } from './navigation';
 import { adminRequest, ClientFailure } from '../../lib/admin/client';
 import { productRequest, submissionGate } from '../../lib/admin/product-client';
@@ -36,7 +38,10 @@ export function Products({
 }: {
   expiresAt: number;
   catalogScope?: string;
-  renderMedia?: (product: CatalogProduct) => ReactNode;
+  renderMedia?: (
+    product: CatalogProduct,
+    onDirty: (dirty: boolean) => void,
+  ) => ReactNode;
 }) {
   const storageKey = catalogScope
     ? 'bb-product-create:' + catalogScope
@@ -91,7 +96,11 @@ export function Products({
     [notice, setNotice] = useState('');
   const controller = useRef<AbortController | null>(null),
     locked = useRef(false),
-    dirty = useRef(false);
+    dirty = useRef(false),
+    galleryDirty = useRef(false);
+  const onGalleryDirty = useCallback((value: boolean) => {
+    galleryDirty.current = value;
+  }, []);
   function failure(e: unknown) {
     if (e instanceof ClientFailure && [401, 403].includes(e.status)) {
       locked.current = true;
@@ -155,7 +164,11 @@ export function Products({
       if (e.persisted) window.location.reload();
     };
     const leave = (e: BeforeUnloadEvent) => {
-      if (dirty.current && !locked.current && Date.now() < expiresAt) {
+      if (
+        (dirty.current || galleryDirty.current) &&
+        !locked.current &&
+        Date.now() < expiresAt
+      ) {
         e.preventDefault();
         e.returnValue = '';
       }
@@ -172,7 +185,10 @@ export function Products({
     };
   }, [load, expiresAt]);
   function discard() {
-    return !dirty.current || window.confirm('Discard unsaved product changes?');
+    return (
+      !(dirty.current || galleryDirty.current) ||
+      window.confirm('Discard unsaved product or gallery changes?')
+    );
   }
   async function select(id?: string) {
     if (!discard()) return;
@@ -202,6 +218,11 @@ export function Products({
   }
   async function logout() {
     if (!discard()) return;
+    try {
+      clearGalleryRecovery(sessionStorage);
+    } catch {
+      /* New login context invalidates recovery. */
+    }
     dirty.current = false;
     locked.current = true;
     controller.current?.abort();
@@ -344,7 +365,21 @@ export function Products({
             }}
           />
         )}
-        {editing && editing !== 'new' && renderMedia?.(editing)}
+        {editing &&
+          editing !== 'new' &&
+          (renderMedia ? (
+            renderMedia(editing, onGalleryDirty)
+          ) : (
+            <ProductGallery
+              key={editing.productId + ':' + expiresAt}
+              recoveryScope={
+                catalogScope ? catalogScope + ':' + expiresAt : undefined
+              }
+              productId={editing.productId}
+              name={editing.name}
+              onDirty={onGalleryDirty}
+            />
+          ))}
         {!busy && !error && loaded && !products.length && (
           <section className="admin-card">
             <h2>{cursor ? 'No products on this page' : 'No cookies yet'}</h2>
@@ -570,7 +605,7 @@ export function ProductEditor({
       </h2>
       <p className="admin-muted">
         {changed ? 'Unsaved changes' : 'No unsaved changes'} · Price set per
-        Drop. Images will be managed in a later milestone.
+        Drop. Gallery changes are saved separately below.
       </p>
       {product && (
         <details>
