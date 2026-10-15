@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "account": "302154194958",
+  "region": "us-east-2",
+  "functions": [
+    {
+      "logicalId": "ApplicationApi5D63FF39",
+      "handler": "handler.handler",
+      "bucket": "cdk-hnb659fds-assets-302154194958-us-east-2",
+      "key": "admin-release/1A-DEV8B/c605ed5f-35c8-4c4e-80f0-70fe79d8b21a/api-3301a523d92ec3c48246ec922226042f678cb1353de01b31aca2700581a2697a.zip",
+      "sha256": "3301a523d92ec3c48246ec922226042f678cb1353de01b31aca2700581a2697a",
+      "observedVersion": "vx_F27aagjzRjW4oY0isVqx3TXahxgxB",
+      "provenance": "1B-2I-A read-only verification: deployed CloudFormation reference and S3 ZIP hash matched Lambda CodeSha256; 2026-10-15",
+      "status": "accepted-deployed-reference"
+    },
+    {
+      "logicalId": "PaymentWorkerA754B793",
+      "handler": "payment-worker-handler.handler",
+      "bucket": "cdk-hnb659fds-assets-302154194958-us-east-2",
+      "key": "authentication-wait/57a4c98fd6e773bd4b31aa53e248b0151376a85ea7640bb759f613ce5f4f5205.zip",
+      "sha256": "57a4c98fd6e773bd4b31aa53e248b0151376a85ea7640bb759f613ce5f4f5205",
+      "observedVersion": "WyRQKw.1MAJHiVoBuYQid7djd74fjK3X",
+      "provenance": "1B-2I-A read-only verification: deployed CloudFormation reference and S3 ZIP hash matched Lambda CodeSha256; 2026-10-15",
+      "status": "accepted-deployed-reference"
+    },
+    {
+      "logicalId": "StripeWebhook04C354F4",
+      "handler": "stripe-webhook-handler.handler",
+      "bucket": "cdk-hnb659fds-assets-302154194958-us-east-2",
+      "key": "dev-ledger-reviewed/6697aafd6f62df7224ee22845578f44be908f430ed53bee74fce4f6cf690997c.zip",
+      "sha256": "6697aafd6f62df7224ee22845578f44be908f430ed53bee74fce4f6cf690997c",
+      "observedVersion": "gbgz8yY4oWoNHvrW0MKkyoss6V3CiyLo",
+      "provenance": "1B-2I-A read-only verification: deployed CloudFormation reference and S3 ZIP hash matched Lambda CodeSha256; 2026-10-15",
+      "status": "accepted-deployed-reference"
+    },
+    {
+      "logicalId": "CartExpiryWorkerD6838A04",
+      "handler": "expiry-worker-handler.handler",
+      "bucket": "cdk-hnb659fds-assets-302154194958-us-east-2",
+      "key": "dev-ledger-reviewed/6697aafd6f62df7224ee22845578f44be908f430ed53bee74fce4f6cf690997c.zip",
+      "sha256": "6697aafd6f62df7224ee22845578f44be908f430ed53bee74fce4f6cf690997c",
+      "observedVersion": "gbgz8yY4oWoNHvrW0MKkyoss6V3CiyLo",
+      "provenance": "1B-2I-A read-only verification: deployed CloudFormation reference and S3 ZIP hash matched Lambda CodeSha256; 2026-10-15",
+      "status": "accepted-deployed-reference"
+    },
+    {
+      "logicalId": "CartExpiryReconciler320F0954",
+      "handler": "expiry-reconciler-handler.handler",
+      "bucket": "cdk-hnb659fds-assets-302154194958-us-east-2",
+      "key": "dev-ledger-reviewed/6697aafd6f62df7224ee22845578f44be908f430ed53bee74fce4f6cf690997c.zip",
+      "sha256": "6697aafd6f62df7224ee22845578f44be908f430ed53bee74fce4f6cf690997c",
+      "observedVersion": "gbgz8yY4oWoNHvrW0MKkyoss6V3CiyLo",
+      "provenance": "1B-2I-A read-only verification: deployed CloudFormation reference and S3 ZIP hash matched Lambda CodeSha256; 2026-10-15",
+      "status": "accepted-deployed-reference"
+    }
+  ]
+}

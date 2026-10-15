@@ -10,7 +10,7 @@
   "scripts": {
     "build": "npm --prefix ../backend run build && tsc",
     "typecheck": "tsc --noEmit",
-    "test": "npm run build && node --test dist/infra/test/*.test.js",
+    "test": "npm --prefix ../backend run build:api && npm run build && node --test dist/infra/test/*.test.js",
     "synth": "cdk synth --lookups=false",
     "deploy:dev": "node scripts/deploy-dev.cjs"
   },

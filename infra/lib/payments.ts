@@ -1,4 +1,4 @@
-import * as path from 'node:path';
+import { artifactCode } from './artifacts';
 import {
   ArnFormat,
   Duration,
@@ -122,8 +122,12 @@ export function addPayments(
       functionName: `${prefix}-${suffix}`,
       runtime: lambda.Runtime.NODEJS_24_X,
       handler: `${suffix}-handler.handler`,
-      code: lambda.Code.fromAsset(
-        path.join(__dirname, '../../../../backend/dist/lambda'),
+      code: artifactCode(
+        stack,
+        id === 'PaymentWorker'
+          ? 'PaymentWorkerA754B793'
+          : 'StripeWebhook04C354F4',
+        `${suffix}-handler.handler`,
       ),
       memorySize: 256,
       timeout: Duration.seconds(timeout),
