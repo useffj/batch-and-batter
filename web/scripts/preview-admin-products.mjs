@@ -18,6 +18,8 @@ await writeFile(
 import React, {useEffect, useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import {Products} from '/@fs/${web}src/components/admin/products.tsx';
+import {SyntheticProductMedia} from '/@fs/${web}src/components/admin/media-preview.tsx';
+import {PreviewMediaStore} from '/@fs/${web}src/lib/admin/media-preview.ts';
 import {AdminNavigation} from '/@fs/${web}src/components/admin/navigation.tsx';
 import {summaryOf} from '/@fs/${web}src/lib/admin/products.ts';
 import '/@fs/${web}src/app/globals.css';
@@ -50,6 +52,9 @@ window.fetch=async(input,init={})=>{
  if(method==='PUT'&&(!previous||previous.updatedAt!==revision))return reply({code:'PRODUCT_CONFLICT',message:'Synthetic stale revision.'},409);
  const stamp=new Date().toISOString();const p={...fields,productId:id||'01K000000000000000'+String(++calls+10).padStart(8,'0'),createdAt:previous?.createdAt||stamp,updatedAt:stamp};products=[p,...products.filter(x=>x.productId!==p.productId)];if(method==='POST'){receipts.set(key,{hash,product:structuredClone(p)});if(loseOnce){loseOnce=false;persist();throw new Error('Synthetic lost response after commit');}}persist();return reply({product:p},method==='POST'?201:200);
 };
+const mediaStore=new PreviewMediaStore({decode:file=>createImageBitmap(file),create:file=>URL.createObjectURL(file),revoke:url=>URL.revokeObjectURL(url)});
+window.addEventListener('pagehide',()=>mediaStore.dispose(),{once:true});
+window.addEventListener('pageshow',event=>{if(event.persisted)location.reload();});
 function Preview() {
  const [section,setSection]=useState('products'),[visit,setVisit]=useState(0);
  useEffect(()=>{
@@ -66,7 +71,7 @@ function Preview() {
    document.addEventListener('click',navigate);
    return ()=>document.removeEventListener('click',navigate);
  },[]);
- return <><div style={{padding:'12px',background:'#ffedb6',fontFamily:'sans-serif'}} role="note"><strong>SYNTHETIC LOCAL PREVIEW</strong> — in-memory fixtures only. No authentication, AWS, or real business-data access. Sidebar navigation preserves this session; a full browser refresh resets fixtures unless explicit synthetic recovery mode is selected. {recoveryMode&&<strong>Recovery mode: synthetic fixtures persist in this tab only.</strong>} <a href="/?empty">Empty (reset)</a> · <a href="/?error">Error (reset)</a> · <a href="/?lost">Lost response (reset)</a> · <a href="/?recover&amp;lost">Reload recovery (synthetic only)</a> · <a href="/">Catalog</a></div>{section==='products'?<Products catalogScope="synthetic-preview" key={visit} expiresAt={Date.now()+900000}/>:<div className="admin-shell"><AdminNavigation current="overview"/><main className="admin-main"><h1>Preview overview</h1><p>This preview demonstrates product management only. Use Products to return to your synthetic catalog. Changes remain in memory; explicit recovery mode also preserves synthetic fixtures across reloads in this tab.</p></main></div>}</>;
+ return <><div style={{padding:'12px',background:'#ffedb6',fontFamily:'sans-serif'}} role="note"><strong>SYNTHETIC LOCAL PREVIEW</strong> — in-memory fixtures only. No authentication, AWS, or real business-data access. Sidebar navigation preserves this session; a full browser refresh resets fixtures unless explicit synthetic recovery mode is selected. {recoveryMode&&<strong>Recovery mode: synthetic fixtures persist in this tab only.</strong>} <a href="/?empty">Empty (reset)</a> · <a href="/?error">Error (reset)</a> · <a href="/?lost">Lost response (reset)</a> · <a href="/?recover&amp;lost">Reload recovery (synthetic only)</a> · <a href="/">Catalog</a></div>{section==='products'?<Products renderMedia={product=><SyntheticProductMedia key={product.productId} productId={product.productId} name={product.name} store={mediaStore}/>} catalogScope="synthetic-preview" key={visit} expiresAt={Date.now()+900000}/>:<div className="admin-shell"><AdminNavigation current="overview"/><main className="admin-main"><h1>Preview overview</h1><p>This preview demonstrates product management only. Use Products to return to your synthetic catalog. Changes remain in memory; explicit recovery mode also preserves synthetic fixtures across reloads in this tab.</p></main></div>}</>;
 }
 createRoot(document.getElementById('root')).render(<Preview/>);
 `,
