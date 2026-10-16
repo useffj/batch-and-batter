@@ -809,3 +809,209 @@ test('isolated artifact uncertain write recovers the original typed operation wi
     f.cleanup();
   }
 });
+
+function liveFixture(version = 'original-version') {
+  const f = fixture(version);
+  const root = resolve(__dirname, '../../../..');
+  const evidence = JSON.parse(
+    readFileSync(
+      join(root, 'backend/dist/isolated-catalog-release/evidence.json'),
+      'utf8',
+    ),
+  );
+  Object.assign(f.input, api.ISOLATED_APPROVAL, { buildEvidence: evidence });
+  const deps: any = f.deps;
+  deps.bytes = api.loadCandidate(f.input, root);
+  deps.mode = 'approved-1n-d';
+  deps.publisherArn = api.ROLE;
+  deps.adapters.kind = 'verified-publisher-role';
+  deps.adapters.s3.kind = 'aws-dormant';
+  const key = `api-releases/${f.input.operationId}/${f.input.sha256}.zip`;
+  Object.assign(f.config, {
+    key,
+    identityPolicy: api.materializeIdentityPolicy(key),
+    approvalReference: f.input.approvalReference,
+    sha256: f.input.sha256,
+    sourceCommit: f.input.sourceCommit,
+  });
+  return { ...f, deps };
+}
+for (const mode of [
+  '',
+  'lost',
+  '409',
+  '412',
+  'corrupt',
+  'malformed',
+  'crash',
+]) {
+  test(`approved live operation ${mode || 'success'} preserves identity and never repeats PUT`, async () => {
+    const f = liveFixture(mode === 'malformed' ? 'null' : 'original-version');
+    try {
+      if (['lost', '409', '412'].includes(mode)) f.state.mode = mode;
+      if (mode === 'corrupt') f.state.corrupt = true;
+      if (mode === 'crash') {
+        const save = f.deps.journal.save;
+        let once = true;
+        f.deps.journal.save = (record: any) => {
+          if (record.state === 'WRITTEN' && once) {
+            once = false;
+            throw Error('simulated process failure');
+          }
+          save(record);
+        };
+      }
+      if (mode)
+        await assert.rejects(
+          api.publishApprovedIsolatedCatalog(f.input, f.deps),
+        );
+      else {
+        const receipt = await api.publishApprovedIsolatedCatalog(
+          f.input,
+          f.deps,
+        );
+        assert.equal(receipt.simulated, false);
+        assert.equal(receipt.state, 'VERIFIED');
+        assert.equal(receipt.versionId, 'original-version');
+      }
+      // Reopen journal as after restart. No alternate operation or second PUT.
+      f.deps.journal = api.createJournal(f.directory);
+      if (['', 'lost', 'crash'].includes(mode)) {
+        const receipt = await api.publishApprovedIsolatedCatalog(
+          f.input,
+          f.deps,
+        );
+        assert.equal(receipt.state, 'VERIFIED');
+        assert.equal(receipt.simulated, false);
+      } else
+        await assert.rejects(
+          api.publishApprovedIsolatedCatalog(f.input, f.deps),
+        );
+      assert.equal(f.state.puts, 1);
+      await assert.rejects(
+        api.publish(f.input, {
+          ...f.deps,
+          mode: 'mock-only',
+          adapters: { ...f.deps.adapters, kind: 'mock' },
+        }),
+        /INVALID_RECEIPT/,
+      );
+      assert.equal(f.state.puts, 1);
+    } finally {
+      f.cleanup();
+    }
+  });
+}
+test('live publication rejects alternate identity, mock receipts, credentials and transport substitutions', async () => {
+  const f = liveFixture();
+  try {
+    for (const change of [
+      { operationId: api.newOperationId() },
+      { sha256: 'a'.repeat(64) },
+      { artifactType: 'api' },
+      { sourceCommit: 'a'.repeat(40) },
+      { path: '/tmp/any.zip' },
+    ])
+      await assert.rejects(
+        api.publishApprovedIsolatedCatalog({ ...f.input, ...change }, f.deps),
+        /APPROVED_ARTIFACT_REQUIRED/,
+      );
+    await assert.rejects(
+      api.publishApprovedIsolatedCatalog(f.input, {
+        ...f.deps,
+        publisherArn: 'wrong',
+      }),
+      /EXPLICIT_PUBLISHER_ROLE_REQUIRED/,
+    );
+    await assert.rejects(
+      api.publishApprovedIsolatedCatalog(f.input, {
+        ...f.deps,
+        adapters: { ...f.deps.adapters, kind: 'mock' },
+      }),
+      /EXPLICIT_PUBLISHER_ROLE_REQUIRED/,
+    );
+    await assert.rejects(
+      api.publish(f.input, f.deps),
+      /LIVE_PUBLISHING_DISABLED/,
+    );
+    assert.equal(f.state.puts, 0);
+    await api.publish(f.input, {
+      ...f.deps,
+      mode: 'mock-only',
+      adapters: { ...f.deps.adapters, kind: 'mock' },
+    });
+    await assert.rejects(
+      api.publishApprovedIsolatedCatalog(f.input, f.deps),
+      /INVALID_RECEIPT/,
+    );
+    assert.equal(f.state.puts, 1);
+  } finally {
+    f.cleanup();
+  }
+});
+test('live prepared operation rejects an existing key instead of claiming it', async () => {
+  const f = liveFixture();
+  try {
+    await api.publishApprovedIsolatedCatalog(f.input, f.deps);
+    const record = f.deps.journal.load(f.input.operationId);
+    record.state = 'PREPARED';
+    record.versionId = null;
+    f.deps.journal.save(record);
+    await assert.rejects(
+      api.publishApprovedIsolatedCatalog(f.input, f.deps),
+      /EXISTING_KEY_COLLISION/,
+    );
+    assert.equal(f.state.puts, 1);
+  } finally {
+    f.cleanup();
+  }
+});
+test('live entrypoint is inert on import and rejects invocation without explicit approval', () => {
+  const file = resolve(
+    __dirname,
+    '../../../scripts/publish-isolated-catalog-1n-d.cjs',
+  );
+  const imported = spawnSync(
+    process.execPath,
+    ['-e', `require(${JSON.stringify(file)})`],
+    { encoding: 'utf8', env: { PATH: process.env.PATH } },
+  );
+  assert.equal(imported.status, 0);
+  assert.equal(imported.stdout, '');
+  assert.equal(imported.stderr, '');
+  const invoked = spawnSync(process.execPath, [file], {
+    encoding: 'utf8',
+    env: { PATH: process.env.PATH },
+  });
+  assert.equal(invoked.status, 1);
+  assert.match(invoked.stderr, /PUBLICATION_STOPPED/);
+});
+
+test('real publication journal enforces owner-only directory and entry permissions', () => {
+  const { chmodSync, realpathSync } = require('node:fs');
+  const entry = require(
+    resolve(__dirname, '../../../scripts/publish-isolated-catalog-1n-d.cjs'),
+  );
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'private-publication-')));
+  try {
+    chmodSync(dir, 0o755);
+    assert.throws(
+      () => entry.ownerOnlyJournal(dir),
+      /OWNER_ONLY_JOURNAL_REQUIRED/,
+    );
+    chmodSync(dir, 0o700);
+    writeFileSync(join(dir, 'unexpected.json'), '{}', { mode: 0o644 });
+    assert.throws(() => entry.ownerOnlyJournal(dir), /UNSAFE_JOURNAL_ENTRY/);
+    rmSync(join(dir, 'unexpected.json'));
+    const journal = entry.ownerOnlyJournal(dir);
+    const release = journal.acquire(api.ISOLATED_APPROVAL.operationId);
+    assert.throws(
+      () =>
+        entry.ownerOnlyJournal(dir).acquire(api.ISOLATED_APPROVAL.operationId),
+      /EEXIST/,
+    );
+    release();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

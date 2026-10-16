@@ -1,5 +1,5 @@
 // Dormant adapter: no client construction or credential discovery on import.
-// The existing publisher CLI/state machine remains mock-only.
+// The generic publisher remains mock-only; only the fixed 1N-D entrypoint opts in.
 const { createHash } = require('node:crypto');
 const { Readable } = require('node:stream');
 const {
