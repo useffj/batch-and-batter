@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { sameOrigin } from '../cart/relay';
 import { publicEndpoint } from '../storefront/client';
 export async function boundedBody(request: Request, max = 2048) {
   const reader = request.body?.getReader();
@@ -46,9 +47,7 @@ export async function waitlistRelay(
       return output('Unsupported request.', 405);
     if (
       url.search ||
-      request.headers.get('origin') !== url.origin ||
-      (request.headers.has('sec-fetch-site') &&
-        request.headers.get('sec-fetch-site') !== 'same-origin') ||
+      !sameOrigin(request) ||
       request.headers.get('content-type')?.split(';')[0] !== 'application/json'
     )
       return output('Request not allowed.', 403);

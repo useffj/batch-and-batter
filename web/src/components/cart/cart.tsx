@@ -84,7 +84,12 @@ export function CartPanel({
   const editable =
     cart?.status === 'ACTIVE' && !snapshot?.expired && seconds > 0 && !disabled;
   return (
-    <section className="cart" aria-labelledby="cart-heading" aria-busy={busy}>
+    <section
+      id="cart"
+      className="cart"
+      aria-labelledby="cart-heading"
+      aria-busy={busy}
+    >
       <h2 id="cart-heading" tabIndex={-1} ref={heading}>
         Your Cart
       </h2>

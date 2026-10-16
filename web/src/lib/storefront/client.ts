@@ -14,6 +14,9 @@ export interface StorefrontDrop {
   products: {
     id: string;
     name: string;
+    description: string;
+    ingredients: string[];
+    allergens: string[];
     priceCents: number;
     available: number;
     cookieUnits: number;
@@ -98,6 +101,9 @@ export function parseDropResponse(value: unknown): StorefrontDrop | null {
         id: identifier(p.id),
         cookieUnits: positive(p.cookieUnits),
         name: text(p.name, 300),
+        description: text(p.description, 4000, true),
+        ingredients: list(p.ingredients).map((value) => text(value)),
+        allergens: list(p.allergens).map((value) => text(value)),
         priceCents: integer(p.priceCents),
         available,
       };

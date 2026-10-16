@@ -18,10 +18,19 @@ function clock(value: string) {
 export function Storefront({ result }: { result: StorefrontResult }) {
   const drop = result.kind === 'ready' ? result.drop : null;
   return (
-    <main>
+    <main className="storefront">
       <header>
         <h1>Batch &amp; Batter</h1>
         <p>Cookie Co.</p>
+        <nav aria-label="Store navigation">
+          {drop && (
+            <>
+              <a href="#cookies">Cookies</a>
+              <a href="#pickup">Pickup</a>
+            </>
+          )}
+          <a href="#cart">Your cart</a>
+        </nav>
       </header>
       <CartProvider drop={drop}>
         {result.kind !== 'ready' ? (
@@ -47,13 +56,16 @@ export function Storefront({ result }: { result: StorefrontResult }) {
             />
             <h2 id="no-drop-heading">Fresh cookies are in the works.</h2>
             <p>
-              We’re getting the kitchen ready for our first drop. Check back
-              soon for what’s baking.
+              We’re getting the kitchen ready for our next drop. Check back soon
+              for what’s baking.
             </p>
           </section>
         ) : (
           <>
-            <section aria-labelledby="drop-name">
+            <section className="drop-intro" aria-labelledby="drop-name">
+              <p className="eyebrow">
+                Small batches. Something worth waiting for.
+              </p>
               <h2 id="drop-name">{drop.name}</h2>
               <p className="drop-status">{labels[drop.status]}</p>
               <p>{drop.description}</p>
@@ -85,29 +97,61 @@ export function Storefront({ result }: { result: StorefrontResult }) {
               ) : (
                 <ul className="products">
                   {drop.products.map((p, index) => (
-                    <li key={index}>
-                      <h3>{p.name}</h3>
-                      {p.available === 0 && drop.status !== 'CLOSED' && (
-                        <JoinWaitlist
-                          dropId={drop.id}
-                          productId={p.id}
-                          name={p.name}
-                        />
-                      )}
-                      {drop.status === 'OPEN' && p.available > 0 && (
-                        <AddToCart productId={p.id} name={p.name} />
-                      )}
-                      <p>
-                        {new Intl.NumberFormat('en-US', {
-                          style: 'currency',
-                          currency: 'USD',
-                        }).format(p.priceCents / 100)}
-                      </p>
-                      <p>
-                        {p.available === 0
-                          ? 'None currently available'
-                          : `${p.available} available`}
-                      </p>
+                    <li key={index} className="cookie-card">
+                      <div
+                        className="cookie-media"
+                        role="img"
+                        aria-label={`Photography unavailable for ${p.name}`}
+                      >
+                        <span aria-hidden="true">B&amp;B</span>
+                        <small>Photography unavailable</small>
+                      </div>
+                      <div className="cookie-content">
+                        <h3>{p.name}</h3>
+                        <p className="cookie-description">
+                          {p.description || 'Ask us about this cookie.'}
+                        </p>
+                        <details>
+                          <summary>Ingredients &amp; allergens</summary>
+                          <p>
+                            <strong>Ingredients: </strong>
+                            {p.ingredients.length
+                              ? p.ingredients.join(', ')
+                              : 'Not listed.'}
+                          </p>
+                          <p>
+                            <strong>Allergens: </strong>
+                            {p.allergens.length
+                              ? p.allergens.join(', ')
+                              : 'No allergen information listed.'}
+                          </p>
+                          <p>
+                            Have a food allergy? Contact the bakery before
+                            ordering.
+                          </p>
+                        </details>
+                        <p>
+                          {new Intl.NumberFormat('en-US', {
+                            style: 'currency',
+                            currency: 'USD',
+                          }).format(p.priceCents / 100)}
+                        </p>
+                        <p>
+                          {p.available === 0
+                            ? 'None currently available'
+                            : `${p.available} available`}
+                        </p>
+                        {p.available === 0 && drop.status !== 'CLOSED' && (
+                          <JoinWaitlist
+                            dropId={drop.id}
+                            productId={p.id}
+                            name={p.name}
+                          />
+                        )}
+                        {drop.status === 'OPEN' && p.available > 0 && (
+                          <AddToCart productId={p.id} name={p.name} />
+                        )}
+                      </div>
                     </li>
                   ))}
                 </ul>
@@ -136,7 +180,8 @@ export function Storefront({ result }: { result: StorefrontResult }) {
               )}
             </section>
             <p>
-              Reserve your cookies in a Cart. Online payment is not enabled yet.
+              Cart reservations are confirmed by the store. Checkout will
+              confirm whether online payment is available.
             </p>
             <a href="/">Reload Drop information</a>
           </>

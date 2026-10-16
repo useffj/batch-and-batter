@@ -289,7 +289,8 @@ export function Checkout({
         </>
       )}
       {snapshot &&
-      (canPay || p?.status === 'action_required') &&
+      ((canPay && snapshot.paymentSubmissionAllowed === true) ||
+        p?.status === 'action_required') &&
       publishableKey &&
       (snapshot.summary || p?.status === 'action_required') ? (
         <Elements
@@ -322,7 +323,16 @@ export function Checkout({
           />
         </Elements>
       ) : (
-        snapshot && !p && <CheckoutSummary snapshot={snapshot} pickup="" />
+        snapshot &&
+        !p &&
+        (snapshot.cart?.status === 'ACTIVE' &&
+        seconds > 0 &&
+        snapshot.drop?.status === 'OPEN' &&
+        snapshot.summary ? (
+          <CheckoutReview snapshot={snapshot} />
+        ) : (
+          <CheckoutSummary snapshot={snapshot} pickup="" />
+        ))
       )}
       {p?.status === 'paid' && (
         <p>
@@ -378,8 +388,7 @@ export function PaymentForm({
   });
   const [pickup, setPickup] = useState(''),
     [ready, setReady] = useState(false),
-    [loadError, setLoadError] = useState(false),
-    [phoneError, setPhoneError] = useState('');
+    [loadError, setLoadError] = useState(false);
   useEffect(() => {
     if (stripe) {
       setLoadError(false);
@@ -388,27 +397,6 @@ export function PaymentForm({
     const timeout = setTimeout(() => setLoadError(true), 10000);
     return () => clearTimeout(timeout);
   }, [stripe]);
-  const updatePhone = (input: HTMLInputElement, value: string) => {
-    try {
-      const national = phoneEntry(value);
-      input.value = national;
-      setContact({ ...contact, phone: national });
-      let message = '';
-      try {
-        normalizeUSPhone(national);
-      } catch (error) {
-        message = (error as Error).message;
-      }
-      input.setCustomValidity(message);
-      setPhoneError(message);
-    } catch (error) {
-      // Rejected edits/pastes never become accepted phone content.
-      input.value = contact.phone;
-      const message = (error as Error).message;
-      input.setCustomValidity(message);
-      setPhoneError(message);
-    }
-  };
   const submissionAllowed = snapshot.paymentSubmissionAllowed === true;
   const sending = useRef(false);
   const valid = () => !!form.current?.reportValidity();
@@ -462,108 +450,14 @@ export function PaymentForm({
         aria-label="Customer checkout"
       >
         {/* Background status reads must not remove keyboard focus from fields. */}
-        <fieldset disabled={submitting}>
-          <legend>Contact and pickup</legend>
-          <label htmlFor="checkout-name">Name</label>
-          <input
-            id="checkout-name"
-            autoComplete="name"
-            required
-            maxLength={200}
-            value={contact.name}
-            onChange={(e) => setContact({ ...contact, name: e.target.value })}
-            pattern=".*\S.*"
-          />
-          <label htmlFor="checkout-email">Email</label>
-          <input
-            id="checkout-email"
-            type="email"
-            autoComplete="email"
-            required
-            maxLength={254}
-            value={contact.email}
-            onChange={(e) => {
-              e.target.setCustomValidity(
-                EMAIL.test(e.target.value)
-                  ? ''
-                  : 'Enter a valid email address.',
-              );
-              setContact({ ...contact, email: e.target.value });
-            }}
-          />
-          <label htmlFor="checkout-phone">
-            Mobile phone — United States (+1)
-          </label>
-          <div className="checkout-phone-entry">
-            <span aria-hidden="true">+1</span>
-            <input
-              id="checkout-phone"
-              type="tel"
-              inputMode="numeric"
-              autoComplete="tel-national"
-              required
-              pattern="[2-9][0-9]{2}[2-9][0-9]{6}"
-              aria-describedby="phone-help"
-              aria-invalid={phoneError ? true : undefined}
-              value={contact.phone}
-              onChange={(e) =>
-                updatePhone(e.currentTarget, e.currentTarget.value)
-              }
-              onPaste={(e) => {
-                e.preventDefault();
-                const input = e.currentTarget;
-                const pasted = e.clipboardData.getData('text');
-                const value = /^\d+$/.test(pasted)
-                  ? input.value.slice(0, input.selectionStart ?? 0) +
-                    pasted +
-                    input.value.slice(input.selectionEnd ?? input.value.length)
-                  : pasted;
-                updatePhone(input, value);
-              }}
-            />
-          </div>
-          <p id="phone-help" aria-live="polite">
-            {phoneError || PHONE_HELP}
-          </p>
-          <label htmlFor="checkout-pickup">Pickup date</label>
-          <select
-            id="checkout-pickup"
-            required
-            value={pickup}
-            onChange={(e) => setPickup(e.target.value)}
-          >
-            <option value="">Choose a pickup date</option>
-            {snapshot.drop?.pickupDates
-              .filter((p) => pickupAllowed(p, snapshot.serverNow))
-              .map((p) => (
-                <option key={p.date} value={p.date}>
-                  {p.date}
-                </option>
-              ))}
-          </select>
-          {snapshot.drop?.pickupDates
-            .filter((p) => p.date === pickup)
-            .map((p) => (
-              <p key={p.date}>
-                {p.startTime}–{p.endTime} ({p.timezone})<br />
-                {snapshot.drop?.pickupLocation}
-              </p>
-            ))}
-          <label className="checkout-consent">
-            <input
-              type="checkbox"
-              checked={contact.smsTransactionalConsent}
-              onChange={(e) =>
-                setContact({
-                  ...contact,
-                  smsTransactionalConsent: e.target.checked,
-                })
-              }
-            />
-            I agree to receive transactional text messages about this order.
-            Optional.
-          </label>
-        </fieldset>
+        <ContactPickupFields
+          snapshot={snapshot}
+          contact={contact}
+          setContact={setContact}
+          pickup={pickup}
+          setPickup={setPickup}
+          disabled={submitting}
+        />
         <h3>Payment</h3>
         {loadError && (
           <p role="alert">
@@ -631,6 +525,176 @@ export function PaymentForm({
         )}
         <p>Payment details are entered securely with Stripe.</p>
       </form>
+      <CheckoutSummary snapshot={snapshot} pickup={pickup} />
+    </div>
+  );
+}
+
+export function ContactPickupFields({
+  snapshot,
+  contact,
+  setContact,
+  pickup,
+  setPickup,
+  disabled = false,
+}: {
+  snapshot: CheckoutSnapshot;
+  contact: Customer;
+  setContact: (value: Customer) => void;
+  pickup: string;
+  setPickup: (value: string) => void;
+  disabled?: boolean;
+}) {
+  const [phoneError, setPhoneError] = useState('');
+  const updatePhone = (input: HTMLInputElement, value: string) => {
+    try {
+      const national = phoneEntry(value);
+      input.value = national;
+      setContact({ ...contact, phone: national });
+      let message = '';
+      try {
+        normalizeUSPhone(national);
+      } catch (error) {
+        message = (error as Error).message;
+      }
+      input.setCustomValidity(message);
+      setPhoneError(message);
+    } catch (error) {
+      // Rejected edits/pastes never become accepted phone content.
+      input.value = contact.phone;
+      const message = (error as Error).message;
+      input.setCustomValidity(message);
+      setPhoneError(message);
+    }
+  };
+  return (
+    <fieldset disabled={disabled}>
+      <legend>Contact and pickup</legend>
+      <label htmlFor="checkout-name">Name</label>
+      <input
+        id="checkout-name"
+        autoComplete="name"
+        required
+        maxLength={200}
+        value={contact.name}
+        onChange={(e) => setContact({ ...contact, name: e.target.value })}
+        pattern=".*\S.*"
+      />
+      <label htmlFor="checkout-email">Email</label>
+      <input
+        id="checkout-email"
+        type="email"
+        autoComplete="email"
+        required
+        maxLength={254}
+        value={contact.email}
+        onChange={(e) => {
+          e.target.setCustomValidity(
+            EMAIL.test(e.target.value) ? '' : 'Enter a valid email address.',
+          );
+          setContact({ ...contact, email: e.target.value });
+        }}
+      />
+      <label htmlFor="checkout-phone">Mobile phone — United States (+1)</label>
+      <div className="checkout-phone-entry">
+        <span aria-hidden="true">+1</span>
+        <input
+          id="checkout-phone"
+          type="tel"
+          inputMode="numeric"
+          autoComplete="tel-national"
+          required
+          pattern="[2-9][0-9]{2}[2-9][0-9]{6}"
+          aria-describedby="phone-help"
+          aria-invalid={phoneError ? true : undefined}
+          value={contact.phone}
+          onChange={(e) => updatePhone(e.currentTarget, e.currentTarget.value)}
+          onPaste={(e) => {
+            e.preventDefault();
+            const input = e.currentTarget;
+            const pasted = e.clipboardData.getData('text');
+            const value = /^\d+$/.test(pasted)
+              ? input.value.slice(0, input.selectionStart ?? 0) +
+                pasted +
+                input.value.slice(input.selectionEnd ?? input.value.length)
+              : pasted;
+            updatePhone(input, value);
+          }}
+        />
+      </div>
+      <p id="phone-help" aria-live="polite">
+        {phoneError || PHONE_HELP}
+      </p>
+      <label htmlFor="checkout-pickup">Pickup date</label>
+      <select
+        id="checkout-pickup"
+        required
+        value={pickup}
+        onChange={(e) => setPickup(e.target.value)}
+      >
+        <option value="">Choose a pickup date</option>
+        {snapshot.drop?.pickupDates
+          .filter((p) => pickupAllowed(p, snapshot.serverNow))
+          .map((p) => (
+            <option key={p.date} value={p.date}>
+              {p.date}
+            </option>
+          ))}
+      </select>
+      {snapshot.drop?.pickupDates
+        .filter((p) => p.date === pickup)
+        .map((p) => (
+          <p key={p.date}>
+            {p.startTime}–{p.endTime} ({p.timezone})<br />
+            {snapshot.drop?.pickupLocation}
+          </p>
+        ))}
+      <label className="checkout-consent">
+        <input
+          type="checkbox"
+          checked={contact.smsTransactionalConsent}
+          onChange={(e) =>
+            setContact({
+              ...contact,
+              smsTransactionalConsent: e.target.checked,
+            })
+          }
+        />
+        I agree to receive transactional text messages about this order.
+        Optional.
+      </label>
+    </fieldset>
+  );
+}
+
+export function CheckoutReview({ snapshot }: { snapshot: CheckoutSnapshot }) {
+  const [contact, setContact] = useState<Customer>({
+    name: '',
+    email: '',
+    phone: '',
+    smsTransactionalConsent: false,
+  });
+  const [pickup, setPickup] = useState('');
+  return (
+    <div className="checkout-grid">
+      <section aria-label="Checkout information review">
+        <p>
+          You can review contact and pickup details here. Nothing is submitted
+          or saved, and no order is placed while payment is unavailable.
+        </p>
+        <ContactPickupFields
+          snapshot={snapshot}
+          contact={contact}
+          setContact={setContact}
+          pickup={pickup}
+          setPickup={setPickup}
+        />
+        <h3>Payment</h3>
+        <p>Payments are temporarily unavailable.</p>
+        <button type="button" disabled>
+          Payment unavailable
+        </button>
+      </section>
       <CheckoutSummary snapshot={snapshot} pickup={pickup} />
     </div>
   );
