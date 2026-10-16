@@ -1,3 +1,4 @@
+import { JoinWaitlist } from './waitlist';
 /* A full navigation intentionally bypasses client router caches for a fresh public read. */
 /* eslint-disable @next/next/no-html-link-for-pages */
 import Image from 'next/image';
@@ -86,6 +87,13 @@ export function Storefront({ result }: { result: StorefrontResult }) {
                   {drop.products.map((p, index) => (
                     <li key={index}>
                       <h3>{p.name}</h3>
+                      {p.available === 0 && drop.status !== 'CLOSED' && (
+                        <JoinWaitlist
+                          dropId={drop.id}
+                          productId={p.id}
+                          name={p.name}
+                        />
+                      )}
                       {drop.status === 'OPEN' && p.available > 0 && (
                         <AddToCart productId={p.id} name={p.name} />
                       )}

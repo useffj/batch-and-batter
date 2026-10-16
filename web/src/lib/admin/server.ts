@@ -1377,3 +1377,85 @@ export async function refundWorklistRelay(
     );
   }
 }
+
+export async function waitlistAdminRelay(
+  request: Request,
+  action: string,
+  c: AdminConfig,
+  fetcher: typeof fetch = fetch,
+) {
+  try {
+    const config = settings(c),
+      list = action === 'list';
+    if (
+      !['list', 'review', 'campaign'].includes(action) ||
+      request.method !== (list ? 'GET' : 'POST')
+    )
+      throw new AdminFailure('REQUEST', 405);
+    if (
+      request.headers.has('sec-fetch-site') &&
+      request.headers.get('sec-fetch-site') !== 'same-origin'
+    )
+      throw new AdminFailure('REQUEST', 403);
+    const params = new URL(request.url).searchParams;
+    if (
+      params.toString().length > 2400 ||
+      (!list && params.size) ||
+      [...params.keys()].some(
+        (k) => !['dropId', 'productId', 'cursor'].includes(k),
+      )
+    )
+      throw new AdminFailure('REQUEST', 400);
+    let body: string | undefined;
+    if (!list) {
+      if (
+        request.headers.get('origin') !== config.origin ||
+        request.headers.get('content-type')?.split(';')[0] !==
+          'application/json'
+      )
+        throw new AdminFailure('REQUEST', 403);
+      const { boundedBody } = await import('../waitlist/relay');
+      body = await boundedBody(request);
+      JSON.parse(body);
+    }
+    const session = await authorize(
+      request.headers.get('cookie') ?? '',
+      c,
+      fetcher,
+    );
+    const r = await fetcher(
+      config.api +
+        '/admin/waitlists' +
+        (list ? '?' + params.toString() : '/' + action),
+      {
+        method: request.method,
+        headers: {
+          Authorization: 'Bearer ' + session.token,
+          'Content-Type': 'application/json',
+        },
+        body,
+        cache: 'no-store',
+        redirect: 'error',
+        signal: AbortSignal.timeout(12000),
+      },
+    );
+    if (!r.ok)
+      return output(
+        {
+          message:
+            r.status === 409
+              ? 'Availability changed or purchasing is unavailable. Review availability again.'
+              : 'Unable to load or process the waitlist. Refresh or sign in again.',
+        },
+        [400, 401, 403, 409, 429].includes(r.status) ? r.status : 503,
+      );
+    const data = await json(r, 32768, new AdminFailure('INVALID'));
+    if (session.expiresAt <= Date.now()) throw new AdminFailure('EXPIRED', 401);
+    return output(data, 200);
+  } catch (e) {
+    return output(
+      { message: e instanceof AdminFailure ? e.message : messages.UNAVAILABLE },
+      e instanceof AdminFailure ? e.status : 503,
+    );
+  }
+}

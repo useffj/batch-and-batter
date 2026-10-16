@@ -1,3 +1,4 @@
+import { waitlistMessage } from './waitlists';
 import {
   refundOperation,
   refundOperationKey,
@@ -44,6 +45,7 @@ export interface NotificationTransport {
   schedule(schedule: ReturnType<typeof reminderSchedule>): Promise<void>;
 }
 export const notificationMessage = z.discriminatedUnion('type', [
+  waitlistMessage,
   z.strictObject({
     type: z.literal('DELIVERY'),
     orderId: idSchema,
@@ -572,6 +574,7 @@ export class Notifications {
   async handle(input: unknown) {
     const m = notificationMessage.parse(input);
     if (m.type === 'DELIVERY') await this.deliver(m.orderId, m.key);
-    else await this.reminders(m.date, m.cursor);
+    else if (m.type === 'REMINDER') await this.reminders(m.date, m.cursor);
+    else throw Error('Waitlist worker is not configured');
   }
 }

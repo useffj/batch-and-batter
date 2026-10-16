@@ -1,3 +1,4 @@
+import { Waitlists, waitlistScope } from './waitlists';
 import type { RefundWorklist } from './refund-worklist';
 import { type Refunds } from './refunds';
 import { refundInput } from './refund-domain';
@@ -123,6 +124,13 @@ export function createHandler(
   getRefundWorklist: () => RefundWorklist = () => {
     throw Error('Refund worklist unavailable');
   },
+  getWaitlists: () => Waitlists = () => {
+    throw new AdminError(
+      503,
+      'WAITLIST_DISABLED',
+      'Waitlists are not activated.',
+    );
+  },
 ) {
   return async (
     event: ApiEvent,
@@ -205,6 +213,84 @@ export function createHandler(
           e instanceof AdminError
             ? e.message
             : 'Order management is temporarily unavailable.',
+        );
+      }
+    }
+    if (
+      [
+        'POST /waitlists',
+        'POST /waitlists/unsubscribe',
+        'GET /admin/waitlists',
+        'POST /admin/waitlists/review',
+        'POST /admin/waitlists/campaign',
+      ].includes(event.routeKey)
+    ) {
+      try {
+        const admin = event.routeKey.includes('/admin/');
+        const identity = admin ? requireAdmin(event) : undefined;
+        const service = getWaitlists();
+        if (!admin)
+          await service.rateLimit(event.requestContext.http.sourceIp ?? '');
+        if (event.requestContext.http.method === 'GET') {
+          const q = z
+            .strictObject({
+              dropId: idSchema,
+              productId: idSchema,
+              cursor: z.string().max(2048).optional(),
+            })
+            .parse(event.queryStringParameters ?? {});
+          return json(
+            200,
+            await service.list(
+              { dropId: q.dropId, productId: q.productId },
+              q.cursor,
+            ),
+          );
+        }
+        if (
+          event.isBase64Encoded ||
+          !event.body ||
+          Buffer.byteLength(event.body) > 2048 ||
+          Object.keys(event.queryStringParameters ?? {}).length
+        )
+          return error(400, 'INVALID_REQUEST', 'Invalid request.');
+        let input: unknown;
+        try {
+          input = JSON.parse(event.body);
+        } catch {
+          return error(400, 'INVALID_REQUEST', 'Invalid request.');
+        }
+        if (event.routeKey === 'POST /waitlists')
+          return json(200, await service.join(input));
+        if (event.routeKey.endsWith('/unsubscribe'))
+          return json(
+            200,
+            await service.unsubscribe(
+              z.strictObject({ token: z.string().max(2048) }).parse(input)
+                .token,
+            ),
+          );
+        if (event.routeKey.endsWith('/review'))
+          return json(200, await service.review(input));
+        const parsed = waitlistScope
+          .extend({ event: z.string().regex(/^[a-f0-9]{64}$/) })
+          .parse(input);
+        return json(
+          200,
+          await service.campaign(
+            { dropId: parsed.dropId, productId: parsed.productId },
+            parsed.event,
+            identity!.subject,
+          ),
+        );
+      } catch (e) {
+        if (e instanceof AdminError) return error(e.status, e.code, e.message);
+        if (e instanceof z.ZodError)
+          return error(400, 'INVALID_REQUEST', 'Invalid request.');
+        return error(
+          503,
+          'UNAVAILABLE',
+          'Waitlist services are unavailable. Please retry.',
         );
       }
     }
