@@ -94,7 +94,33 @@ function validateZip(bytes) {
     'INVALID_ZIP',
   );
 }
+const ARTIFACT_PATHS = Object.freeze({
+  api: 'backend/dist/api-release/api.zip',
+  'isolated-catalog': 'backend/dist/isolated-catalog-release/api.zip',
+});
+function artifactType(input) {
+  // Omission preserves the original ordinary-API receipt contract. It can never
+  // select an isolated artifact. New approvals should always name the type.
+  const type = input.artifactType === undefined ? 'api' : input.artifactType;
+  requireThat(
+    typeof type === 'string' && Object.hasOwn(ARTIFACT_PATHS, type),
+    'UNSUPPORTED_ARTIFACT_TYPE',
+  );
+  requireThat(
+    !['path', 'zipPath', 'artifactPath'].some((key) =>
+      Object.hasOwn(input, key),
+    ),
+    'UNEXPECTED_ARTIFACT_PATH',
+  );
+  return type;
+}
+function isolatedArtifactParameters(key, versionId) {
+  materializeIdentityPolicy(key); // Existing exact UUID/hash key grammar.
+  requireThat(validVersionId(versionId), 'INVALID_ARTIFACT_VERSION');
+  return { ArtifactKey: key, ArtifactVersion: versionId };
+}
 function validateInput(input, bytes) {
+  const type = artifactType(input);
   requireThat(UUID.test(input.operationId), 'INVALID_OPERATION');
   requireThat(
     text(input.artifactId) && text(input.approvalReference),
@@ -137,6 +163,7 @@ function validateInput(input, bytes) {
   );
   validateZip(bytes);
   return {
+    ...(input.artifactType === undefined ? {} : { artifactType: type }),
     operationId: input.operationId,
     artifactId: input.artifactId,
     approvalReference: input.approvalReference,
@@ -149,13 +176,16 @@ function validateInput(input, bytes) {
 function loadCandidate(input, root = path.resolve(__dirname, '../..')) {
   const file = path.join(
     fs.realpathSync(root),
-    'backend/dist/api-release/api.zip',
+    ARTIFACT_PATHS[artifactType(input)],
   );
   requireThat(fs.realpathSync(file) === file, 'UNEXPECTED_ARTIFACT_PATH');
   const bytes = fs.readFileSync(file);
-  const evidence = JSON.parse(
-    fs.readFileSync(path.join(path.dirname(file), 'evidence.json'), 'utf8'),
+  const evidenceFile = path.join(path.dirname(file), 'evidence.json');
+  requireThat(
+    fs.realpathSync(evidenceFile) === evidenceFile,
+    'UNEXPECTED_ARTIFACT_PATH',
   );
+  const evidence = JSON.parse(fs.readFileSync(evidenceFile, 'utf8'));
   requireThat(
     isDeepStrictEqual(evidence, input.buildEvidence),
     'BUILD_EVIDENCE_CHANGED',
@@ -490,6 +520,8 @@ async function publish(input, dependencies) {
   }
 }
 module.exports = {
+  isolatedArtifactParameters,
+  validVersionId,
   crc32,
   newOperationId,
   materializeIdentityPolicy,

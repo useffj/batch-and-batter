@@ -664,3 +664,148 @@ test('uncertain 300-byte version recovers in a fresh Node process without anothe
     f.cleanup();
   }
 });
+
+for (const artifactType of ['api', 'isolated-catalog']) {
+  test(`${artifactType}: fixed path, verified bytes and durable type-bound receipt`, async () => {
+    const f = fixture();
+    try {
+      const input = { ...f.input, artifactType };
+      const dir = join(
+        f.directory,
+        'backend/dist',
+        artifactType === 'api' ? 'api-release' : 'isolated-catalog-release',
+      );
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'api.zip'), f.deps.bytes);
+      writeFileSync(
+        join(dir, 'evidence.json'),
+        JSON.stringify(input.buildEvidence),
+      );
+      assert.deepEqual(api.loadCandidate(input, f.directory), f.deps.bytes);
+      const receipt = await api.publish(input, f.deps);
+      assert.equal(receipt.identity.artifactType, artifactType);
+      assert.equal(
+        (await api.publish(input, f.deps)).versionId,
+        receipt.versionId,
+      );
+      assert.equal(f.state.puts, 1);
+      await assert.rejects(
+        api.publish(
+          {
+            ...input,
+            artifactType: artifactType === 'api' ? 'isolated-catalog' : 'api',
+          },
+          f.deps,
+        ),
+        /OPERATION_IDENTITY_CHANGED/,
+      );
+      assert.equal(f.state.puts, 1);
+    } finally {
+      f.cleanup();
+    }
+  });
+}
+test('unknown artifact types and caller-selected paths fail before loading or publication', async () => {
+  const f = fixture();
+  try {
+    for (const patch of [
+      { artifactType: 'worker' },
+      { artifactType: '../api-release' },
+      { artifactType: '__proto__' },
+      { zipPath: '/tmp/other.zip' },
+      { artifactPath: 'backend/dist/api-release/api.zip' },
+      { path: 'api.zip' },
+    ]) {
+      const input = { ...f.input, ...patch };
+      assert.throws(
+        () => api.loadCandidate(input, f.directory),
+        /UNSUPPORTED_ARTIFACT_TYPE|UNEXPECTED_ARTIFACT_PATH/,
+      );
+      await assert.rejects(
+        api.publish(input, f.deps),
+        /UNSUPPORTED_ARTIFACT_TYPE|UNEXPECTED_ARTIFACT_PATH/,
+      );
+    }
+    assert.equal(f.state.puts, 0);
+  } finally {
+    f.cleanup();
+  }
+});
+test('actual isolated builder output is accepted only through its fixed path', () => {
+  const root = resolve(__dirname, '../../../..');
+  const built = spawnSync(
+    process.execPath,
+    ['scripts/build-api.mjs', '--isolated-catalog'],
+    { cwd: join(root, 'backend'), encoding: 'utf8' },
+  );
+  assert.equal(built.status, 0, built.stderr);
+  const evidence = JSON.parse(
+    readFileSync(
+      join(root, 'backend/dist/isolated-catalog-release/evidence.json'),
+      'utf8',
+    ),
+  );
+  const input = {
+    artifactType: 'isolated-catalog',
+    operationId: api.newOperationId(),
+    artifactId: 'isolated-catalog',
+    approvalReference: 'synthetic-test',
+    sourceCommit: 'a'.repeat(40),
+    sha256: evidence.sha256,
+    bytes: evidence.bytes,
+    buildEvidence: evidence,
+  };
+  assert.equal(api.loadCandidate(input, root).length, evidence.bytes);
+  assert.throws(
+    () => api.loadCandidate({ ...input, artifactType: 'api' }, root),
+    /BUILD_EVIDENCE_CHANGED/,
+  );
+});
+test('isolated parameters preserve opaque VersionIds and reject invalid UTF-8 byte lengths', () => {
+  const key =
+    'api-releases/12345678-1234-4234-8234-123456789abc/' +
+    'a'.repeat(64) +
+    '.zip';
+  for (const [, value] of opaqueVersions)
+    assert.deepEqual(api.isolatedArtifactParameters(key, value), {
+      ArtifactKey: key,
+      ArtifactVersion: value,
+    });
+  for (const value of [
+    undefined,
+    null,
+    '',
+    'null',
+    'x'.repeat(1025),
+    '🍪'.repeat(257),
+    '\ud800',
+  ])
+    assert.throws(
+      () => api.isolatedArtifactParameters(key, value),
+      /INVALID_ARTIFACT_VERSION/,
+    );
+  assert.throws(() =>
+    api.isolatedArtifactParameters('accepted-worker.zip', 'version'),
+  );
+});
+
+test('isolated artifact uncertain write recovers the original typed operation without another PUT', async () => {
+  const f = fixture();
+  try {
+    const input = { ...f.input, artifactType: 'isolated-catalog' };
+    f.state.mode = 'lost';
+    await assert.rejects(
+      api.publish(input, f.deps),
+      /ACKNOWLEDGEMENT_UNCERTAIN/,
+    );
+    const before = f.deps.journal.load(input.operationId);
+    const recovered = await api.publish(input, f.deps);
+    assert.equal(recovered.state, 'VERIFIED');
+    assert.equal(recovered.key, before.key);
+    assert.deepEqual(recovered.identity, before.identity);
+    assert.equal(recovered.identity.artifactType, 'isolated-catalog');
+    assert.equal(f.state.puts, 1);
+  } finally {
+    f.cleanup();
+  }
+});
