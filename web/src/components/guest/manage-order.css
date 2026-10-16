@@ -1,0 +1,119 @@
+.guest-manage {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 32px 24px 64px;
+  color: #302d28;
+  line-height: 1.6;
+}
+.guest-brand {
+  display: inline-block;
+  color: inherit;
+  text-decoration: none;
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+.guest-brand span {
+  display: block;
+  font-size: 0.65rem;
+  letter-spacing: 0.25em;
+}
+.guest-manage header {
+  padding: 48px 0 24px;
+}
+.guest-eyebrow {
+  text-transform: uppercase;
+  letter-spacing: 0.13em;
+  font-size: 0.7rem;
+  color: #756b5b;
+}
+.guest-manage h1 {
+  font-size: 2.6rem;
+  line-height: 1.15;
+}
+.guest-manage article {
+  margin-top: 24px;
+  padding: 28px;
+  border: 1px solid #e5e0d6;
+  border-radius: 16px;
+  background: #fff;
+}
+.guest-manage h2 {
+  font-size: 1.35rem;
+  overflow-wrap: anywhere;
+}
+.guest-manage h3 {
+  margin-top: 28px;
+}
+.guest-items {
+  list-style: none;
+  padding: 0;
+}
+.guest-items li {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 16px 0;
+  flex-wrap: wrap;
+}
+.guest-totals div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+.guest-totals dd {
+  margin: 0;
+}
+.guest-totals div:last-child {
+  font-weight: 700;
+  border-top: 1px solid #e5e0d6;
+  margin-top: 12px;
+  padding-top: 12px;
+}
+.guest-manage button,
+.guest-manage select {
+  font: inherit;
+  min-height: 44px;
+  padding: 10px 16px;
+  border: 1px solid #aaa08f;
+  border-radius: 8px;
+  background: #faf8f2;
+  color: inherit;
+  max-width: 100%;
+}
+.guest-manage button {
+  cursor: pointer;
+}
+.guest-manage button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.guest-manage select {
+  display: block;
+  width: 100%;
+  margin: 8px 0 16px;
+}
+.guest-manage :focus-visible {
+  outline: 3px solid #806744;
+  outline-offset: 3px;
+}
+.guest-alert {
+  padding: 16px;
+  background: #fff0ea;
+  border-radius: 8px;
+}
+.guest-manage footer {
+  padding-top: 32px;
+  font-size: 0.9rem;
+  color: #655e54;
+}
+@media (max-width: 420px) {
+  .guest-manage {
+    padding: 24px 16px;
+  }
+  .guest-manage article {
+    padding: 20px;
+  }
+  .guest-manage h1 {
+    font-size: 2rem;
+  }
+}

@@ -46,12 +46,14 @@ export const operationKey = (orderId: string, key: string) => ({
 });
 export const notificationKey = z
   .string()
-  .regex(/^(CONFIRMATION#email|REMINDER#\d{4}-\d\d-\d\d#(email|sms))$/);
+  .regex(
+    /^(CONFIRMATION#email|REMINDER#\d{4}-\d\d-\d\d#(email|sms)|(ACCESS|PICKUP_CHANGE)#[a-f0-9-]{36}#email)$/,
+  );
 export const operationSchema = z
   .strictObject({
     orderId: idSchema,
     key: notificationKey,
-    kind: z.enum(['CONFIRMATION', 'REMINDER']),
+    kind: z.enum(['CONFIRMATION', 'REMINDER', 'ACCESS', 'PICKUP_CHANGE']),
     channel: z.enum(['email', 'sms']),
     pickupDate: dateSchema,
     status: z.enum([
@@ -71,11 +73,11 @@ export const operationSchema = z
   })
   .refine(
     (o) =>
-      o.key ===
-        (o.kind === 'CONFIRMATION'
-          ? 'CONFIRMATION#email'
-          : `REMINDER#${o.pickupDate}#${o.channel}`) &&
-      (o.kind !== 'CONFIRMATION' || o.channel === 'email') &&
+      (o.kind === 'CONFIRMATION'
+        ? o.key === 'CONFIRMATION#email' && o.channel === 'email'
+        : o.kind === 'REMINDER'
+          ? o.key === `REMINDER#${o.pickupDate}#${o.channel}`
+          : o.key.startsWith(o.kind + '#') && o.channel === 'email') &&
       (o.status !== 'SENT' || !!o.sentAt),
     'Invalid notification identity or acknowledgement',
   );

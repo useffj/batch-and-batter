@@ -203,3 +203,27 @@ export async function notificationRelay(
     );
   }
 }
+
+export async function accessRelay(
+  request: Request,
+  orderId: string,
+  action: 'status' | 'reissue' | 'revoke',
+  config: RuntimeConfig,
+) {
+  try {
+    const key = await loadSessionKey(config);
+    const { guestAccessRelay } = await import('./server');
+    return guestAccessRelay(request, orderId, action, {
+      ...config,
+      ADMIN_SESSION_KEY: key,
+    });
+  } catch {
+    return NextResponse.json(
+      { message: messages.CONFIGURATION },
+      {
+        status: 503,
+        headers: { 'Cache-Control': 'no-store, private', Vary: 'Cookie' },
+      },
+    );
+  }
+}

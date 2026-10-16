@@ -82,6 +82,7 @@ export class Notifications {
     private providers: { email: MessageProvider; sms: MessageProvider },
     private options: {
       policies: string;
+      issueManagementLink?: (operation: Operation) => Promise<string>;
       reminderTime?: string;
       now?: () => number;
     },
@@ -139,6 +140,8 @@ export class Notifications {
     o: Pick<Operation, 'kind' | 'channel' | 'pickupDate'>,
   ): Promise<string | null> {
     if (!(await this.authority(order))) return 'PAYMENT_NOT_ELIGIBLE';
+    if (o.kind === 'PICKUP_CHANGE' && order.pickup.date !== o.pickupDate)
+      return 'PICKUP_CHANGED';
     if (o.kind === 'REMINDER') {
       if (order.pickup.date !== o.pickupDate) return 'PICKUP_CHANGED';
       const local = this.localTime().slice(0, 10);
@@ -305,7 +308,11 @@ export class Notifications {
   }
   async poll() {
     for (let i = 0; i < 16; i++)
-      for (const type of ['NOTIFICATION_EVENTS', 'NOTIFICATION_DUE']) {
+      for (const type of [
+        'NOTIFICATION_EVENTS',
+        'NOTIFICATION_DUE',
+        'NOTIFICATION_PICKUP_EVENTS',
+      ]) {
         const r = await this.client.send(
           new QueryCommand({
             TableName: this.operations,
@@ -320,7 +327,19 @@ export class Notifications {
         for (const row of r.Items ?? []) {
           if (type === 'NOTIFICATION_EVENTS')
             await this.confirmation(idSchema.parse(row.orderId));
-          else
+          else if (type === 'NOTIFICATION_PICKUP_EVENTS') {
+            const date = dateSchema.parse(row.pickupDate),
+              schedule = reminderSchedule(date, this.options.reminderTime);
+            if (schedule.expression.slice(3, -1) > this.localTime())
+              await this.transport.schedule(schedule);
+            // A changed date whose reminder time passed is not retroactively sent.
+            await this.client.send(
+              new DeleteCommand({
+                TableName: this.operations,
+                Key: { PK: row.PK, SK: row.SK },
+              }),
+            );
+          } else
             await this.transport.enqueue(
               notificationMessage.parse({
                 type: 'DELIVERY',
@@ -418,7 +437,11 @@ export class Notifications {
     const title =
       o.kind === 'CONFIRMATION'
         ? 'Your Batch & Batter order'
-        : 'Your Batch & Batter pickup reminder';
+        : o.kind === 'ACCESS'
+          ? 'Your Batch & Batter order link'
+          : o.kind === 'PICKUP_CHANGE'
+            ? 'Your Batch & Batter pickup has changed'
+            : 'Your Batch & Batter pickup reminder';
     const text = [
       title,
       value.displayOrderNumber
@@ -431,18 +454,38 @@ export class Notifications {
       value.pickup.instructions,
       this.options.policies,
     ].join('\n');
+    let link: string | undefined;
+    if (
+      this.options.issueManagementLink &&
+      ['CONFIRMATION', 'ACCESS'].includes(o.kind)
+    ) {
+      try {
+        link = await this.options.issueManagementLink(o);
+      } catch {
+        await this.transition(
+          o,
+          'UNCERTAIN',
+          'ACCESS_ISSUANCE_REQUIRES_RECONCILIATION',
+        );
+        return;
+      }
+    }
+    if (o.kind === 'ACCESS' && !link) {
+      await this.transition(o, 'FAILED', 'ACCESS_ISSUER_UNAVAILABLE');
+      return;
+    }
     try {
       await this.providers[o.channel].send({
         to: o.channel === 'email' ? value.customer.email : value.customer.phone,
         subject: title,
-        text,
+        text: link ? text + '\nManage your order: ' + link : text,
         operationId: digest(id + '#' + key),
       });
     } catch (e) {
       await this.transition(
         o,
         e instanceof DeliveryFailure
-          ? e.retryable && o.attempts < 3
+          ? !link && e.retryable && o.attempts < 3
             ? 'PENDING'
             : 'FAILED'
           : 'UNCERTAIN',

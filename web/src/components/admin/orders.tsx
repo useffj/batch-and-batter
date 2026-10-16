@@ -1,4 +1,5 @@
 'use client';
+import { GuestAccess } from './guest-access';
 import { NotificationStatus } from './notification-status';
 import { useEffect, useState } from 'react';
 import { AdminNavigation } from './navigation';
@@ -131,6 +132,7 @@ export function OrderDetails({ order: o }: { order: Order }) {
         Updated {timestamp(o.updatedAt)} Denver
       </p>
       <NotificationStatus key={o.orderId} orderId={o.orderId} />
+      <GuestAccess key={'access-' + o.orderId} orderId={o.orderId} />
     </section>
   );
 }

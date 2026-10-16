@@ -3,6 +3,7 @@ import { addCartExpiry } from './cart-expiry';
 import { artifactCode } from './artifacts';
 import {
   CfnOutput,
+  CfnParameter,
   ArnFormat,
   Duration,
   RemovalPolicy,
@@ -251,12 +252,27 @@ export class DevelopmentStack extends Stack {
         resources: [reservationQueue.queueArn],
       }),
     );
+    const guestOrigin = new CfnParameter(this, 'GuestOrderOrigin', {
+      type: 'String',
+      default: '',
+      allowedPattern: '^$|^https://[A-Za-z0-9.-]+(?::[0-9]+)?$',
+      description:
+        'Approved customer order-link origin; empty keeps guest access unavailable.',
+    });
+    const guestCutoff = new CfnParameter(this, 'GuestPickupCutoff', {
+      type: 'String',
+      default: '15:00',
+      allowedPattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$',
+      description: 'Denver-local day-before pickup-change cutoff.',
+    });
     const application = new lambda.Function(this, 'ApplicationApi', {
       functionName: `${prefix}-api`,
       runtime: lambda.Runtime.NODEJS_24_X,
       handler: 'handler.handler',
       code: artifactCode(this, 'ApplicationApi5D63FF39', 'handler.handler'),
       environment: {
+        GUEST_ORDER_ORIGIN: guestOrigin.valueAsString,
+        GUEST_PICKUP_CUTOFF: guestCutoff.valueAsString,
         RESERVATION_QUEUE_URL: reservationQueue.queueUrl,
         CATALOG_TABLE_NAME: catalogTable.tableName,
         COMMERCE_TABLE_NAME: commerceTable.tableName,
@@ -322,6 +338,16 @@ export class DevelopmentStack extends Stack {
       });
     }
     for (const [route, method, integrationId] of [
+      [
+        '/orders/manage/view',
+        apigateway.HttpMethod.POST,
+        'GuestOrderViewIntegration',
+      ],
+      [
+        '/orders/manage/pickup',
+        apigateway.HttpMethod.POST,
+        'GuestOrderPickupIntegration',
+      ],
       ['/carts', apigateway.HttpMethod.POST, 'CreateCartIntegration'],
       ['/carts/{cartId}', apigateway.HttpMethod.GET, 'GetCartIntegration'],
       [
@@ -448,6 +474,21 @@ export class DevelopmentStack extends Stack {
         apigateway.HttpMethod.GET,
         'AdminNotificationsIntegration',
       ],
+      [
+        '/admin/orders/{orderId}/access',
+        apigateway.HttpMethod.GET,
+        'AdminGuestAccessIntegration',
+      ],
+      [
+        '/admin/orders/{orderId}/access/reissue',
+        apigateway.HttpMethod.POST,
+        'AdminGuestReissueIntegration',
+      ],
+      [
+        '/admin/orders/{orderId}/access/revoke',
+        apigateway.HttpMethod.POST,
+        'AdminGuestRevokeIntegration',
+      ],
       ['/admin/orders', apigateway.HttpMethod.GET, 'AdminOrdersIntegration'],
       [
         '/admin/orders/{orderId}',
@@ -570,6 +611,17 @@ export class DevelopmentStack extends Stack {
           `${commerceTable.tableArn}/index/GSI1`,
           `${commerceTable.tableArn}/index/GSI2`,
         ],
+      }),
+    );
+    role.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ['dynamodb:UpdateItem'],
+        resources: [operationsTable.tableArn],
+        conditions: {
+          'ForAllValues:StringLike': {
+            'dynamodb:LeadingKeys': ['GUEST_RATE#*'],
+          },
+        },
       }),
     );
     new CfnOutput(this, 'HttpApiEndpoint', { value: api.apiEndpoint });

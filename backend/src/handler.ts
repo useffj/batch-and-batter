@@ -1,3 +1,4 @@
+import { GuestOrders } from './guest-orders';
 import { AdminNotifications } from './admin-notifications';
 import { AdminCustomers } from './admin-customers';
 import { FulfillmentRepository } from './admin-fulfillment';
@@ -31,6 +32,7 @@ export function createEntrypoint(
   getFulfillment?: () => FulfillmentRepository,
   getCustomers?: () => AdminCustomers,
   getNotifications?: () => AdminNotifications,
+  getGuestOrders?: () => GuestOrders,
 ) {
   const http = createHandler(
     getRepository,
@@ -42,6 +44,7 @@ export function createEntrypoint(
     getFulfillment,
     getCustomers,
     getNotifications,
+    getGuestOrders,
   );
   let payment: ReturnType<typeof createPaymentHttp> | undefined;
   const automatic = createAutoOpenHandler(getRepository);
@@ -73,6 +76,7 @@ let orders: AdminOrders | undefined;
 let fulfillment: FulfillmentRepository | undefined;
 let customers: AdminCustomers | undefined;
 let notifications: AdminNotifications | undefined;
+let guestOrders: GuestOrders | undefined;
 export const handler = createEntrypoint(
   () =>
     (repository ??= new DynamoCatalogRepository(
@@ -138,5 +142,15 @@ export const handler = createEntrypoint(
     (notifications ??= new AdminNotifications(
       DynamoDBDocumentClient.from(new DynamoDBClient({ maxAttempts: 1 })),
       process.env.OPERATIONS_TABLE_NAME ?? '',
+    )),
+  () =>
+    (guestOrders ??= new GuestOrders(
+      DynamoDBDocumentClient.from(new DynamoDBClient({ maxAttempts: 1 })),
+      process.env.COMMERCE_TABLE_NAME ?? '',
+      process.env.OPERATIONS_TABLE_NAME ?? '',
+      process.env.CATALOG_TABLE_NAME ?? '',
+      process.env.GUEST_ORDER_ORIGIN ?? '',
+      Date.now,
+      process.env.GUEST_PICKUP_CUTOFF ?? '15:00',
     )),
 );
