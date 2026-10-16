@@ -335,6 +335,45 @@ async function publish(input, dependencies) {
   const { journal, adapters } = dependencies;
   // Caller supplies test adapters. This module cannot instantiate any AWS client.
   requireThat(adapters?.kind === 'mock' && journal, 'MOCK_ADAPTERS_REQUIRED');
+  return runPublication(input, dependencies, true);
+}
+const ISOLATED_APPROVAL = Object.freeze({
+  artifactType: 'isolated-catalog',
+  artifactId: 'isolated-catalog-1n-d',
+  approvalReference: 'owner:1N-D',
+  operationId: '5f10ad5a-beb2-405b-bc9f-2a6135f62b38',
+  sourceCommit: '85f44867a6c724158fb02bb6923cc48e330a9342',
+  sha256: '69e6ec8aeb468e1023b203d0a23e8f33ebfe3ca522c861593570b98e81c78fcb',
+  bytes: 2107927,
+});
+async function publishApprovedIsolatedCatalog(input, dependencies) {
+  requireThat(
+    dependencies?.mode === 'approved-1n-d' &&
+      dependencies.adapters?.kind === 'verified-publisher-role' &&
+      dependencies.adapters.s3?.kind === 'aws-dormant' &&
+      dependencies.publisherArn === ROLE,
+    'EXPLICIT_PUBLISHER_ROLE_REQUIRED',
+  );
+  requireThat(
+    Object.entries(ISOLATED_APPROVAL).every(
+      ([key, value]) => input?.[key] === value,
+    ) &&
+      Object.keys(input).every(
+        (key) =>
+          key === 'buildEvidence' || Object.hasOwn(ISOLATED_APPROVAL, key),
+      ),
+    'APPROVED_ARTIFACT_REQUIRED',
+  );
+  requireThat(
+    input.buildEvidence?.lockSha256 ===
+      '76ee0b2d071b95814fd726ce113bb14c235e8547be101741f9bbd76898e829ca' &&
+      input.buildEvidence?.node === 'v24.19.0',
+    'APPROVED_BUILD_REQUIRED',
+  );
+  return runPublication(input, dependencies, false);
+}
+async function runPublication(input, dependencies, simulated) {
+  const { journal, adapters } = dependencies;
   const bytes = Buffer.from(dependencies.bytes ?? loadCandidate(input));
   const identity = validateInput(input, bytes);
   input = identity;
@@ -357,7 +396,7 @@ async function publish(input, dependencies) {
           'UNCERTAIN',
           'COLLISION',
         ].includes(record.state) &&
-          record.simulated === true &&
+          record.simulated === simulated &&
           record.deploymentAuthorized === false,
         'INVALID_RECEIPT',
       );
@@ -377,7 +416,7 @@ async function publish(input, dependencies) {
         state: 'PREPARED',
         versionId: null,
         deploymentAuthorized: false,
-        simulated: true,
+        simulated,
         publisherArn: ROLE,
         createdAt: new Date().toISOString(),
       };
@@ -520,6 +559,8 @@ async function publish(input, dependencies) {
   }
 }
 module.exports = {
+  publishApprovedIsolatedCatalog,
+  ISOLATED_APPROVAL,
   isolatedArtifactParameters,
   validVersionId,
   crc32,
