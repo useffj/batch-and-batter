@@ -1,3 +1,4 @@
+import type { Refunds } from './refunds';
 import { GuestOrders } from './guest-orders';
 import { AdminNotifications } from './admin-notifications';
 import { AdminCustomers } from './admin-customers';
@@ -33,6 +34,7 @@ export function createEntrypoint(
   getCustomers?: () => AdminCustomers,
   getNotifications?: () => AdminNotifications,
   getGuestOrders?: () => GuestOrders,
+  getRefunds?: () => Refunds,
 ) {
   const http = createHandler(
     getRepository,
@@ -45,6 +47,7 @@ export function createEntrypoint(
     getCustomers,
     getNotifications,
     getGuestOrders,
+    getRefunds,
   );
   let payment: ReturnType<typeof createPaymentHttp> | undefined;
   const automatic = createAutoOpenHandler(getRepository);

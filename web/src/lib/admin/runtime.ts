@@ -207,7 +207,15 @@ export async function notificationRelay(
 export async function accessRelay(
   request: Request,
   orderId: string,
-  action: 'status' | 'reissue' | 'revoke' | 'request-status' | 'review',
+  action:
+    | 'status'
+    | 'reissue'
+    | 'revoke'
+    | 'request-status'
+    | 'review'
+    | 'refund-status'
+    | 'authorize'
+    | 'reconcile',
   config: RuntimeConfig,
 ) {
   try {

@@ -1,9 +1,15 @@
 'use client';
+import { refundLabels } from '../../lib/refunds';
 import { CancellationRequest } from './cancellation-request';
 import { type CancellationView } from '../../lib/order-requests';
 import { useEffect, useRef, useState } from 'react';
 import './manage-order.css';
 export type GuestView = {
+  refund?: {
+    status: string | null;
+    refundedCents: number;
+    currency: string;
+  } | null;
   cancellation?: CancellationView;
   order: {
     reference: string | null;
@@ -53,6 +59,18 @@ export function GuestOrderDetails({ data }: { data: GuestView }) {
       }).format(n / 100);
   return (
     <>
+      {data.refund && (
+        <section aria-label="Refund status">
+          <h2>
+            {refundLabels[data.refund.status ?? ''] ??
+              'Refund status requires review'}
+          </h2>
+          <p>
+            Confirmed refunds: {money(data.refund.refundedCents)}. Your bank may
+            need additional time to post a completed refund.
+          </p>
+        </section>
+      )}
       <h2>{o.reference ?? 'Your order'}</h2>
       <p className="guest-status">
         Payment: {human(o.paymentStatus)} · Order: {human(o.status)}

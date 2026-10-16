@@ -1,4 +1,5 @@
 'use client';
+import { RefundReview } from './refunds';
 import { CancellationReview } from './cancellation-review';
 import { GuestAccess } from './guest-access';
 import { NotificationStatus } from './notification-status';
@@ -40,6 +41,9 @@ export const timestamp = (s: string) =>
   }).format(new Date(s));
 type Drop = { dropId: string; name: string; opensAt: string; status: string };
 export type Order = {
+  refundInventory?:
+    { name: string; remaining: number; returned: number }[] | null;
+  refundProcessing?: boolean;
   orderId: string;
   displayOrderNumber: string | null;
   status: string;
@@ -136,6 +140,7 @@ export function OrderDetails({ order: o }: { order: Order }) {
       <NotificationStatus key={o.orderId} orderId={o.orderId} />
       <GuestAccess key={'access-' + o.orderId} orderId={o.orderId} />
       <CancellationReview key={'request-' + o.orderId} orderId={o.orderId} />
+      <RefundReview key={'refund-' + o.orderId} orderId={o.orderId} />
     </section>
   );
 }

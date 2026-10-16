@@ -62,7 +62,7 @@ it('durable pending request never implies completed refund or cancellation', () 
       },
     },
   });
-  expect(html).toContain('financial processing pending');
+  expect(html).toContain('execution status is separate');
   expect(html).toContain('does not confirm');
   expect(html).not.toContain('<script>');
   expect(html).not.toContain('Request cancellation</button>');

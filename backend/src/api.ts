@@ -1,3 +1,10 @@
+import { type Refunds } from './refunds';
+import { refundInput } from './refund-domain';
+const refundRoutes = [
+  'GET /admin/orders/{orderId}/refunds',
+  'POST /admin/orders/{orderId}/refunds/authorize',
+  'POST /admin/orders/{orderId}/refunds/reconcile',
+];
 import { requestInput, reviewInput } from './cancellation-requests';
 import {
   GuestOrders,
@@ -105,6 +112,13 @@ export function createHandler(
   getGuestOrders: () => GuestOrders = () => {
     throw Error('Guest orders unavailable');
   },
+  getRefunds: () => Refunds = () => {
+    throw new AdminError(
+      503,
+      'REFUNDS_DISABLED',
+      'Refund execution is not activated.',
+    );
+  },
 ) {
   return async (
     event: ApiEvent,
@@ -192,6 +206,7 @@ export function createHandler(
     }
     if (event.routeKey === 'GET /health') return complete(await health());
     if (
+      refundRoutes.includes(event.routeKey) ||
       [
         'GET /admin/orders/{orderId}/requests',
         'POST /admin/orders/{orderId}/requests/review',
@@ -218,6 +233,57 @@ export function createHandler(
     ) {
       try {
         const identity = requireAdmin(event);
+        if (refundRoutes.includes(event.routeKey)) {
+          const id = idSchema.safeParse(event.pathParameters?.orderId);
+          if (
+            !id.success ||
+            Object.keys(event.queryStringParameters ?? {}).length
+          )
+            return error(400, 'INVALID_REQUEST', 'Invalid request.');
+          if (event.routeKey.startsWith('GET'))
+            return json(200, await getRefunds().view(id.data));
+          if (
+            event.isBase64Encoded ||
+            !event.body ||
+            Buffer.byteLength(event.body) > 2048
+          )
+            return error(400, 'INVALID_REQUEST', 'Invalid request.');
+          let value: unknown;
+          try {
+            value = JSON.parse(event.body);
+          } catch {
+            return error(400, 'INVALID_REQUEST', 'Invalid request.');
+          }
+          if (event.routeKey.endsWith('/authorize')) {
+            const parsed = refundInput.safeParse(value);
+            if (!parsed.success)
+              return error(400, 'INVALID_REQUEST', 'Invalid request.');
+            return json(
+              200,
+              await getRefunds().authorize(
+                id.data,
+                parsed.data,
+                identity.subject,
+              ),
+            );
+          }
+          if (
+            !value ||
+            typeof value !== 'object' ||
+            Object.keys(value).join() !== 'operationId' ||
+            !/^[a-f0-9-]{36}$/.test(
+              String((value as { operationId?: unknown }).operationId),
+            )
+          )
+            return error(400, 'INVALID_REQUEST', 'Invalid request.');
+          return json(
+            200,
+            await getRefunds().run(
+              id.data,
+              (value as { operationId: string }).operationId,
+            ),
+          );
+        }
         if (
           [
             'GET /admin/orders/{orderId}/requests',

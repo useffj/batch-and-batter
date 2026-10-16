@@ -23,10 +23,10 @@ export type CancellationView = {
 };
 export const requestLabels: Record<string, string> = {
   RECEIVED_PENDING_PROCESSING:
-    'Cancellation request received — financial processing pending',
+    'Cancellation request received — execution status is separate',
   EXCEPTION_REQUESTED: 'Exception request received — awaiting review',
   APPROVED_PENDING_PROCESSING:
-    'Exception approved for processing — refund not yet completed',
+    'Exception approved — refund execution is separate',
   DECLINED: 'Exception request declined',
 };
 export const requestTime = (s: string) =>

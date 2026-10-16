@@ -1,3 +1,4 @@
+import { ledgerKey, refundLedger } from './refund-domain';
 import { cancellationKey, cancellationState } from './cancellation-requests';
 import { readFulfillment } from './fulfillment-state';
 import {
@@ -95,7 +96,33 @@ export class AdminOrders {
         throw Error('Invalid request identity');
       cancellationRequest = { type: parsed.type, status: parsed.status };
     }
+    const refundRow = await this.client.send(
+      new GetCommand({
+        TableName: this.table,
+        Key: ledgerKey(order.orderId),
+        ConsistentRead: true,
+      }),
+    );
+    const ledger = refundRow.Item
+      ? refundLedger.parse(
+          Object.fromEntries(
+            Object.entries(refundRow.Item).filter(
+              ([k]) => k !== 'PK' && k !== 'SK',
+            ),
+          ),
+        )
+      : null;
+    if (ledger && ledger.orderId !== order.orderId)
+      throw Error('Invalid refund identity');
     return {
+      refundInventory: ledger
+        ? order.items.map((i) => ({
+            name: i.name,
+            remaining: i.quantity - (ledger.returned[i.productId] ?? 0),
+            returned: ledger.returned[i.productId] ?? 0,
+          }))
+        : null,
+      refundProcessing: !!ledger?.active || !!ledger?.blocked,
       cancellationRequest,
       ...orderDto(order, details),
       fulfillmentStatus: state?.status ?? null,
