@@ -4,7 +4,7 @@ import { App } from 'aws-cdk-lib';
 import { Template } from 'aws-cdk-lib/assertions';
 import { IsolatedCatalogStack } from '../lib/isolated-catalog-stack';
 import { isolatedRoutes } from '../../backend/src/isolated-catalog-contract';
-test('isolated stack has only catalog resources, quarantined writes and authenticated routes', () => {
+test('isolated stack has only catalog resources, exclusive catalog writes and authenticated routes', () => {
   const t = Template.fromStack(new IsolatedCatalogStack(new App(), 'isolated'));
   t.resourceCountIs('AWS::DynamoDB::Table', 1);
   t.resourceCountIs('AWS::Lambda::Function', 1);
@@ -15,12 +15,41 @@ test('isolated stack has only catalog resources, quarantined writes and authenti
     DeletionProtectionEnabled: true,
   });
   t.hasResourceProperties('AWS::Lambda::Function', {
-    ReservedConcurrentExecutions: 0,
+    ReservedConcurrentExecutions: 2,
     Environment: {
       Variables: {
         CATALOG_TABLE_NAME: 'batch-and-batter-dev-isolated-catalog',
         PAYMENT_START_ENABLED: 'false',
       },
+    },
+  });
+  assert.deepEqual(t.toJSON().Resources.Catalog.Properties.ResourcePolicy, {
+    PolicyDocument: {
+      Version: '2012-10-17',
+      Statement: [
+        {
+          Sid: 'ExclusiveCatalogWriter',
+          Effect: 'Deny',
+          Principal: '*',
+          Action: [
+            'dynamodb:PutItem',
+            'dynamodb:UpdateItem',
+            'dynamodb:DeleteItem',
+            'dynamodb:BatchWriteItem',
+            'dynamodb:PartiQLInsert',
+            'dynamodb:PartiQLUpdate',
+            'dynamodb:PartiQLDelete',
+          ],
+          Resource:
+            'arn:aws:dynamodb:us-east-2:302154194958:table/batch-and-batter-dev-isolated-catalog',
+          Condition: {
+            ArnNotEquals: {
+              'aws:PrincipalArn':
+                'arn:aws:iam::302154194958:role/batch-and-batter-dev-isolated-c-CatalogRole0D3BB0F5-h0IDNrAPJlbX',
+            },
+          },
+        },
+      ],
     },
   });
   const routes = Object.values(t.findResources('AWS::ApiGatewayV2::Route')).map(

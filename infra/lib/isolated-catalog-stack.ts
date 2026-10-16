@@ -18,7 +18,7 @@ import {
 export class IsolatedCatalogStack extends Stack {
   constructor(scope: Construct, id: string) {
     super(scope, id, { env: { account: '302154194958', region: 'us-east-2' } });
-    const initializer = new CfnParameter(this, 'InitializerRoleArn', {
+    new CfnParameter(this, 'InitializerRoleArn', {
       type: 'String',
       allowedPattern: 'arn:aws:iam::302154194958:role/[A-Za-z0-9+=,.@_/-]+',
       description:
@@ -52,14 +52,14 @@ export class IsolatedCatalogStack extends Stack {
       pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
       sseSpecification: { sseEnabled: true },
       deletionProtectionEnabled: true,
-      // Initial deployment is quarantined. Removal of this deny requires a
-      // separately reviewed post-initialization template update, never an env flag.
+      // Activation preserves the explicit deny and exempts only the existing
+      // dedicated execution role. Its physical ARN was verified in DEV.
       resourcePolicy: {
         policyDocument: {
           Version: '2012-10-17',
           Statement: [
             {
-              Sid: 'ExclusiveInitialization',
+              Sid: 'ExclusiveCatalogWriter',
               Effect: 'Deny',
               Principal: '*',
               Action: [
@@ -73,7 +73,10 @@ export class IsolatedCatalogStack extends Stack {
               ],
               Resource: tableArn,
               Condition: {
-                ArnNotEquals: { 'aws:PrincipalArn': initializer.valueAsString },
+                ArnNotEquals: {
+                  'aws:PrincipalArn':
+                    'arn:aws:iam::302154194958:role/batch-and-batter-dev-isolated-c-CatalogRole0D3BB0F5-h0IDNrAPJlbX',
+                },
               },
             },
           ],
@@ -116,7 +119,7 @@ export class IsolatedCatalogStack extends Stack {
       architectures: ['x86_64'],
       memorySize: 512,
       timeout: 30,
-      reservedConcurrentExecutions: 0,
+      reservedConcurrentExecutions: 2,
       code: {
         s3Bucket: 'cdk-hnb659fds-assets-302154194958-us-east-2',
         s3Key: key.valueAsString,
