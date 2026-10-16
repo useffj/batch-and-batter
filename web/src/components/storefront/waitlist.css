@@ -1,0 +1,32 @@
+.waitlist-signup form {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.8rem;
+  margin-top: 1rem;
+}
+.waitlist-signup input[type='email'] {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 28rem;
+  min-height: 44px;
+  padding: 0.65rem;
+  border: 1px solid #b9b6ae;
+  border-radius: 6px;
+  font: inherit;
+}
+.waitlist-signup label:has(input[type='checkbox']) {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  line-height: 1.5;
+}
+.waitlist-signup input[type='checkbox'] {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  margin-top: 0.2rem;
+}
+.waitlist-signup button {
+  min-height: 44px;
+}

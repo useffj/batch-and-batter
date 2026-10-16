@@ -3,7 +3,13 @@ export function AdminNavigation({
   current,
 }: {
   current:
-    'overview' | 'products' | 'drops' | 'orders' | 'fulfillment' | 'customers';
+    | 'overview'
+    | 'products'
+    | 'drops'
+    | 'orders'
+    | 'fulfillment'
+    | 'customers'
+    | 'waitlists';
 }) {
   return (
     <aside className="admin-sidebar">
@@ -46,6 +52,12 @@ export function AdminNavigation({
           aria-current={current === 'customers' ? 'page' : undefined}
         >
           Customers
+        </a>
+        <a
+          href="/admin/waitlists"
+          aria-current={current === 'waitlists' ? 'page' : undefined}
+        >
+          Waitlist Management
         </a>
       </nav>
       <p className="admin-eyebrow">Coming later</p>

@@ -251,3 +251,26 @@ export async function worklistRelay(request: Request, config: RuntimeConfig) {
     );
   }
 }
+
+export async function waitlistsRelay(
+  request: Request,
+  action: string,
+  config: RuntimeConfig,
+) {
+  try {
+    const key = await loadSessionKey(config);
+    const { waitlistAdminRelay } = await import('./server');
+    return waitlistAdminRelay(request, action, {
+      ...config,
+      ADMIN_SESSION_KEY: key,
+    });
+  } catch {
+    return NextResponse.json(
+      { message: messages.CONFIGURATION },
+      {
+        status: 503,
+        headers: { 'Cache-Control': 'no-store, private', Vary: 'Cookie' },
+      },
+    );
+  }
+}

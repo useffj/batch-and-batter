@@ -1,0 +1,38 @@
+# Sold-out Product waitlists — Milestone 1L
+
+Local/source implementation only. No AWS deployment, real email/SMS, customer writes, stock writes, artifact publication or payment admission is authorized. The default API factory fails closed with `WAITLIST_DISABLED`; the notification worker requires an explicitly injected waitlist service. There is no production mock fallback.
+
+## Customer and administrator workflow
+
+A sold-out card offers Join Waitlist for an eligible visible Drop. Signup requires a valid email and separate explicit availability-email consent. The server normalizes email case, verifies the currently assigned storefront Drop, active Product/association, zero authoritative available inventory and a non-closed eligible Drop. Closed/completed/draft or expired Drops are rejected. Scheduled/paused/sold-out Drops can collect alerts, but campaigns require an OPEN Drop whose opening time has passed. The request never creates a cart, Order, reservation or charge.
+
+Confirmation is identical for a new, duplicate or previously suppressed membership. Suppression is sticky; repeating signup does not silently restore consent. Membership is independent per exact Drop/Product. Existing membership returns the same receipt while the scope remains eligible; a retry after availability changes can instead require refreshing availability. No public endpoint returns customer contact records.
+
+Waitlist Management uses the existing administrator login and session protections. Select a Drop and cookie, refresh entries, page through records, review authoritative purchasing availability, then explicitly approve emails. Each action prepares at most 20 entries; continue the approved campaign until preparation is complete. Refresh shows queued, sent, suppressed, failed or unconfirmed status. Contact values stay out of URLs, browser storage and logs. Native signup forms POST; unsupported native form encoding is rejected by the relay rather than forwarding contact bodies.
+
+## Persistence and delivery
+
+- Commerce entries: `WAITLIST#<dropId>#<productId>` / `<joinedAt>#<uuid>`, with normalized email, immutable signup timestamp, consent version and suppression state.
+- Atomic identity companion: `WAITLIST_IDENTITY#<dropId>#<productId>` / HMAC(normalized email). The entry and companion are created together with Catalog snapshot condition checks. Raw email is never a key.
+- Operations campaigns: `WAITLIST_CAMPAIGN#<dropId>#<productId>` / HMAC of authoritative inventory and Drop/Product revisions. Approval stores actor, cutoff and a conditional continuation. This is an explicitly approved **availability snapshot**, not an automatic refund/restock subscription. Changed inventory requires a fresh review; no refund or inventory code is modified.
+- Operations delivery receipts: `WAITLIST_DELIVERY#<entryId>` / event digest, plus a latest-status pointer. Original per-event outcomes remain durable. Queries are strongly consistent, bounded and partition-scoped; no service scans. Entry pagination uses signed, scope-bound continuations and is not a cross-page snapshot.
+- The existing NotificationQueue message contract gains a reference-only WAITLIST variant. Preparation enqueues pending receipts; ambiguous queue acknowledgements leave the page retryable. Duplicate queue deliveries cannot reacquire the same delivery claim.
+- The worker rechecks current availability, assigned storefront, consent and suppression with conditional dispatch claims. It sends through the existing email provider abstraction. Failure before a confirmed delivery is recorded honestly; ambiguous provider outcomes remain UNCERTAIN. A crash or failed acknowledgement after claiming remains delivery-unconfirmed and is never automatically resent. Operator reconciliation is required before any manual recovery.
+- Availability can change after the final dispatch check. Messages explicitly say first-come, first-served, no guarantee and no reservation. No exclusive window is promised.
+- Unsubscribe links carry a signed scope-bound capability in the URL fragment. The browser removes the fragment and submits the capability in a same-origin POST body after explicit opt-out. The service validates signatures before lookup. No email address is embedded in the link.
+
+## Security and release requirements
+
+Existing Cognito administrator-group checks, encrypted HttpOnly sessions, expiry, same-origin writes, private no-store responses and sanitized request logging remain in place. Public operations enforce input/body bounds and a 20-request/minute trusted-source-address limit in Operations. With the SSR relay, API Gateway sees the relay egress address, so this is a conservative shared limit; never trust arbitrary browser forwarded-IP headers. Before public release, approve trusted ingress rate-limit capacity and abuse monitoring.
+
+Real rollout still requires separately approved API routes, narrow API artifact release, NotificationQueue/worker integration, least-privilege permissions, verified sender/provider configuration, and secure runtime provisioning of a stable random 32-byte waitlist HMAC key and HTTPS storefront origin. Do not put this key in browser/build variables or Git. Rotation requires a quiesced identity/token migration plan; changing it blindly would invalidate opt-outs and identity lookup. No new database or scheduler is introduced. SMS has neither consent nor provider activation in this milestone.
+
+No real sender is constructed by the new default runtime. Real launch also requires owner-approved retention/contact handling, operator reconciliation procedures and administrator/customer acceptance. Existing accepted Lambda artifacts, public Job 9, restricted Admin DEV Job 1, disabled automatic hosting triggers, disabled media activation and disabled payment admission remain release gates. Hosted duplicate-activation acceptance remains **NOT PASSED**.
+
+## Local validation
+
+Use the existing disposable loopback DynamoDB fixture infrastructure with `node backend/scripts/waitlist-local.mjs` after backend compilation. The client rejects non-loopback destinations and uses dummy credentials; all delivery is mocked. Coverage includes concurrent normalized signup, independent scopes, inactive/closed eligibility, bounded pagination, stock isolation, explicit campaigns/continuation, repeated approvals, concurrent delivery, suppression, changed stock, known and unknown failures, lost queue acknowledgements, post-send persistence failure and rate limiting.
+
+The existing preview supports `node web/scripts/preview-orders.mjs --waitlists`, with a disposable table and a visibly synthetic signup/admin screen. It is a standalone local script, refuses production mode and is never imported by application runtime. Browser acceptance covers keyboard consent/submission, persisted admin visibility, unavailable-stock rejection and 390px mobile layout. Unit/API/relay tests cover unauthorized administrators, fail-closed runtime, body bounds, native GET/POST safety and same-origin/session enforcement.
+
+Validated checkpoint: 577 frontend tests; 1,125 backend tests; 10 legacy artifact checks and one API artifact check; 12 DynamoDB Local scenario groups plus loopback/mock-only verification. Frontend type checking, lint, production build and repository formatting passed. Backend compilation/type checking and dependency audit passed (zero findings). Infrastructure source and accepted artifact references were unchanged; required infrastructure validation remains part of the push/PR CI gate. The focused review corrected event canonicalization, reserved-word rate limiting and transient transaction-conflict recovery before checkpointing.

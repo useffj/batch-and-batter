@@ -1,3 +1,4 @@
+import type { Waitlists } from './waitlists';
 import { RefundWorklist } from './refund-worklist';
 import type { Refunds } from './refunds';
 import { GuestOrders } from './guest-orders';
@@ -37,6 +38,7 @@ export function createEntrypoint(
   getGuestOrders?: () => GuestOrders,
   getRefunds?: () => Refunds,
   getRefundWorklist?: () => RefundWorklist,
+  getWaitlists?: () => Waitlists,
 ) {
   const http = createHandler(
     getRepository,
@@ -51,6 +53,7 @@ export function createEntrypoint(
     getGuestOrders,
     getRefunds,
     getRefundWorklist,
+    getWaitlists,
   );
   let payment: ReturnType<typeof createPaymentHttp> | undefined;
   const automatic = createAutoOpenHandler(getRepository);
