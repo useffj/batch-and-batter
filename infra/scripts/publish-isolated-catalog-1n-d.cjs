@@ -205,6 +205,60 @@ function ownerOnlyJournal(directory) {
   }
   return api.createJournal(directory);
 }
+function verifyTemporaryIdentity(credentials, execute = execFileSync) {
+  check(
+    credentials &&
+      ['accessKeyId', 'secretAccessKey', 'sessionToken'].every(
+        (name) =>
+          typeof credentials[name] === 'string' && credentials[name].length > 0,
+      ),
+    'TEMPORARY_SESSION_REQUIRED',
+  );
+  let identity;
+  try {
+    identity = JSON.parse(
+      execute(
+        'aws',
+        [
+          'sts',
+          'get-caller-identity',
+          '--region',
+          'us-east-2',
+          '--output',
+          'json',
+        ],
+        {
+          encoding: 'utf8',
+          timeout: 30000,
+          maxBuffer: 16384,
+          stdio: ['ignore', 'pipe', 'pipe'],
+          // Child-process memory only: never arguments, shell, disk, logs or ambient credential sources.
+          env: {
+            PATH: process.env.PATH,
+            AWS_ACCESS_KEY_ID: credentials.accessKeyId,
+            AWS_SECRET_ACCESS_KEY: credentials.secretAccessKey,
+            AWS_SESSION_TOKEN: credentials.sessionToken,
+            AWS_CONFIG_FILE: '/dev/null',
+            AWS_SHARED_CREDENTIALS_FILE: '/dev/null',
+            AWS_EC2_METADATA_DISABLED: 'true',
+            AWS_MAX_ATTEMPTS: '1',
+            AWS_PAGER: '',
+          },
+        },
+      ),
+    );
+  } catch {
+    throw Error('TEMPORARY_IDENTITY_UNVERIFIED');
+  }
+  check(
+    identity.Account === api.ACCOUNT &&
+      identity.Arn ===
+        'arn:aws:sts::302154194958:assumed-role/' +
+          roleName +
+          '/isolated-catalog-1n-d',
+    'ASSUMED_ROLE_MISMATCH',
+  );
+}
 async function main(args) {
   check(
     equal(args, ['--publish-approved-1n-d']),
@@ -251,30 +305,9 @@ async function main(args) {
   const {
     NodeHttpHandler,
   } = require('../../backend/node_modules/@smithy/node-http-handler');
-  const {
-    STSClient,
-    GetCallerIdentityCommand,
-  } = require('../../backend/node_modules/@aws-sdk/nested-clients/sts');
-  const sts = new STSClient({
-    region: 'us-east-2',
-    credentials,
-    maxAttempts: 1,
-    requestHandler: new NodeHttpHandler({
-      connectionTimeout: 5000,
-      requestTimeout: 30000,
-    }),
-  });
   let s3;
   try {
-    const identity = await sts.send(new GetCallerIdentityCommand({}));
-    check(
-      identity.Account === api.ACCOUNT &&
-        identity.Arn ===
-          'arn:aws:sts::302154194958:assumed-role/' +
-            roleName +
-            '/isolated-catalog-1n-d',
-      'ASSUMED_ROLE_MISMATCH',
-    );
+    verifyTemporaryIdentity(credentials);
     s3 = createS3Adapter({
       key,
       sha256: input.sha256,
@@ -320,11 +353,15 @@ async function main(args) {
       }),
     );
   } finally {
-    sts.destroy();
     s3?.destroy();
   }
 }
-module.exports = { inspectProtection, ownerOnlyJournal, main };
+module.exports = {
+  inspectProtection,
+  ownerOnlyJournal,
+  verifyTemporaryIdentity,
+  main,
+};
 if (require.main === module)
   main(process.argv.slice(2)).catch(() => {
     // SDK/CLI exceptions may contain credentials or signed requests. Keep failure output constant.

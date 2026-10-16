@@ -1015,3 +1015,59 @@ test('real publication journal enforces owner-only directory and entry permissio
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('temporary role verification uses only explicit in-memory credentials and rejects wrong identities', () => {
+  const entry = require(
+    resolve(__dirname, '../../../scripts/publish-isolated-catalog-1n-d.cjs'),
+  );
+  const credentials = {
+    accessKeyId: 'synthetic-key',
+    secretAccessKey: 'synthetic-secret',
+    sessionToken: 'synthetic-session',
+  };
+  const execute = (file: string, args: string[], options: any) => {
+    assert.equal(file, 'aws');
+    assert.deepEqual(args, [
+      'sts',
+      'get-caller-identity',
+      '--region',
+      'us-east-2',
+      '--output',
+      'json',
+    ]);
+    assert.equal(options.env.AWS_ACCESS_KEY_ID, credentials.accessKeyId);
+    assert.equal(
+      options.env.AWS_SECRET_ACCESS_KEY,
+      credentials.secretAccessKey,
+    );
+    assert.equal(options.env.AWS_SESSION_TOKEN, credentials.sessionToken);
+    assert.equal(options.env.AWS_PROFILE, undefined);
+    assert.equal(options.env.AWS_CONFIG_FILE, '/dev/null');
+    assert.equal(options.env.AWS_SHARED_CREDENTIALS_FILE, '/dev/null');
+    assert.equal(options.env.AWS_MAX_ATTEMPTS, '1');
+    assert.deepEqual(options.stdio, ['ignore', 'pipe', 'pipe']);
+    return JSON.stringify({
+      Account: api.ACCOUNT,
+      Arn: 'arn:aws:sts::302154194958:assumed-role/batch-and-batter-dev-api-artifact-publisher/isolated-catalog-1n-d',
+    });
+  };
+  entry.verifyTemporaryIdentity(credentials, execute);
+  assert.throws(
+    () => entry.verifyTemporaryIdentity({}, execute),
+    /TEMPORARY_SESSION_REQUIRED/,
+  );
+  assert.throws(
+    () =>
+      entry.verifyTemporaryIdentity(credentials, () =>
+        JSON.stringify({ Account: 'wrong' }),
+      ),
+    /ASSUMED_ROLE_MISMATCH/,
+  );
+  assert.throws(
+    () =>
+      entry.verifyTemporaryIdentity(credentials, () => {
+        throw Error('must not disclose secret');
+      }),
+    /^Error: TEMPORARY_IDENTITY_UNVERIFIED$/,
+  );
+});
