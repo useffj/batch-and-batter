@@ -1189,7 +1189,15 @@ export async function notificationsRelay(
 export async function guestAccessRelay(
   request: Request,
   orderId: string,
-  action: 'status' | 'reissue' | 'revoke' | 'request-status' | 'review',
+  action:
+    | 'status'
+    | 'reissue'
+    | 'revoke'
+    | 'request-status'
+    | 'review'
+    | 'refund-status'
+    | 'authorize'
+    | 'reconcile',
   c: AdminConfig,
   fetcher: typeof fetch = fetch,
 ) {
@@ -1199,7 +1207,11 @@ export async function guestAccessRelay(
       id(orderId) !== orderId ||
       new URL(request.url).search ||
       request.method !==
-        (action === 'status' || action === 'request-status' ? 'GET' : 'POST')
+        (action === 'status' ||
+        action === 'request-status' ||
+        action === 'refund-status'
+          ? 'GET'
+          : 'POST')
     )
       throw new AdminFailure('REQUEST', 400);
     if (
@@ -1208,7 +1220,11 @@ export async function guestAccessRelay(
     )
       throw new AdminFailure('REQUEST', 403);
     let body: string | undefined;
-    if (action !== 'status' && action !== 'request-status') {
+    if (
+      action !== 'status' &&
+      action !== 'request-status' &&
+      action !== 'refund-status'
+    ) {
       if (
         request.headers.get('origin') !== config.origin ||
         request.headers.get('content-type')?.split(';')[0] !==
@@ -1245,10 +1261,14 @@ export async function guestAccessRelay(
       config.api +
         '/admin/orders/' +
         orderId +
-        (action === 'review' || action === 'request-status'
-          ? '/requests'
-          : '/access') +
-        (action === 'status' || action === 'request-status'
+        (['refund-status', 'authorize', 'reconcile'].includes(action)
+          ? '/refunds'
+          : action === 'review' || action === 'request-status'
+            ? '/requests'
+            : '/access') +
+        (action === 'status' ||
+        action === 'request-status' ||
+        action === 'refund-status'
           ? ''
           : '/' + action),
       {
@@ -1275,7 +1295,9 @@ export async function guestAccessRelay(
       );
     const data = await json(
       r,
-      action === 'request-status' ? 131072 : 32768,
+      action === 'request-status' || action === 'refund-status'
+        ? 131072
+        : 32768,
       new AdminFailure('INVALID'),
     );
     if (session.expiresAt <= Date.now()) throw new AdminFailure('EXPIRED', 401);

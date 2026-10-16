@@ -1,3 +1,4 @@
+import { ledgerKey, refundLedger } from './refund-domain';
 import {
   GetCommand,
   TransactWriteCommand,
@@ -131,6 +132,32 @@ export class FulfillmentRepository {
       throw new AdminError(404, 'ORDER_NOT_FOUND', 'Order not found.');
     if (order.status !== 'PAID' || order.paymentStatus !== 'CAPTURED')
       throw conflict();
+    const ledgerRaw = await this.client.send(
+      new GetCommand({
+        TableName: this.table,
+        Key: ledgerKey(orderId),
+        ConsistentRead: true,
+      }),
+    );
+    const ledger = ledgerRaw.Item
+      ? refundLedger.parse(
+          Object.fromEntries(
+            Object.entries(ledgerRaw.Item).filter(
+              ([k]) => k !== 'PK' && k !== 'SK',
+            ),
+          ),
+        )
+      : null;
+    if (
+      ledger &&
+      (ledger.orderId !== orderId ||
+        ledger.blocked ||
+        ledger.active ||
+        order.items.every(
+          (i) => (ledger.returned[i.productId] ?? 0) >= i.quantity,
+        ))
+    )
+      throw conflict();
     const prior = await readFulfillment(this.client, this.table, orderId);
     if ((prior?.revision ?? 0) !== input.revision) throw conflict();
     const from = prior?.status;
@@ -162,6 +189,20 @@ export class FulfillmentRepository {
       await this.client.send(
         new TransactWriteCommand({
           TransactItems: [
+            {
+              ConditionCheck: {
+                TableName: this.table,
+                Key: ledgerKey(orderId),
+                ...(ledger
+                  ? {
+                      ConditionExpression: 'revision=:revision',
+                      ExpressionAttributeValues: {
+                        ':revision': ledger.revision,
+                      },
+                    }
+                  : { ConditionExpression: 'attribute_not_exists(PK)' }),
+              },
+            },
             {
               ConditionCheck: {
                 TableName: this.table,

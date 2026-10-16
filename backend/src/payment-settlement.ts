@@ -1,3 +1,4 @@
+import { ledgerKey, refundLedger } from './refund-domain';
 import { refundKey, eventWork } from './notification-contract';
 import {
   paymentDiagnostic,
@@ -1301,6 +1302,24 @@ export class FinancialWorkflow extends PaymentWorkflow {
       orderSchema,
     );
     const mark = a.settlement;
+    const refund =
+      o?.status === 'CANCELLED' && mark.outcome === 'PAID'
+        ? await readPayment(
+            this.client,
+            this.commerce,
+            ledgerKey(o.orderId),
+            refundLedger,
+          )
+        : null;
+    const refunded =
+      !!refund &&
+      refund.orderId === o?.orderId &&
+      refund.settlementId === mark.id &&
+      refund.capturedCents === a.amountCents &&
+      refund.refundedCents === a.amountCents &&
+      refund.reservedCents === 0 &&
+      refund.active === null &&
+      !refund.blocked;
     if (
       !c ||
       !o ||
@@ -1334,7 +1353,7 @@ export class FinancialWorkflow extends PaymentWorkflow {
       o.currency !== a.currency ||
       (mark.outcome === 'PAID'
         ? c.status !== 'CONVERTED' ||
-          o.status !== 'PAID' ||
+          (o.status !== 'PAID' && !refunded) ||
           o.paymentStatus !== 'CAPTURED' ||
           a.status !== 'CAPTURED'
         : c.status !== (mark.outcome === 'EXPIRED' ? 'EXPIRED' : 'CANCELLED') ||

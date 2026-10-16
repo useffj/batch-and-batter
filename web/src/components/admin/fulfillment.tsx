@@ -317,6 +317,18 @@ export function Fulfillment({ expiresAt }: { expiresAt: number }) {
                         {o.customerName} · Payment: {human(o.paymentStatus)}
                       </p>
                       <ul>
+                        {o.refundProcessing && (
+                          <li>
+                            Refund processing or reconciliation: fulfillment is
+                            blocked.
+                          </li>
+                        )}
+                        {o.refundInventory?.map((i, n) => (
+                          <li key={'refund-' + n}>
+                            {i.name}: {i.remaining} remaining to fulfill,{' '}
+                            {i.returned} returned to stock.
+                          </li>
+                        ))}
                         {o.items?.map((i, n) => (
                           <li key={n}>
                             {i.quantity} × {i.name}

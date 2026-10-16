@@ -1,4 +1,10 @@
 import {
+  ledgerKey,
+  refundLedger,
+  refundOperationKey,
+  refundOperation,
+} from './refund-domain';
+import {
   CancellationRequests,
   cancellationKey,
   requestInput,
@@ -520,7 +526,42 @@ export class GuestOrders {
           p.timezone === 'America/Denver' &&
           p.date > denverWall(this.now()).slice(0, 10),
       );
+    const refundRaw = await this.read(this.commerce, ledgerKey(id));
+    const ledger = refundRaw ? refundLedger.parse(refundRaw) : null;
+    if (
+      ledger &&
+      (ledger.orderId !== id || ledger.settlementId !== o.settlement?.id)
+    )
+      throw fail();
+    let refundStatus = ledger?.lastStatus ?? null;
+    if (ledger?.active) {
+      const operation = refundOperation.parse(
+        await this.read(this.operations, refundOperationKey(id, ledger.active)),
+      );
+      if (operation.orderId !== id || operation.operationId !== ledger.active)
+        throw fail();
+      refundStatus = operation.status;
+    }
+    if (ledger) {
+      const current = refundLedger.parse(
+        await this.read(this.commerce, ledgerKey(id)),
+      );
+      const currentOrder = await this.order(id);
+      if (
+        current.revision !== ledger.revision ||
+        currentOrder.updatedAt !== o.updatedAt
+      )
+        throw fail('STATUS_REFRESH_REQUIRED', 503);
+    }
+    if (ledger?.blocked) refundStatus = 'RECONCILIATION_REQUIRED';
     return {
+      refund: ledger
+        ? {
+            status: refundStatus,
+            refundedCents: ledger.refundedCents,
+            currency: o.currency,
+          }
+        : null,
       cancellation: await this.requests().view(id),
       order: {
         reference: o.displayOrderNumber ?? null,

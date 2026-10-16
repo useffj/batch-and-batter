@@ -1,3 +1,9 @@
+import {
+  refundOperation,
+  refundOperationKey,
+  refundLedger,
+  ledgerKey,
+} from './refund-domain';
 import { cancellationKey, cancellationState } from './cancellation-requests';
 import {
   GetCommand,
@@ -138,8 +144,33 @@ export class Notifications {
   }
   private async eligibility(
     order: Order,
-    o: Pick<Operation, 'kind' | 'channel' | 'pickupDate'>,
+    o: Pick<Operation, 'kind' | 'channel' | 'pickupDate'> & { key?: string },
   ): Promise<string | null> {
+    if (o.kind === 'REFUND') {
+      if (!o.key || o.channel !== 'email') return 'REFUND_UNVERIFIED';
+      const op = refundOperation.safeParse(
+        await this.read(
+          this.operations,
+          refundOperationKey(order.orderId, o.key.split('#')[1]),
+        ),
+      );
+      const ledger = refundLedger.safeParse(
+        await this.read(this.commerce, ledgerKey(order.orderId)),
+      );
+      return op.success &&
+        ledger.success &&
+        !ledger.data.blocked &&
+        op.data.orderId === order.orderId &&
+        op.data.operationId === o.key.split('#')[1] &&
+        ledger.data.orderId === order.orderId &&
+        op.data.status === 'SUCCEEDED' &&
+        !!op.data.providerId &&
+        op.data.settlementId === order.settlement?.id &&
+        ledger.data.settlementId === order.settlement?.id &&
+        ledger.data.refundedCents >= op.data.amountCents
+        ? null
+        : 'REFUND_UNVERIFIED';
+    }
     if (!(await this.authority(order))) return 'PAYMENT_NOT_ELIGIBLE';
     if (o.kind === 'PICKUP_CHANGE' && order.pickup.date !== o.pickupDate)
       return 'PICKUP_CHANGED';
@@ -448,28 +479,48 @@ export class Notifications {
     }
     const value = order!;
     const title =
-      o.kind === 'CONFIRMATION'
-        ? 'Your Batch & Batter order'
-        : o.kind === 'REQUEST'
-          ? 'Your bakery assistance request has been received'
-          : o.kind === 'ACCESS'
-            ? 'Your Batch & Batter order link'
-            : o.kind === 'PICKUP_CHANGE'
-              ? 'Your Batch & Batter pickup has changed'
-              : 'Your Batch & Batter pickup reminder';
+      o.kind === 'REFUND'
+        ? 'Your Batch & Batter refund is completed'
+        : o.kind === 'CONFIRMATION'
+          ? 'Your Batch & Batter order'
+          : o.kind === 'REQUEST'
+            ? 'Your bakery assistance request has been received'
+            : o.kind === 'ACCESS'
+              ? 'Your Batch & Batter order link'
+              : o.kind === 'PICKUP_CHANGE'
+                ? 'Your Batch & Batter pickup has changed'
+                : 'Your Batch & Batter pickup reminder';
+    const refund =
+      o.kind === 'REFUND'
+        ? refundOperation.parse(
+            await this.read(
+              this.operations,
+              refundOperationKey(id, o.key.split('#')[1]),
+            ),
+          )
+        : null;
     const text = [
       title,
       value.displayOrderNumber
         ? `Order ${value.displayOrderNumber}`
         : 'Your order',
+      ...(refund
+        ? [
+            `Refund completed: ${(refund.amountCents / 100).toFixed(2)} ${refund.currency.toUpperCase()}. Your bank may take additional time to post it.`,
+          ]
+        : []),
       ...value.items.map((i) => `${i.quantity} × ${i.name}`),
       `Total: ${(value.totalCents / 100).toFixed(2)} ${value.currency.toUpperCase()}`,
-      `Pickup: ${value.pickup.date}, ${value.pickup.startTime}–${value.pickup.endTime} America/Denver`,
-      value.pickup.location,
-      value.pickup.instructions,
+      ...(refund
+        ? []
+        : [
+            `Pickup: ${value.pickup.date}, ${value.pickup.startTime}–${value.pickup.endTime} America/Denver`,
+            value.pickup.location,
+            value.pickup.instructions,
+          ]),
       ...(o.kind === 'REQUEST'
         ? [
-            'Your cancellation or refund-exception request has been received. Review or financial processing may still be pending. This message does not confirm cancellation or a refund.',
+            'Your cancellation or refund-exception request has been received. This records your request only; it does not mean a refund has started. This message does not confirm cancellation or a refund.',
           ]
         : []),
       this.options.policies,

@@ -310,6 +310,12 @@ export function createStripeWebhook(
     scope: string;
     accountId: string;
     toleranceSeconds?: number;
+    refundEvent?: (event: {
+      eventId: string;
+      orderId: string;
+      operationId: string;
+      refundId: string;
+    }) => Promise<void>;
   },
   now = () => Date.now(),
 ) {
@@ -356,6 +362,31 @@ export function createStripeWebhook(
         (verified.account && verified.account !== config.accountId)
       )
         throw new Error('WRONG_ENVIRONMENT');
+      if (
+        ['refund.created', 'refund.updated', 'refund.failed'].includes(
+          verified.type,
+        )
+      ) {
+        const refund = verified.data.object as Stripe.Refund;
+        if (
+          refund.object !== 'refund' ||
+          refund.metadata?.environment !== 'dev'
+        )
+          throw new Error('WRONG_ENVIRONMENT');
+        statusCode = 503;
+        if (!config.refundEvent) throw new Error('REFUND_PROCESSOR_DISABLED');
+        await config.refundEvent({
+          eventId: verified.id,
+          orderId: refund.metadata.orderId,
+          operationId: refund.metadata.refundOperationId,
+          refundId: refund.id,
+        });
+        return {
+          statusCode: 200,
+          headers: { 'cache-control': 'no-store' },
+          body: '{"received":true}',
+        };
+      }
       if (
         !webhookTypes.includes(verified.type as (typeof webhookTypes)[number])
       )

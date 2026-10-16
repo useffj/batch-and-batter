@@ -1,3 +1,4 @@
+import { seedRefundOrder } from '../../backend/scripts/refund-local-fixtures.mjs';
 // Loopback-only synthetic acceptance. No production import or live providers.
 import { createServer } from 'vite';
 import { createRequire } from 'node:module';
@@ -89,6 +90,22 @@ const guest = new GuestOrders(
   );
 await service.confirmation(o.orderId);
 await service.deliver(o.orderId, 'CONFIRMATION#email');
+const refundMode = process.argv.includes('--refund');
+const { Refunds } = require('./dist/src/refunds');
+const { MockStripeRefundProvider } = require('./dist/src/refund-provider');
+const provider = new MockStripeRefundProvider();
+provider.initialStatus = 'succeeded';
+let refundNow = now();
+if (refundMode) await seedRefundOrder(f, 1, now());
+const refunds = new Refunds(
+  f.client,
+  f.table,
+  f.table,
+  f.table,
+  provider,
+  'dev:acct_SYNTHETIC',
+  () => ++refundNow,
+);
 const token = email.messages[0].text.split('/order/manage#')[1].split(/\s/)[0];
 const handler = createHandler(
   () => ({}),
@@ -101,6 +118,7 @@ const handler = createHandler(
   undefined,
   undefined,
   () => guest,
+  () => refunds,
 );
 const web = resolve(new URL('..', import.meta.url).pathname),
   root = await mkdtemp(join(tmpdir(), 'bb-guest-preview-'));
@@ -110,7 +128,7 @@ await writeFile(
 );
 await writeFile(
   join(root, 'preview.tsx'),
-  `import React from 'react';import {createRoot} from 'react-dom/client';import {ManageOrder} from '/@fs/${web}/src/components/guest/manage-order.tsx';import '/@fs/${web}/src/app/globals.css';import '/@fs/${web}/src/components/admin/orders.css';import {CancellationReview} from '/@fs/${web}/src/components/admin/cancellation-review.tsx';createRoot(document.getElementById('root')).render(<><p role="note">SYNTHETIC LOCAL ACCEPTANCE. DynamoDB Local, mock email, no AWS. Clock: ${process.argv.includes('--late') ? 'October 21, 5 PM Denver (after deadline)' : 'October 20, noon Denver'}.</p>{location.pathname==='/review'?<main className="admin-orders"><h1>Synthetic customer request review</h1><CancellationReview orderId="${o.orderId}"/></main>:<ManageOrder/>}</>);`,
+  `import React from 'react';import {createRoot} from 'react-dom/client';import {ManageOrder} from '/@fs/${web}/src/components/guest/manage-order.tsx';import '/@fs/${web}/src/app/globals.css';import '/@fs/${web}/src/components/admin/orders.css';import {RefundReview} from '/@fs/${web}/src/components/admin/refunds.tsx';import {CancellationReview} from '/@fs/${web}/src/components/admin/cancellation-review.tsx';createRoot(document.getElementById('root')).render(<><p role="note">SYNTHETIC LOCAL ACCEPTANCE. DynamoDB Local, mock email, no AWS. Clock: ${process.argv.includes('--late') ? 'October 21, 5 PM Denver (after deadline)' : 'October 20, noon Denver'}.</p>{location.pathname==='/review'?<main className="admin-orders"><h1>Synthetic customer request review</h1><CancellationReview orderId="${o.orderId}"/>${refundMode ? `<RefundReview orderId="${o.orderId}"/>` : ''}</main>:<ManageOrder/>}</>);`,
 );
 const server = await createServer({
   configFile: false,
@@ -154,8 +172,13 @@ const server = await createServer({
               response = await handler({
                 routeKey: admin
                   ? req.method +
-                    ' /admin/orders/{orderId}/requests' +
-                    (action === 'review' ? '/review' : '')
+                    ' /admin/orders/{orderId}/' +
+                    (req.url.includes('/refunds')
+                      ? 'refunds' +
+                        (['authorize', 'reconcile'].includes(action)
+                          ? '/' + action
+                          : '')
+                      : 'requests' + (action === 'review' ? '/review' : ''))
                   : req.method + ' /orders/manage/' + action,
                 pathParameters: admin ? { orderId: o.orderId } : undefined,
                 body,

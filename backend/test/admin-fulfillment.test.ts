@@ -102,16 +102,21 @@ test('transaction guards payment and revision; only companion records are writte
   );
   const tx = f.calls.find((c) => c.constructor.name === 'TransactWriteCommand')
     .input.TransactItems;
-  assert.equal(tx.length, 3);
-  assert.deepEqual(tx[0].ConditionCheck.ExpressionAttributeValues, {
+  assert.equal(tx.length, 4);
+  assert.equal(tx[0].ConditionCheck.Key.SK, 'REFUND_LEDGER');
+  assert.equal(
+    tx[0].ConditionCheck.ConditionExpression,
+    'attribute_not_exists(PK)',
+  );
+  assert.deepEqual(tx[1].ConditionCheck.ExpressionAttributeValues, {
     ':paid': 'PAID',
     ':captured': 'CAPTURED',
     ':revision': f.order.updatedAt,
   });
-  assert.equal(tx[0].ConditionCheck.Key.SK, 'META');
+  assert.equal(tx[1].ConditionCheck.Key.SK, 'META');
   assert(
     tx
-      .slice(1)
+      .slice(2)
       .every(
         (x: any) =>
           x.Put.TableName === 'local' &&
