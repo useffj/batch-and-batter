@@ -5,7 +5,11 @@ import { fakeRepository } from './fixtures';
 import { orderDto, AdminOrders } from '../src/admin-orders';
 import { newOrderReference, orderIndexKeys } from '../src/order-reference';
 import { orderSchema } from '../src/payment-domain';
-for (const route of ['GET /admin/orders', 'GET /admin/orders/{orderId}'])
+for (const route of [
+  'GET /admin/orders',
+  'GET /admin/orders/{orderId}',
+  'GET /admin/orders/{orderId}/notifications',
+])
   test(
     route + ' rejects unauthorized access before data retrieval',
     async () => {

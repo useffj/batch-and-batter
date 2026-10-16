@@ -1,4 +1,5 @@
 'use client';
+import { NotificationStatus } from './notification-status';
 import { useEffect, useState } from 'react';
 import { AdminNavigation } from './navigation';
 import './weekly-drops.css';
@@ -129,6 +130,7 @@ export function OrderDetails({ order: o }: { order: Order }) {
         <br />
         Updated {timestamp(o.updatedAt)} Denver
       </p>
+      <NotificationStatus key={o.orderId} orderId={o.orderId} />
     </section>
   );
 }

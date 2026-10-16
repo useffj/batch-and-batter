@@ -1,3 +1,4 @@
+import { consentKey } from '../src/notification-contract';
 import { customerLookupRecords } from '../src/customer-lookup';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -156,8 +157,16 @@ test('handoff freezes snapshots, owns inventory, creates bounded distinct atomic
   assert.ok(s.row('operations', work.workflow));
   assert.equal(work.workflow.deadline, c.paymentStartedAt);
   const actions = s.transactions.at(-1)!;
-  assert.equal(actions.length, 12 + customerLookupRecords(o).length);
-  assert(actions.length <= 17);
+  assert.equal(actions.length, 13 + customerLookupRecords(o).length);
+  assert(actions.length <= 18);
+  assert.deepEqual(s.row('commerce', consentKey(o.orderId)), {
+    ...consentKey(o.orderId),
+    phone: o.customer.phone,
+    smsTransactionalConsent: o.customer.smsTransactionalConsent,
+    consentedAt: o.customer.smsTransactionalConsent ? c.paymentStartedAt : null,
+    consentSource: 'CHECKOUT_V1',
+    optOutAt: null,
+  });
   for (const row of customerLookupRecords(o))
     assert.deepEqual(s.row('commerce', row), row);
   assert.deepEqual(
@@ -172,6 +181,7 @@ test('handoff freezes snapshots, owns inventory, creates bounded distinct atomic
       'Put',
       'Put',
       'Delete',
+      'Put',
       'Put',
       'Put',
       'Put',
@@ -254,7 +264,9 @@ test('lost transaction response resolves committed receipt without another Order
   const first = await repo.start(request);
   assert.deepEqual(await repo.start(request), first);
   assert.equal(
-    [...s.rows.keys()].filter((k) => k.startsWith('commerce|ORDER#')).length,
+    [...s.rows.keys()].filter(
+      (k) => k.startsWith('commerce|ORDER#') && k.endsWith('|META'),
+    ).length,
     1,
   );
 });
@@ -278,7 +290,9 @@ for (const sameKey of [true, false])
         ),
       );
     assert.equal(
-      [...s.rows.keys()].filter((k) => k.startsWith('commerce|ORDER#')).length,
+      [...s.rows.keys()].filter(
+        (k) => k.startsWith('commerce|ORDER#') && k.endsWith('|META'),
+      ).length,
       1,
     );
     assert.equal(
@@ -302,7 +316,9 @@ for (const status of ['PAUSED', 'CLOSED'])
     };
     await assert.rejects(repo.start(request), fails('DROP_NOT_OPEN'));
     assert.equal(
-      [...s.rows.keys()].filter((k) => k.startsWith('commerce|ORDER#')).length,
+      [...s.rows.keys()].filter(
+        (k) => k.startsWith('commerce|ORDER#') && k.endsWith('|META'),
+      ).length,
       0,
     );
   });
@@ -358,7 +374,9 @@ for (const winner of ['PUT', 'DELETE', 'EXPIRY'])
     };
     await assert.rejects(repo.start(request), fails('CART_CONFLICT'));
     assert.equal(
-      [...s.rows.keys()].filter((k) => k.startsWith('commerce|ORDER#')).length,
+      [...s.rows.keys()].filter(
+        (k) => k.startsWith('commerce|ORDER#') && k.endsWith('|META'),
+      ).length,
       0,
     );
   });

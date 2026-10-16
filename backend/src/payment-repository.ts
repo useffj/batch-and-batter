@@ -1,3 +1,4 @@
+import { consentKey } from './notification-contract';
 import { customerLookupRecords } from './customer-lookup';
 import {
   newOrderReference,
@@ -446,6 +447,14 @@ export class PaymentRepository {
         createdAt: started,
       }),
       newPut(this.commerce, { ...referenceKey(displayOrderNumber), orderId }),
+      newPut(this.commerce, {
+        ...consentKey(orderId),
+        phone: order.customer.phone,
+        smsTransactionalConsent: order.customer.smsTransactionalConsent,
+        consentedAt: order.customer.smsTransactionalConsent ? started : null,
+        consentSource: 'CHECKOUT_V1',
+        optOutAt: null,
+      }),
       ...customerLookupRecords(order).map((row) => newPut(this.commerce, row)),
     ];
     try {

@@ -443,6 +443,11 @@ export class DevelopmentStack extends Stack {
         apigateway.HttpMethod.POST,
         'AdminCustomerHistoryIntegration',
       ],
+      [
+        '/admin/orders/{orderId}/notifications',
+        apigateway.HttpMethod.GET,
+        'AdminNotificationsIntegration',
+      ],
       ['/admin/orders', apigateway.HttpMethod.GET, 'AdminOrdersIntegration'],
       [
         '/admin/orders/{orderId}',
@@ -560,6 +565,7 @@ export class DevelopmentStack extends Stack {
       new iam.PolicyStatement({
         actions: ['dynamodb:Query'],
         resources: [
+          operationsTable.tableArn,
           commerceTable.tableArn,
           `${commerceTable.tableArn}/index/GSI1`,
           `${commerceTable.tableArn}/index/GSI2`,

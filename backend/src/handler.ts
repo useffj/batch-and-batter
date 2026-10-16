@@ -1,3 +1,4 @@
+import { AdminNotifications } from './admin-notifications';
 import { AdminCustomers } from './admin-customers';
 import { FulfillmentRepository } from './admin-fulfillment';
 import { AdminOrders } from './admin-orders';
@@ -29,6 +30,7 @@ export function createEntrypoint(
   getOrders?: () => AdminOrders,
   getFulfillment?: () => FulfillmentRepository,
   getCustomers?: () => AdminCustomers,
+  getNotifications?: () => AdminNotifications,
 ) {
   const http = createHandler(
     getRepository,
@@ -39,6 +41,7 @@ export function createEntrypoint(
     getOrders,
     getFulfillment,
     getCustomers,
+    getNotifications,
   );
   let payment: ReturnType<typeof createPaymentHttp> | undefined;
   const automatic = createAutoOpenHandler(getRepository);
@@ -69,6 +72,7 @@ let media: MediaRepository | undefined;
 let orders: AdminOrders | undefined;
 let fulfillment: FulfillmentRepository | undefined;
 let customers: AdminCustomers | undefined;
+let notifications: AdminNotifications | undefined;
 export const handler = createEntrypoint(
   () =>
     (repository ??= new DynamoCatalogRepository(
@@ -129,5 +133,10 @@ export const handler = createEntrypoint(
             process.env.CATALOG_TABLE_NAME ?? '',
           ).getDrop(id)
         )?.name ?? null,
+    )),
+  () =>
+    (notifications ??= new AdminNotifications(
+      DynamoDBDocumentClient.from(new DynamoDBClient({ maxAttempts: 1 })),
+      process.env.OPERATIONS_TABLE_NAME ?? '',
     )),
 );

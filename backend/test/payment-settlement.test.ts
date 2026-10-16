@@ -1,3 +1,4 @@
+import { refundKey, eventWork } from '../src/notification-contract';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { paymentFixture } from './payment-execution-fixture';
@@ -120,8 +121,13 @@ test('capture claim, dispatch, evidence and paid conversion preserve ownership u
     'processing',
   );
   assert.equal(await f.run(), 'SETTLED');
-  assert.equal(f.s.transactions.at(-1)!.length, 7);
+  assert.equal(f.s.transactions.at(-1)!.length, 9);
   assert.equal(f.cart().status, 'CONVERTED');
+  assert.equal(
+    f.s.row('commerce', refundKey(f.cart().orderId))?.disposition,
+    'NONE',
+  );
+  assert.ok(f.s.row('operations', eventWork(f.cart().orderId)));
   assert.equal(f.inventory().reserved, 0);
   assert.equal(f.inventory().sold, 2);
   assert.equal(f.cart().committingStartedAt, start);
@@ -150,13 +156,13 @@ test('different-key capture claim uses six distinct actions', async () => {
   await f.run();
   assert.equal(f.s.transactions.at(-1)!.length, 6);
 });
-for (const index of [0, 1, 2, 3, 4, 5, 6])
+for (const index of [0, 1, 2, 3, 4, 5, 6, 7, 8])
   test(`paid finalization rollback action ${index}`, async () => {
     const f = await fixture();
     await f.captured();
     const original = new Map(structuredClone(f.s.rows));
     f.s.before = (actions) => {
-      if (actions.length === 7)
+      if (actions.length === 9)
         throw Object.assign(new Error('rollback'), {
           name: 'TransactionCanceledException',
           CancellationReasons: actions.map((_, i) => ({
@@ -333,7 +339,7 @@ test('close after authorization does not prevent settlement', async () => {
 
 for (const paid of [true, false])
   for (const event of [false, true]) {
-    const size = 12 + (paid ? 6 : 5) + (event ? 2 : 0);
+    const size = 12 + (paid ? 8 : 5) + (event ? 2 : 0);
     test(`${paid ? 'paid' : 'unpaid'} twelve-line transaction ${event ? 'with event' : 'ordinary'} has ${size} unique actions`, async () => {
       const f = await fixture(12);
       if (paid) await f.captured();
@@ -569,7 +575,7 @@ test('webhook can finalize and complete inbox without a second capture', async (
   })!;
   await f.inbox.process(paymentMessage(receipt.work, 'STRIPE_EVENT'), f.w);
   assert.equal(f.cart().status, 'CONVERTED');
-  assert.equal(f.s.transactions.at(-1)!.length, 9);
+  assert.equal(f.s.transactions.at(-1)!.length, 11);
   assert.equal(
     f.s.row('operations', { PK: receipt.PK, SK: receipt.SK })!.state,
     'PROCESSED',
@@ -620,7 +626,7 @@ test('real snapshot changes rebuild all inventory and succeed on third attempt',
   await f.captured();
   let conflicts = 0;
   f.s.before = (a) => {
-    if (a.length === 7 && conflicts++ < 2) f.inventory().total++;
+    if (a.length === 9 && conflicts++ < 2) f.inventory().total++;
   };
   assert.equal(await f.run(), 'SETTLED');
   assert.equal(conflicts, 3);
@@ -631,7 +637,7 @@ test('three inventory conflicts retain durable finalization without recapture', 
   await f.captured();
   let attempts = 0;
   f.s.before = (a) => {
-    if (a.length === 7) {
+    if (a.length === 9) {
       attempts++;
       f.inventory().total++;
     }

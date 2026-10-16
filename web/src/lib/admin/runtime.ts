@@ -180,3 +180,26 @@ export async function customerRelay(
     );
   }
 }
+
+export async function notificationRelay(
+  request: Request,
+  orderId: string,
+  config: RuntimeConfig,
+) {
+  try {
+    const key = await loadSessionKey(config);
+    const { notificationsRelay } = await import('./server');
+    return notificationsRelay(request, orderId, {
+      ...config,
+      ADMIN_SESSION_KEY: key,
+    });
+  } catch {
+    return NextResponse.json(
+      { message: messages.CONFIGURATION },
+      {
+        status: 503,
+        headers: { 'Cache-Control': 'no-store, private', Vary: 'Cookie' },
+      },
+    );
+  }
+}
