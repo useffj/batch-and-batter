@@ -33,7 +33,13 @@ async function request(path: string, method = 'GET', body?: unknown) {
 }
 type Product = { productId: string; name: string; active: boolean };
 type Selection = { productId: string; price: string; quantity: string };
-export function WeeklyDrops({ expiresAt }: { expiresAt: number }) {
+export function WeeklyDrops({
+  expiresAt,
+  isolated = false,
+}: {
+  expiresAt: number;
+  isolated?: boolean;
+}) {
   useEffect(() => {
     const expire = () => {
       if (Date.now() >= expiresAt)
@@ -338,9 +344,10 @@ export function WeeklyDrops({ expiresAt }: { expiresAt: number }) {
               {creating ? 'New weekly Drop' : current?.drop.name}
             </h2>
             <p>
-              {current?.drop.status ?? 'DRAFT'} · Ordering remains available
-              until sold out. Maximum 12 cookies by default; cart reservations
-              remain 8 minutes.
+              {current?.drop.status ?? 'DRAFT'} ·{' '}
+              {isolated
+                ? 'Restricted DEV: no ordering or reservations.'
+                : 'Ordering remains available until sold out. Maximum 12 cookies by default; cart reservations remain 8 minutes.'}
             </p>
             <fieldset
               disabled={!editable || busy || preview}
@@ -547,6 +554,11 @@ export function WeeklyDrops({ expiresAt }: { expiresAt: number }) {
               </section>
             )}
             <div className="flex flex-wrap gap-4">
+              {isolated && current && (
+                <a href={`/admin/drops/${current.drop.dropId}/preview`}>
+                  Preview saved storefront (unsaved edits excluded)
+                </a>
+              )}
               <button
                 className="rounded border px-4 py-3"
                 onClick={() => setPreview(!preview)}
@@ -574,7 +586,13 @@ export function WeeklyDrops({ expiresAt }: { expiresAt: number }) {
                 </button>
               )}
             </div>
-            {current && (
+            {isolated && (
+              <p>
+                Restricted DEV: publication, ordering and scheduling are
+                disabled.
+              </p>
+            )}
+            {current && !isolated && (
               <section className="space-y-3 border-t pt-4">
                 <h3>Publication and status</h3>
                 <p>

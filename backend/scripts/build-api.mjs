@@ -5,12 +5,20 @@ import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 const root = fileURLToPath(new URL('../', import.meta.url));
-const out = new URL('../dist/api-release/', import.meta.url);
+const isolated = process.argv.includes('--isolated-catalog');
+if (process.argv.slice(2).some((a) => a !== '--isolated-catalog'))
+  throw Error('UNKNOWN_BUILD_OPTION');
+const out = new URL(
+  isolated ? '../dist/isolated-catalog-release/' : '../dist/api-release/',
+  import.meta.url,
+);
 await rm(out, { recursive: true, force: true });
 await mkdir(out, { recursive: true });
 const result = await build({
   absWorkingDir: root,
-  entryPoints: ['src/handler.ts'],
+  entryPoints: [
+    isolated ? 'src/isolated-catalog-handler.ts' : 'src/handler.ts',
+  ],
   outfile: fileURLToPath(new URL('handler.js', out)),
   bundle: true,
   platform: 'node',
@@ -26,6 +34,13 @@ const lock = JSON.parse(
   await readFile(new URL('../package-lock.json', import.meta.url), 'utf8'),
 );
 for (const input of Object.keys(result.metafile.inputs)) {
+  if (
+    isolated &&
+    /(?:stripe|payment|cart-|refund|guest-order|waitlist|notification|media-|client-s3|client-sqs|client-ssm|client-scheduler)/i.test(
+      input,
+    )
+  )
+    throw Error('FORBIDDEN_ISOLATED_INPUT: ' + input);
   if (
     !/^(src|node_modules)\//.test(input) ||
     /(?:^|\/)(?:test|tests|tools|scripts|credentials|\.aws|sharp|@img)(?:\/|$)|(?:payment-worker|stripe-webhook|expiry-worker|expiry-reconciler)-handler|\.test\.|\.env/.test(

@@ -1,3 +1,4 @@
+import { BrandLogo, CookiePhoto } from './presentation';
 import { JoinWaitlist } from './waitlist';
 /* A full navigation intentionally bypasses client router caches for a fresh public read. */
 /* eslint-disable @next/next/no-html-link-for-pages */
@@ -20,8 +21,7 @@ export function Storefront({ result }: { result: StorefrontResult }) {
   return (
     <main className="storefront">
       <header>
-        <h1>Batch &amp; Batter</h1>
-        <p>Cookie Co.</p>
+        <BrandLogo />
         <nav aria-label="Store navigation">
           {drop && (
             <>
@@ -98,14 +98,7 @@ export function Storefront({ result }: { result: StorefrontResult }) {
                 <ul className="products">
                   {drop.products.map((p, index) => (
                     <li key={index} className="cookie-card">
-                      <div
-                        className="cookie-media"
-                        role="img"
-                        aria-label={`Photography unavailable for ${p.name}`}
-                      >
-                        <span aria-hidden="true">B&amp;B</span>
-                        <small>Photography unavailable</small>
-                      </div>
+                      <CookiePhoto name={p.name} />
                       <div className="cookie-content">
                         <h3>{p.name}</h3>
                         <p className="cookie-description">

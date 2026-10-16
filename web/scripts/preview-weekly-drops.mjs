@@ -16,7 +16,7 @@ const {
 } = require('@aws-sdk/client-dynamodb');
 const { DynamoDBDocumentClient, PutCommand } = require('@aws-sdk/lib-dynamodb');
 const { DynamoCatalogRepository } = require('./dist/src/repository');
-const { createHandler } = require('./dist/src/api');
+const { isolatedCatalog } = require('./dist/src/isolated-catalog');
 const { catalogKeys } = require('./dist/src/keys');
 const { ADMIN_GROUP } = require('./dist/src/admin-auth');
 const raw = new DynamoDBClient({
@@ -80,23 +80,32 @@ await client.send(
     },
   }),
 );
-const handler = createHandler(() => new DynamoCatalogRepository(client, table));
+const handler = isolatedCatalog(
+  () => new DynamoCatalogRepository(client, table),
+);
 const web = resolve(new URL('..', import.meta.url).pathname),
   root = await mkdtemp(join(tmpdir(), 'bb-weekly-preview-'));
 await writeFile(
   join(root, 'index.html'),
-  '<html><meta name="viewport" content="width=device-width,initial-scale=1"><body><div id="root"></div><script type="module" src="/preview.tsx"></script></body></html>',
+  '<html><link rel="icon" href="/brand/favicon-light.ico"><meta name="viewport" content="width=device-width,initial-scale=1"><body><div id="root"></div><script type="module" src="/preview.tsx"></script></body></html>',
 );
 await writeFile(
   join(root, 'preview.tsx'),
-  `import React from 'react';import {createRoot} from 'react-dom/client';import {WeeklyDrops} from '/@fs/${web}/src/components/admin/weekly-drops.tsx';import '/@fs/${web}/src/app/globals.css';import '/@fs/${web}/src/app/admin/admin.css';createRoot(document.getElementById('root')).render(<><p role="note">SYNTHETIC LOCAL ACCEPTANCE — isolated DynamoDB Local. No AWS. Scheduling unavailable.</p><WeeklyDrops expiresAt={Date.now()+900000}/></>);`,
+  `import React from 'react';import {createRoot} from 'react-dom/client';import {WeeklyDrops} from '/@fs/${web}/src/components/admin/weekly-drops.tsx';import {DraftPreview} from '/@fs/${web}/src/components/storefront/draft-preview.tsx';import {previewData} from '/@fs/${web}/src/lib/admin/preview.ts';import '/@fs/${web}/src/app/globals.css';import '/@fs/${web}/src/app/customer.css';import '/@fs/${web}/src/app/admin/admin.css';
+function App(){const [data,setData]=React.useState(null);const id=location.pathname.match(/^\\/admin\\/drops\\/([^/]+)\\/preview$/)?.[1];React.useEffect(()=>{if(id)fetch('/api/admin/drops/'+id+'/preview').then(r=>r.json()).then(d=>setData(previewData(d,id)));},[id]);return <><p role="note">SYNTHETIC LOCAL ACCEPTANCE — DynamoDB Local. No real authentication or AWS.</p>{id?(data?<DraftPreview data={data}/>:<p>Loading saved preview</p>):<WeeklyDrops isolated expiresAt={Date.now()+900000}/>}</>;}createRoot(document.getElementById('root')).render(<App/>);`,
+);
+await writeFile(
+  join(root, 'image.tsx'),
+  `import React from 'react';export default function Image({priority, sizes, ...props}){return <img {...props}/>;}`,
 );
 const server = await createServer({
+  publicDir: resolve(web, 'public'),
   configFile: false,
   root,
   esbuild: { jsx: 'automatic' },
   resolve: {
     alias: {
+      'next/image': join(root, 'image.tsx'),
       react: resolve(web, 'node_modules/react'),
       'react-dom': resolve(web, 'node_modules/react-dom'),
     },

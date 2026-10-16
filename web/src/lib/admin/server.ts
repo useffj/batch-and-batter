@@ -28,6 +28,7 @@ import { composition, id, record, text } from './contract';
 // sessions. AES-GCM seals an access token (no refresh/ID token) for <=15 minutes;
 // it does not replace Gateway validation or provide immediate replay revocation.
 export interface AdminConfig {
+  ADMIN_CATALOG_MODE?: string;
   NODE_ENV?: string;
   ADMIN_ORIGIN?: string;
   ADMIN_API_BASE_URL?: string;
@@ -851,11 +852,19 @@ export async function dropRelay(
       method = request.method;
     const [dropId, action] = segments;
     if (
+      c.ADMIN_CATALOG_MODE === 'isolated' &&
+      action &&
+      !['composition', 'draft', 'preview'].includes(action)
+    )
+      throw new AdminFailure('REQUEST', 405);
+    if (
       segments.length > 2 ||
       (dropId && id(dropId) !== dropId) ||
       !(
         (!dropId && ['GET', 'POST'].includes(method)) ||
-        (dropId && action === 'composition' && method === 'GET') ||
+        (dropId &&
+          ['composition', 'preview'].includes(action) &&
+          method === 'GET') ||
         (dropId && action === 'draft' && method === 'PUT') ||
         (dropId &&
           ['publish', 'open', 'pause', 'resume', 'close'].includes(action) &&

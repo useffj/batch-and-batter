@@ -5,6 +5,7 @@ import './customer.css';
 
 export const metadata: Metadata = {
   title: 'Batch & Batter | Cookie Co.',
+  icons: { icon: '/brand/favicon-light.ico' },
   description:
     'Current and upcoming cookie Drops, availability and pickup information.',
 };

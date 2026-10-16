@@ -61,6 +61,22 @@ function prepare() {
     lines.push(`NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${publishableKey}`);
   // Admin values are optional for storefront-only deployments. Validate every
   // supplied value before writing; never copy the actual session key.
+  if (process.env.ADMIN_CATALOG_MODE !== undefined) {
+    if (
+      process.env.ADMIN_CATALOG_MODE !== 'isolated' ||
+      process.env.AWS_BRANCH !== 'admin-dev-3b23b18' ||
+      raw !== 'https://storefront.invalid' ||
+      submissionMode !== 'locked' ||
+      process.env.ADMIN_ORIGIN !==
+        'https://admin-dev-3b23b18.d1aw7cfglvejmo.amplifyapp.com' ||
+      !process.env.ADMIN_API_BASE_URL ||
+      process.env.ADMIN_API_BASE_URL.includes('7otpu9y03a')
+    )
+      throw new Error(
+        'Isolated catalog requires the restricted branch and locked public paths.',
+      );
+    lines.push('ADMIN_CATALOG_MODE=isolated');
+  }
   const adminNames = [
     'ADMIN_ORIGIN',
     'ADMIN_API_BASE_URL',
