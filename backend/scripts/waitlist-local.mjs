@@ -398,6 +398,55 @@ try {
   console.log(
     'PASS transient dispatch conflict remains retryable without losing notification',
   );
+  const delayedCandidate = ambiguousQueue.messages.find(
+    (m) =>
+      ![
+        retries[0].entryKey,
+        candidate.entryKey,
+        retryCandidate.entryKey,
+      ].includes(m.entryKey),
+  );
+  const delayedRow = await get({
+    PK: `WAITLIST#${scope.dropId}#${scope.productId}`,
+    SK: delayedCandidate.entryKey,
+  });
+  const delayed = new Waitlists(
+    client,
+    table,
+    table,
+    table,
+    Buffer.alloc(32, 7),
+    'https://synthetic.example',
+    queue,
+    {
+      async send(message) {
+        await email.send(message);
+        await stock(15);
+        const newer = await service.review(scope);
+        await service.campaign(scope, newer.event, 'synthetic-admin');
+      },
+    },
+    () => time,
+  );
+  await delayed.deliver(delayedCandidate);
+  assert.equal(
+    (
+      await get({
+        PK: `WAITLIST_DELIVERY#${delayedRow.id}`,
+        SK: delayedCandidate.event,
+      })
+    ).status,
+    'SENT',
+  );
+  const latest = await get({
+    PK: `WAITLIST_HISTORY#${delayedRow.id}`,
+    SK: 'LATEST',
+  });
+  assert.notEqual(latest.event, delayedCandidate.event);
+  assert.equal(latest.status, 'PENDING');
+  console.log(
+    'PASS delayed delivery preserves newer campaign status and original outcome',
+  );
   console.log(
     'PASS local acceptance uses only loopback DynamoDB and mock email; no managed AWS or provider calls',
   );

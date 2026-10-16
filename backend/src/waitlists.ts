@@ -566,6 +566,9 @@ export class Waitlists {
                     event: m.event,
                     updatedAt: new Date(this.now()).toISOString(),
                   },
+                  ConditionExpression: '#event = :event',
+                  ExpressionAttributeNames: { '#event': 'event' },
+                  ExpressionAttributeValues: { ':event': m.event },
                 },
               },
             ],
@@ -576,8 +579,24 @@ export class Waitlists {
         const expected = status.startsWith('SUPPRESSED')
           ? 'PENDING'
           : 'DISPATCHED';
-        if ((await this.read(this.operations, opKey))?.status === expected)
-          throw e;
+        if ((await this.read(this.operations, opKey))?.status !== expected)
+          return;
+        const latest = await this.read(this.operations, {
+          PK: `WAITLIST_HISTORY#${row.id}`,
+          SK: 'LATEST',
+        });
+        if (latest?.event === m.event) throw e;
+        // An older delivery must still record its outcome without replacing a newer campaign's status.
+        await this.db.send(
+          new UpdateCommand({
+            TableName: this.operations,
+            Key: opKey,
+            UpdateExpression: 'SET #s = :s',
+            ConditionExpression: '#s = :expected',
+            ExpressionAttributeNames: { '#s': 'status' },
+            ExpressionAttributeValues: { ':s': status, ':expected': expected },
+          }),
+        );
       }
     };
     let a: Awaited<ReturnType<Waitlists['availability']>>;
