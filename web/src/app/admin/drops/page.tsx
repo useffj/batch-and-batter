@@ -12,5 +12,10 @@ export default async function Page() {
   } catch {
     redirect('/admin/login?reason=expired');
   }
-  return <WeeklyDrops expiresAt={expiresAt} />;
+  return (
+    <WeeklyDrops
+      expiresAt={expiresAt}
+      isolated={process.env.ADMIN_CATALOG_MODE === 'isolated'}
+    />
+  );
 }

@@ -225,3 +225,31 @@ it.each([
     if (value) expect(result.output).not.toContain(value);
   },
 );
+
+it('restricts isolated catalog configuration to the locked Admin DEV branch', () => {
+  const isolated = {
+    STOREFRONT_API_BASE_URL: 'https://storefront.invalid',
+    STOREFRONT_CURRENCY: 'USD',
+    CHECKOUT_SUBMISSION_MODE: 'locked',
+    ADMIN_CATALOG_MODE: 'isolated',
+    AWS_BRANCH: 'admin-dev-3b23b18',
+    ADMIN_ORIGIN: 'https://admin-dev-3b23b18.d1aw7cfglvejmo.amplifyapp.com',
+    ADMIN_API_BASE_URL: 'https://isolated.example.invalid',
+  };
+  const good = run(isolated);
+  expect(good.status).toBe(0);
+  expect(readFileSync(good.path, 'utf8')).toContain(
+    'ADMIN_CATALOG_MODE=isolated',
+  );
+  for (const patch of [
+    { AWS_BRANCH: 'main' },
+    { STOREFRONT_API_BASE_URL: 'https://public.example.invalid' },
+    { CHECKOUT_SUBMISSION_MODE: 'enabled' },
+    {
+      ADMIN_API_BASE_URL:
+        'https://7otpu9y03a.execute-api.us-east-2.amazonaws.com',
+    },
+    { ADMIN_CATALOG_MODE: 'other' },
+  ])
+    expect(run({ ...isolated, ...patch }).status).toBe(1);
+});

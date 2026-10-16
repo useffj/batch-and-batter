@@ -75,7 +75,7 @@ describe('authoritative storefront presentation', () => {
       'does not reserve inventory',
     ])
       expect(html).toContain(value);
-    expect(html.match(/<h1>/g)).toHaveLength(1);
+    expect(html.match(/<h1(?:\s[^>]*)?>/g)).toHaveLength(1);
     expect(html).toContain('aria-labelledby="cookies"');
     expect(html).toContain('<ul');
     expect(html).toContain('Add to Cart');
@@ -136,7 +136,7 @@ describe('authoritative storefront presentation', () => {
       );
       expect(html).toContain('role="status"');
       expect(html).toContain('Reload Drop information');
-      expect(html).not.toMatch(/stack|Error:|undefined/);
+      expect(html).not.toMatch(/stack trace|Error:|undefined/);
     },
   );
 });

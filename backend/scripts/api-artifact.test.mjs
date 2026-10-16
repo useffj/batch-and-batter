@@ -33,3 +33,38 @@ test('API ZIP is reproducible locally, single-entry, self-contained and invokes 
   });
   assert.equal(response.statusCode, 200);
 });
+
+test('isolated catalog ZIP is deterministic and excludes financial and dispatch modules', () => {
+  const build = () =>
+    execFileSync(
+      process.execPath,
+      ['scripts/build-api.mjs', '--isolated-catalog'],
+      { cwd: root },
+    );
+  build();
+  const path = new URL(
+    '../dist/isolated-catalog-release/api.zip',
+    import.meta.url,
+  );
+  const first = readFileSync(path);
+  build();
+  assert.deepEqual(readFileSync(path), first);
+  const meta = JSON.parse(
+    readFileSync(
+      new URL(
+        '../dist/isolated-catalog-release/bundle-meta.json',
+        import.meta.url,
+      ),
+    ),
+  );
+  assert.ok(
+    Object.keys(meta.inputs).some((p) =>
+      p.endsWith('isolated-catalog-handler.ts'),
+    ),
+  );
+  assert.ok(
+    !Object.keys(meta.inputs).some((p) =>
+      /stripe|payment|cart-|refund|media-|notification|waitlist/.test(p),
+    ),
+  );
+});
