@@ -32,7 +32,10 @@ export class IsolatedCatalogStack extends Stack {
       type: 'String',
       minLength: 1,
       maxLength: 1024,
-      allowedPattern: '(?!null$)[A-Za-z0-9+/=._-]+',
+      // CloudFormation length is character-based. The existing publisher's
+      // isolatedArtifactParameters must enforce the 1024 UTF-8 byte limit
+      // before submission; do not normalize this opaque exact-version value.
+      allowedPattern: '(?!null(?![\\s\\S]))[\\s\\S]+',
     });
     const tableArn = `arn:aws:dynamodb:us-east-2:302154194958:table/${ISOLATED_TABLE}`;
     const table = new dynamodb.CfnTable(this, 'Catalog', {

@@ -54,3 +54,25 @@ test('isolated stack has only catalog resources, quarantined writes and authenti
     ),
   );
 });
+
+test('CloudFormation exact-version reference accepts opaque Unicode without normalization', () => {
+  const json = Template.fromStack(
+    new IsolatedCatalogStack(new App(), 'opaque'),
+  ).toJSON();
+  const p = json.Parameters.ArtifactVersion;
+  assert.equal(p.MinLength, 1);
+  assert.equal(p.MaxLength, 1024);
+  const pattern = new RegExp('^(?:' + p.AllowedPattern + ')$');
+  for (const value of [
+    ' _+/=.%:Version ID ',
+    'null\n',
+    '版本-🍪-e\u0301',
+    '🍪'.repeat(256),
+    'x'.repeat(1024),
+  ])
+    assert.ok(pattern.test(value));
+  for (const value of ['', 'null']) assert.equal(pattern.test(value), false);
+  assert.deepEqual(json.Resources.CatalogApi.Properties.Code.S3ObjectVersion, {
+    Ref: 'ArtifactVersion',
+  });
+});
