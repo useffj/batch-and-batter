@@ -152,5 +152,6 @@ export const handler = createEntrypoint(
       process.env.GUEST_ORDER_ORIGIN ?? '',
       Date.now,
       process.env.GUEST_PICKUP_CUTOFF ?? '15:00',
+      Number(process.env.GUEST_CANCELLATION_HOURS ?? '24'),
     )),
 );

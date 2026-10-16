@@ -1,3 +1,4 @@
+import { cancellationKey, cancellationState } from './cancellation-requests';
 import { readFulfillment } from './fulfillment-state';
 import {
   GetCommand,
@@ -79,7 +80,23 @@ export class AdminOrders {
   }
   async present(order: Order, details = false) {
     const state = await readFulfillment(this.client, this.table, order.orderId);
+    const requestRow = await this.client.send(
+      new GetCommand({
+        TableName: this.table,
+        Key: cancellationKey(order.orderId),
+        ConsistentRead: true,
+      }),
+    );
+    let cancellationRequest = null;
+    if (requestRow.Item) {
+      const { PK, SK, ...raw } = requestRow.Item;
+      const parsed = cancellationState.parse(raw);
+      if (parsed.orderId !== order.orderId)
+        throw Error('Invalid request identity');
+      cancellationRequest = { type: parsed.type, status: parsed.status };
+    }
     return {
+      cancellationRequest,
       ...orderDto(order, details),
       fulfillmentStatus: state?.status ?? null,
       fulfillment: state ?? {

@@ -1,7 +1,10 @@
 'use client';
+import { CancellationRequest } from './cancellation-request';
+import { type CancellationView } from '../../lib/order-requests';
 import { useEffect, useRef, useState } from 'react';
 import './manage-order.css';
 export type GuestView = {
+  cancellation?: CancellationView;
   order: {
     reference: string | null;
     items: { name: string; quantity: number; unitPriceCents: number }[];
@@ -145,7 +148,10 @@ export function ManageOrder() {
         pending.current = null;
         setUncertain(false);
       }
-      throw Error(result.message ?? 'Unable to load your order.');
+      throw Object.assign(
+        Error(result.message ?? 'Unable to load your order.'),
+        { status: r.status },
+      );
     }
     return result;
   }
@@ -214,6 +220,13 @@ export function ManageOrder() {
       {data && (
         <article>
           <GuestOrderDetails data={data} />
+          {data.cancellation && (
+            <CancellationRequest
+              data={data.cancellation}
+              send={request}
+              refresh={view}
+            />
+          )}
           <section aria-label="Change pickup date">
             <h3>Change pickup date</h3>
             <p>
@@ -265,8 +278,8 @@ export function ManageOrder() {
         <p>
           Contact Batch &amp; Batter using the contact information in your
           purchase email for pickup help or questions about cancellation, refund
-          and missed-pickup policies. Refunds and cancellations are not
-          available on this page.
+          and missed-pickup policies. Refund execution is not available on this
+          page.
         </p>
         <p>
           This private link grants access to your order. Do not share it. After

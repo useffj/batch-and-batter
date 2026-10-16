@@ -117,3 +117,21 @@
     font-size: 2rem;
   }
 }
+
+.guest-manage textarea {
+  display: block;
+  width: 100%;
+  min-height: 100px;
+  margin: 8px 0 16px;
+  padding: 12px;
+  border: 1px solid #aaa08f;
+  border-radius: 8px;
+  font: inherit;
+  box-sizing: border-box;
+}
+.guest-manage section {
+  overflow-wrap: anywhere;
+}
+.guest-manage section button {
+  margin: 4px 8px 4px 0;
+}

@@ -259,6 +259,14 @@ export class DevelopmentStack extends Stack {
       description:
         'Approved customer order-link origin; empty keeps guest access unavailable.',
     });
+    const cancellationHours = new CfnParameter(this, 'GuestCancellationHours', {
+      type: 'Number',
+      default: 24,
+      minValue: 1,
+      maxValue: 168,
+      description:
+        'Cancellation deadline in elapsed hours before confirmed Denver pickup start.',
+    });
     const guestCutoff = new CfnParameter(this, 'GuestPickupCutoff', {
       type: 'String',
       default: '15:00',
@@ -271,6 +279,7 @@ export class DevelopmentStack extends Stack {
       handler: 'handler.handler',
       code: artifactCode(this, 'ApplicationApi5D63FF39', 'handler.handler'),
       environment: {
+        GUEST_CANCELLATION_HOURS: cancellationHours.valueAsString,
         GUEST_ORDER_ORIGIN: guestOrigin.valueAsString,
         GUEST_PICKUP_CUTOFF: guestCutoff.valueAsString,
         RESERVATION_QUEUE_URL: reservationQueue.queueUrl,
@@ -338,6 +347,11 @@ export class DevelopmentStack extends Stack {
       });
     }
     for (const [route, method, integrationId] of [
+      [
+        '/orders/manage/request',
+        apigateway.HttpMethod.POST,
+        'GuestCancellationRequestIntegration',
+      ],
       [
         '/orders/manage/view',
         apigateway.HttpMethod.POST,
@@ -473,6 +487,16 @@ export class DevelopmentStack extends Stack {
         '/admin/orders/{orderId}/notifications',
         apigateway.HttpMethod.GET,
         'AdminNotificationsIntegration',
+      ],
+      [
+        '/admin/orders/{orderId}/requests',
+        apigateway.HttpMethod.GET,
+        'AdminCancellationRequestIntegration',
+      ],
+      [
+        '/admin/orders/{orderId}/requests/review',
+        apigateway.HttpMethod.POST,
+        'AdminCancellationReviewIntegration',
       ],
       [
         '/admin/orders/{orderId}/access',

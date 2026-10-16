@@ -1,3 +1,4 @@
+import { requestInput, reviewInput } from './cancellation-requests';
 import {
   GuestOrders,
   guestToken,
@@ -129,9 +130,11 @@ export function createHandler(
     if (cartRoutes.includes(event.routeKey))
       return cartApi(event, getCarts, context);
     if (
-      ['POST /orders/manage/view', 'POST /orders/manage/pickup'].includes(
-        event.routeKey,
-      )
+      [
+        'POST /orders/manage/view',
+        'POST /orders/manage/pickup',
+        'POST /orders/manage/request',
+      ].includes(event.routeKey)
     ) {
       try {
         const guest = getGuestOrders();
@@ -159,6 +162,20 @@ export function createHandler(
             );
           return json(200, await guest.view(parsed.data.token));
         }
+        if (event.routeKey.endsWith('/request')) {
+          const parsed = z
+            .strictObject({ token: guestToken, request: requestInput })
+            .safeParse(data);
+          if (!parsed.success)
+            return error(400, 'INVALID_REQUEST', 'Invalid request.');
+          return json(
+            200,
+            await guest.requestCancellation(
+              parsed.data.token,
+              parsed.data.request,
+            ),
+          );
+        }
         const parsed = pickupChangeInput.safeParse(data);
         if (!parsed.success)
           return error(400, 'INVALID_REQUEST', 'Invalid request.');
@@ -176,6 +193,8 @@ export function createHandler(
     if (event.routeKey === 'GET /health') return complete(await health());
     if (
       [
+        'GET /admin/orders/{orderId}/requests',
+        'POST /admin/orders/{orderId}/requests/review',
         'GET /admin/orders/{orderId}/access',
         'POST /admin/orders/{orderId}/access/reissue',
         'POST /admin/orders/{orderId}/access/revoke',
@@ -201,6 +220,8 @@ export function createHandler(
         const identity = requireAdmin(event);
         if (
           [
+            'GET /admin/orders/{orderId}/requests',
+            'POST /admin/orders/{orderId}/requests/review',
             'GET /admin/orders/{orderId}/access',
             'POST /admin/orders/{orderId}/access/reissue',
             'POST /admin/orders/{orderId}/access/revoke',
@@ -210,7 +231,12 @@ export function createHandler(
           if (!id.success)
             return error(400, 'INVALID_REQUEST', 'Invalid request.');
           if (event.routeKey.startsWith('GET'))
-            return json(200, await getGuestOrders().adminStatus(id.data));
+            return json(
+              200,
+              event.routeKey.endsWith('/requests')
+                ? await getGuestOrders().adminRequest(id.data)
+                : await getGuestOrders().adminStatus(id.data),
+            );
           if (
             event.isBase64Encoded ||
             !event.body ||
@@ -222,6 +248,19 @@ export function createHandler(
             data = JSON.parse(event.body);
           } catch {
             return error(400, 'INVALID_REQUEST', 'Invalid request.');
+          }
+          if (event.routeKey.endsWith('/requests/review')) {
+            const parsed = reviewInput.safeParse(data);
+            if (!parsed.success)
+              return error(400, 'INVALID_REQUEST', 'Invalid request.');
+            return json(
+              200,
+              await getGuestOrders().reviewRequest(
+                id.data,
+                parsed.data,
+                identity.subject,
+              ),
+            );
           }
           const parsed = accessAdminInput.safeParse(data);
           if (!parsed.success)

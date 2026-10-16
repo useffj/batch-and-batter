@@ -22,7 +22,12 @@ const { PutCommand } = require('@aws-sdk/lib-dynamodb'),
   { digest, refundKey } = require('./dist/src/notification-contract'),
   { orderKey } = require('./dist/src/payment-domain'),
   { createHandler } = require('./dist/src/api');
-const now = () => Date.parse('2026-10-20T18:00:00Z'),
+const now = () =>
+    Date.parse(
+      process.argv.includes('--late')
+        ? '2026-10-21T23:00:00Z'
+        : '2026-10-20T18:00:00Z',
+    ),
   o = f.orders[1];
 o.settlement = {
   id: digest(o.orderId),
@@ -105,7 +110,7 @@ await writeFile(
 );
 await writeFile(
   join(root, 'preview.tsx'),
-  `import React from 'react';import {createRoot} from 'react-dom/client';import {ManageOrder} from '/@fs/${web}/src/components/guest/manage-order.tsx';import '/@fs/${web}/src/app/globals.css';createRoot(document.getElementById('root')).render(<><p role="note">SYNTHETIC LOCAL ACCEPTANCE. DynamoDB Local, mock email, no AWS. Clock: October 20.</p><ManageOrder/></>);`,
+  `import React from 'react';import {createRoot} from 'react-dom/client';import {ManageOrder} from '/@fs/${web}/src/components/guest/manage-order.tsx';import '/@fs/${web}/src/app/globals.css';import '/@fs/${web}/src/components/admin/orders.css';import {CancellationReview} from '/@fs/${web}/src/components/admin/cancellation-review.tsx';createRoot(document.getElementById('root')).render(<><p role="note">SYNTHETIC LOCAL ACCEPTANCE. DynamoDB Local, mock email, no AWS. Clock: ${process.argv.includes('--late') ? 'October 21, 5 PM Denver (after deadline)' : 'October 20, noon Denver'}.</p>{location.pathname==='/review'?<main className="admin-orders"><h1>Synthetic customer request review</h1><CancellationReview orderId="${o.orderId}"/></main>:<ManageOrder/>}</>);`,
 );
 const server = await createServer({
   configFile: false,
@@ -136,7 +141,9 @@ const server = await createServer({
             res.end();
             return;
           }
-          if (!req.url?.startsWith('/api/order/manage/')) return next();
+          const admin = req.url?.startsWith('/api/admin/orders/');
+          if (!req.url?.startsWith('/api/order/manage/') && !admin)
+            return next();
           try {
             let body = '';
             for await (const chunk of req) {
@@ -145,9 +152,26 @@ const server = await createServer({
             }
             const action = req.url.split('/').at(-1),
               response = await handler({
-                routeKey: req.method + ' /orders/manage/' + action,
+                routeKey: admin
+                  ? req.method +
+                    ' /admin/orders/{orderId}/requests' +
+                    (action === 'review' ? '/review' : '')
+                  : req.method + ' /orders/manage/' + action,
+                pathParameters: admin ? { orderId: o.orderId } : undefined,
                 body,
                 requestContext: {
+                  authorizer: admin
+                    ? {
+                        jwt: {
+                          claims: {
+                            token_use: 'access',
+                            sub: 'synthetic-admin',
+                            username: 'synthetic-admin',
+                            'cognito:groups': ['batch-and-batter-admins'],
+                          },
+                        },
+                      }
+                    : undefined,
                   requestId: 'synthetic',
                   http: { method: req.method, sourceIp: '127.0.0.1' },
                 },

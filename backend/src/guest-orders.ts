@@ -1,3 +1,9 @@
+import {
+  CancellationRequests,
+  cancellationKey,
+  requestInput,
+  reviewInput,
+} from './cancellation-requests';
 import { randomBytes, randomUUID, createHash } from 'node:crypto';
 import {
   GetCommand,
@@ -120,6 +126,7 @@ export class GuestOrders {
     private origin: string,
     private now = Date.now,
     private cutoff = '15:00',
+    private cancellationHours = 24,
   ) {
     if (
       !commerce ||
@@ -131,6 +138,40 @@ export class GuestOrders {
       throw Error('Guest order configuration required');
     this.orders = new AdminOrders(client, commerce);
     pickupCutoff('2030-01-01', cutoff);
+  }
+  private requests() {
+    return new CancellationRequests(
+      this.client,
+      this.commerce,
+      this.operations,
+      this.now,
+      this.cancellationHours,
+    );
+  }
+  async requestCancellation(
+    token: string,
+    input: z.infer<typeof requestInput>,
+  ) {
+    const { id, state, grant } = await this.authorize(token);
+    return this.requests().submit(
+      {
+        id,
+        revision: state.revision,
+        tokenId: grant.id,
+        expiresAt: grant.expiresAt,
+      },
+      input,
+    );
+  }
+  async adminRequest(id: string) {
+    return this.requests().view(id, true);
+  }
+  async reviewRequest(
+    id: string,
+    input: z.infer<typeof reviewInput>,
+    administrator: string,
+  ) {
+    return this.requests().review(id, input, administrator);
   }
   private async read(table: string, key: { PK: string; SK: string }) {
     const r = await this.client.send(
@@ -431,6 +472,8 @@ export class GuestOrders {
     return { accepted: true };
   }
   private async eligibility(o: Awaited<ReturnType<GuestOrders['order']>>) {
+    if (await this.requests().state(o.orderId))
+      return 'A cancellation or assistance request is recorded. Contact the bakery before changing pickup.';
     if (!this.paid(o) || o.pickup.timezone !== 'America/Denver')
       return 'Order is not eligible for pickup changes.';
     const raw = await this.read(this.commerce, refundKey(o.orderId)),
@@ -478,6 +521,7 @@ export class GuestOrders {
           p.date > denverWall(this.now()).slice(0, 10),
       );
     return {
+      cancellation: await this.requests().view(id),
       order: {
         reference: o.displayOrderNumber ?? null,
         items: o.items.map(({ name, quantity, unitPriceCents }) => ({
@@ -577,6 +621,13 @@ export class GuestOrders {
       await this.client.send(
         new TransactWriteCommand({
           TransactItems: [
+            {
+              ConditionCheck: {
+                TableName: this.commerce,
+                Key: cancellationKey(id),
+                ConditionExpression: 'attribute_not_exists(PK)',
+              },
+            },
             {
               Put: {
                 TableName: this.commerce,

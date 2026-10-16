@@ -1,4 +1,5 @@
 'use client';
+import { CancellationReview } from './cancellation-review';
 import { GuestAccess } from './guest-access';
 import { NotificationStatus } from './notification-status';
 import { useEffect, useState } from 'react';
@@ -50,6 +51,7 @@ export type Order = {
   createdAt: string;
   updatedAt: string;
   fulfillmentStatus: string | null;
+  cancellationRequest?: { type: string; status: string } | null;
   customer?: { name: string; email: string; phone: string };
   items?: {
     name: string;
@@ -133,6 +135,7 @@ export function OrderDetails({ order: o }: { order: Order }) {
       </p>
       <NotificationStatus key={o.orderId} orderId={o.orderId} />
       <GuestAccess key={'access-' + o.orderId} orderId={o.orderId} />
+      <CancellationReview key={'request-' + o.orderId} orderId={o.orderId} />
     </section>
   );
 }
@@ -388,6 +391,13 @@ export function Orders({ expiresAt }: { expiresAt: number }) {
                     </p>
                     <p>
                       {human(o.status)} · Payment: {human(o.paymentStatus)}
+                      {o.cancellationRequest && (
+                        <span>
+                          {' '}
+                          · {human(o.cancellationRequest.type)} request:{' '}
+                          {human(o.cancellationRequest.status)}
+                        </span>
+                      )}
                     </p>
                     <p>
                       Pickup {o.pickupDate} · Fulfillment:{' '}

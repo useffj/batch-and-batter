@@ -131,7 +131,7 @@ test('application Node 24 Lambda preserves its identity and serves exactly the t
   template.hasResourceProperties('AWS::ApiGatewayV2::Api', {
     ProtocolType: 'HTTP',
   });
-  template.resourceCountIs('AWS::ApiGatewayV2::Route', 53);
+  template.resourceCountIs('AWS::ApiGatewayV2::Route', 56);
   const functionId = Object.keys(
     template.findResources('AWS::Lambda::Function'),
   )[0];
@@ -144,6 +144,9 @@ test('application Node 24 Lambda preserves its identity and serves exactly the t
     [
       ...compositionRoutes,
       ...mediaRoutes,
+      'POST /orders/manage/request',
+      'GET /admin/orders/{orderId}/requests',
+      'POST /admin/orders/{orderId}/requests/review',
       'POST /orders/manage/view',
       'POST /orders/manage/pickup',
       'GET /admin/orders/{orderId}/access',
@@ -530,8 +533,8 @@ test('tables, pool including MFA, client and JWT authorizer exactly preserve the
 });
 
 test('every route integration invokes only the existing Lambda through route-scoped API Gateway permissions', () => {
-  template.resourceCountIs('AWS::ApiGatewayV2::Integration', 53);
-  template.resourceCountIs('AWS::Lambda::Permission', 53);
+  template.resourceCountIs('AWS::ApiGatewayV2::Integration', 56);
+  template.resourceCountIs('AWS::Lambda::Permission', 56);
   for (const resource of Object.values(
     template.findResources('AWS::ApiGatewayV2::Integration'),
   )) {
@@ -622,6 +625,9 @@ test('Phase 5A2 changes only approved properties of Phase 5A1 resources', () => 
     } else if (id === 'ReservationQueue43323CC1')
       expected.Properties.VisibilityTimeout = 60;
     if (id === 'ApplicationApi5D63FF39') {
+      expected.Properties.Environment.Variables.GUEST_CANCELLATION_HOURS = {
+        Ref: 'GuestCancellationHours',
+      };
       expected.Properties.Environment.Variables.GUEST_ORDER_ORIGIN = {
         Ref: 'GuestOrderOrigin',
       };
@@ -666,9 +672,9 @@ test('Phase 5A2 changes only approved properties of Phase 5A1 resources', () => 
     added,
     [
       ...Array(32).fill('AWS::CloudWatch::Alarm'),
-      ...Array(29).fill('AWS::ApiGatewayV2::Route'),
-      ...Array(29).fill('AWS::ApiGatewayV2::Integration'),
-      ...Array(29).fill('AWS::Lambda::Permission'),
+      ...Array(32).fill('AWS::ApiGatewayV2::Route'),
+      ...Array(32).fill('AWS::ApiGatewayV2::Integration'),
+      ...Array(32).fill('AWS::Lambda::Permission'),
       ...Array(3).fill('AWS::SQS::Queue'),
       'AWS::KMS::Key',
       'AWS::KMS::Alias',
