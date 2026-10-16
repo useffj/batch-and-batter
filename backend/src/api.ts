@@ -1,3 +1,10 @@
+import {
+  GuestOrders,
+  guestToken,
+  pickupChangeInput,
+  accessAdminInput,
+} from './guest-orders';
+import { z } from 'zod';
 import type { AdminNotifications } from './admin-notifications';
 import {
   adminCustomers,
@@ -42,7 +49,7 @@ export interface ApiEvent {
   routeKey: string;
   requestContext: {
     requestId: string;
-    http: { method: string };
+    http: { method: string; sourceIp?: string };
     authorizer?: { jwt?: { claims?: Record<string, unknown> } };
   };
   headers?: Record<string, string | undefined>;
@@ -94,6 +101,9 @@ export function createHandler(
   getNotifications: () => AdminNotifications = () => {
     throw Error('Notifications unavailable');
   },
+  getGuestOrders: () => GuestOrders = () => {
+    throw Error('Guest orders unavailable');
+  },
 ) {
   return async (
     event: ApiEvent,
@@ -118,8 +128,58 @@ export function createHandler(
       return error(404, 'NOT_FOUND', 'Route not found.');
     if (cartRoutes.includes(event.routeKey))
       return cartApi(event, getCarts, context);
+    if (
+      ['POST /orders/manage/view', 'POST /orders/manage/pickup'].includes(
+        event.routeKey,
+      )
+    ) {
+      try {
+        const guest = getGuestOrders();
+        await guest.rateLimit(event.requestContext.http.sourceIp ?? '');
+        if (
+          event.isBase64Encoded ||
+          !event.body ||
+          Buffer.byteLength(event.body) > 2048 ||
+          Object.keys(event.queryStringParameters ?? {}).length
+        )
+          throw new AdminError(400, 'INVALID_REQUEST', 'Invalid request.');
+        let data: unknown;
+        try {
+          data = JSON.parse(event.body);
+        } catch {
+          throw new AdminError(400, 'INVALID_REQUEST', 'Invalid request.');
+        }
+        if (event.routeKey.endsWith('/view')) {
+          const parsed = z.strictObject({ token: guestToken }).safeParse(data);
+          if (!parsed.success)
+            return error(
+              403,
+              'ORDER_ACCESS_UNAVAILABLE',
+              'This order link is unavailable or expired.',
+            );
+          return json(200, await guest.view(parsed.data.token));
+        }
+        const parsed = pickupChangeInput.safeParse(data);
+        if (!parsed.success)
+          return error(400, 'INVALID_REQUEST', 'Invalid request.');
+        return json(200, await guest.change(parsed.data));
+      } catch (e) {
+        return error(
+          e instanceof AdminError ? e.status : 503,
+          e instanceof AdminError ? e.code : 'UNAVAILABLE',
+          e instanceof AdminError
+            ? e.message
+            : 'Order management is temporarily unavailable.',
+        );
+      }
+    }
     if (event.routeKey === 'GET /health') return complete(await health());
     if (
+      [
+        'GET /admin/orders/{orderId}/access',
+        'POST /admin/orders/{orderId}/access/reissue',
+        'POST /admin/orders/{orderId}/access/revoke',
+      ].includes(event.routeKey) ||
       event.routeKey === 'GET /admin/orders/{orderId}/notifications' ||
       customerRoutes.includes(event.routeKey) ||
       fulfillmentRoutes.includes(event.routeKey) ||
@@ -139,6 +199,43 @@ export function createHandler(
     ) {
       try {
         const identity = requireAdmin(event);
+        if (
+          [
+            'GET /admin/orders/{orderId}/access',
+            'POST /admin/orders/{orderId}/access/reissue',
+            'POST /admin/orders/{orderId}/access/revoke',
+          ].includes(event.routeKey)
+        ) {
+          const id = idSchema.safeParse(event.pathParameters?.orderId);
+          if (!id.success)
+            return error(400, 'INVALID_REQUEST', 'Invalid request.');
+          if (event.routeKey.startsWith('GET'))
+            return json(200, await getGuestOrders().adminStatus(id.data));
+          if (
+            event.isBase64Encoded ||
+            !event.body ||
+            Buffer.byteLength(event.body) > 2048
+          )
+            return error(400, 'INVALID_REQUEST', 'Invalid request.');
+          let data: unknown;
+          try {
+            data = JSON.parse(event.body);
+          } catch {
+            return error(400, 'INVALID_REQUEST', 'Invalid request.');
+          }
+          const parsed = accessAdminInput.safeParse(data);
+          if (!parsed.success)
+            return error(400, 'INVALID_REQUEST', 'Invalid request.');
+          return json(
+            200,
+            await getGuestOrders().admin(
+              id.data,
+              event.routeKey.endsWith('/revoke') ? 'revoke' : 'reissue',
+              parsed.data,
+              identity.subject,
+            ),
+          );
+        }
         if (event.routeKey === 'GET /admin/orders/{orderId}/notifications') {
           const orderId = event.pathParameters?.orderId ?? '';
           if (!(await getOrders().get(orderId)))

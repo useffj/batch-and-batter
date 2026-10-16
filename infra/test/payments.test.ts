@@ -275,11 +275,28 @@ test('CMK retained with rotation; no parameters or subscriptions or runtime Scan
   );
   t.resourceCountIs('AWS::SSM::Parameter', 0);
   t.resourceCountIs('AWS::SNS::Subscription', 0);
-  for (const p of Object.values(t.findResources('AWS::IAM::Policy')))
-    assert.doesNotMatch(
-      JSON.stringify(p),
-      /dynamodb:(Scan|UpdateItem|BatchWriteItem|\*)|ssm:GetParametersByPath|kms:\*/,
-    );
+  for (const [id, p] of Object.entries(t.findResources('AWS::IAM::Policy'))) {
+    const statements = p.Properties.PolicyDocument.Statement;
+    for (const statement of statements) {
+      if (JSON.stringify(statement.Action).includes('dynamodb:UpdateItem')) {
+        assert.ok(id.startsWith('ApplicationRoleDefaultPolicy'));
+        assert.deepEqual(statement, {
+          Action: 'dynamodb:UpdateItem',
+          Effect: 'Allow',
+          Resource: { 'Fn::GetAtt': ['OperationsTable90528792', 'Arn'] },
+          Condition: {
+            'ForAllValues:StringLike': {
+              'dynamodb:LeadingKeys': ['GUEST_RATE#*'],
+            },
+          },
+        });
+      } else
+        assert.doesNotMatch(
+          JSON.stringify(statement),
+          /dynamodb:(Scan|UpdateItem|BatchWriteItem|\*)|ssm:GetParametersByPath|kms:\*/,
+        );
+    }
+  }
   assert.doesNotMatch(
     JSON.stringify(t.toJSON()),
     /rk_test_|sk_live_|whsec_|client_secret/,

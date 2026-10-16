@@ -1185,3 +1185,94 @@ export async function notificationsRelay(
     );
   }
 }
+
+export async function guestAccessRelay(
+  request: Request,
+  orderId: string,
+  action: 'status' | 'reissue' | 'revoke',
+  c: AdminConfig,
+  fetcher: typeof fetch = fetch,
+) {
+  try {
+    const config = settings(c);
+    if (
+      id(orderId) !== orderId ||
+      new URL(request.url).search ||
+      request.method !== (action === 'status' ? 'GET' : 'POST')
+    )
+      throw new AdminFailure('REQUEST', 400);
+    if (
+      request.headers.has('sec-fetch-site') &&
+      request.headers.get('sec-fetch-site') !== 'same-origin'
+    )
+      throw new AdminFailure('REQUEST', 403);
+    let body: string | undefined;
+    if (action !== 'status') {
+      if (
+        request.headers.get('origin') !== config.origin ||
+        request.headers.get('content-type')?.split(';')[0] !==
+          'application/json'
+      )
+        throw new AdminFailure('REQUEST', 403);
+      const reader = request.body?.getReader();
+      if (!reader) throw new AdminFailure('REQUEST', 400);
+      let size = 0;
+      const decoder = new TextDecoder();
+      body = '';
+      try {
+        for (;;) {
+          const r = await reader.read();
+          if (r.done) break;
+          size += r.value.byteLength;
+          if (size > 2048) {
+            await reader.cancel();
+            throw new AdminFailure('REQUEST', 400);
+          }
+          body += decoder.decode(r.value, { stream: true });
+        }
+      } finally {
+        reader.releaseLock();
+      }
+      body += decoder.decode();
+    }
+    const session = await authorize(
+      request.headers.get('cookie') ?? '',
+      c,
+      fetcher,
+    );
+    const r = await fetcher(
+      config.api +
+        '/admin/orders/' +
+        orderId +
+        '/access' +
+        (action === 'status' ? '' : '/' + action),
+      {
+        method: request.method,
+        headers: {
+          Authorization: 'Bearer ' + session.token,
+          ...(body ? { 'Content-Type': 'application/json' } : {}),
+        },
+        body,
+        cache: 'no-store',
+        redirect: 'error',
+        signal: AbortSignal.timeout(12000),
+      },
+    );
+    if (!r.ok)
+      return output(
+        {
+          message:
+            'Access action unavailable. Refresh status and review the active-link limit.',
+        },
+        [400, 401, 403, 404, 409].includes(r.status) ? r.status : 503,
+      );
+    const data = await json(r, 32768, new AdminFailure('INVALID'));
+    if (session.expiresAt <= Date.now()) throw new AdminFailure('EXPIRED', 401);
+    return output(data, 200);
+  } catch (e) {
+    return output(
+      { message: e instanceof AdminFailure ? e.message : messages.UNAVAILABLE },
+      e instanceof AdminFailure ? e.status : 503,
+    );
+  }
+}
