@@ -1,3 +1,4 @@
+import type { AdminNotifications } from './admin-notifications';
 import {
   adminCustomers,
   customerRoutes,
@@ -90,6 +91,9 @@ export function createHandler(
   getCustomers: () => AdminCustomers = () => {
     throw Error('Customers unavailable');
   },
+  getNotifications: () => AdminNotifications = () => {
+    throw Error('Notifications unavailable');
+  },
 ) {
   return async (
     event: ApiEvent,
@@ -116,6 +120,7 @@ export function createHandler(
       return cartApi(event, getCarts, context);
     if (event.routeKey === 'GET /health') return complete(await health());
     if (
+      event.routeKey === 'GET /admin/orders/{orderId}/notifications' ||
       customerRoutes.includes(event.routeKey) ||
       fulfillmentRoutes.includes(event.routeKey) ||
       orderRoutes.includes(event.routeKey) ||
@@ -134,6 +139,12 @@ export function createHandler(
     ) {
       try {
         const identity = requireAdmin(event);
+        if (event.routeKey === 'GET /admin/orders/{orderId}/notifications') {
+          const orderId = event.pathParameters?.orderId ?? '';
+          if (!(await getOrders().get(orderId)))
+            return error(404, 'NOT_FOUND', 'Order not found.');
+          return json(200, await getNotifications().status(orderId));
+        }
         if (customerRoutes.includes(event.routeKey))
           return json(200, await adminCustomers(event, getCustomers()));
         if (fulfillmentRoutes.includes(event.routeKey))

@@ -1,3 +1,4 @@
+import { refundKey, eventWork } from './notification-contract';
 import {
   paymentDiagnostic,
   paymentDiagnosticState,
@@ -1517,6 +1518,28 @@ export class FinancialWorkflow extends PaymentWorkflow {
             ConditionExpression: 'attribute_not_exists(PK)',
           },
         });
+      if (paid)
+        actions.push(
+          {
+            Put: {
+              TableName: this.commerce,
+              Item: {
+                ...refundKey(a.orderId),
+                disposition: 'NONE',
+                settlementId: marker.id,
+                updatedAt: iso(this.now()),
+              },
+              ConditionExpression: 'attribute_not_exists(PK)',
+            },
+          },
+          {
+            Put: {
+              TableName: this.operations,
+              Item: eventWork(a.orderId),
+              ConditionExpression: 'attribute_not_exists(PK)',
+            },
+          },
+        );
       actions.push(...eventActions);
       const targets = actions.map((x) => {
         const op = x.Put ?? x.Delete ?? x.ConditionCheck!;
