@@ -41,7 +41,7 @@ import {
   ExpressCheckoutElement,
   PaymentElement,
 } from '@stripe/react-stripe-js';
-import { PaymentForm } from './checkout';
+import { PaymentForm, ContactPickupFields, CheckoutReview } from './checkout';
 const snapshot: CheckoutSnapshot = {
   cart: null,
   etag: null,
@@ -57,6 +57,15 @@ type Element = ReactElement<Record<string, unknown>>;
 function nodes(node: ReactNode): Element[] {
   if (Array.isArray(node)) return node.flatMap(nodes);
   if (!isValidElement<Record<string, unknown>>(node)) return [];
+  if (node.type === ContactPickupFields)
+    return [
+      node,
+      ...nodes(
+        ContactPickupFields(
+          node.props as Parameters<typeof ContactPickupFields>[0],
+        ),
+      ),
+    ];
   return [node, ...nodes(node.props.children as ReactNode)];
 }
 function form(
@@ -304,3 +313,20 @@ it.each(['stripe', 'elements', 'ready', 'loadError', 'checkout'])(
     expect(f.onSubmit).not.toHaveBeenCalled();
   },
 );
+
+it('locked checkout review has labeled contact and pickup fields without a payment form or provider', () => {
+  const tree = CheckoutReview({ snapshot });
+  const all = nodes(tree);
+  expect(all.filter((n) => n.type === 'input')).toHaveLength(4);
+  expect(all.some((n) => n.type === 'select')).toBe(true);
+  expect(
+    all.some(
+      (n) =>
+        n.type === 'form' ||
+        n.type === PaymentElement ||
+        n.type === ExpressCheckoutElement,
+    ),
+  ).toBe(false);
+  expect(all.find((n) => n.type === 'button')?.props.disabled).toBe(true);
+  expect(renderToStaticMarkup(tree)).toContain('Nothing is submitted or saved');
+});

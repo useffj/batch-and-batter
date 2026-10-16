@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { sameOrigin } from '../cart/relay';
 import { publicEndpoint } from '../storefront/client';
 export async function guestRelay(
   request: Request,
@@ -25,9 +26,7 @@ export async function guestRelay(
     const url = new URL(request.url);
     if (
       url.search ||
-      request.headers.get('origin') !== url.origin ||
-      (request.headers.has('sec-fetch-site') &&
-        request.headers.get('sec-fetch-site') !== 'same-origin') ||
+      !sameOrigin(request) ||
       request.headers.get('content-type')?.split(';')[0] !== 'application/json'
     )
       return output({ message: 'Request not allowed.' }, 403);

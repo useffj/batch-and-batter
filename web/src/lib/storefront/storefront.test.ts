@@ -25,6 +25,9 @@ function fixture() {
           id: '01K00000000000000000000001',
           cookieUnits: 2,
           name: 'Chocolate cookie',
+          description: 'A buttery cookie with a soft center.',
+          ingredients: ['Flour', 'Butter'],
+          allergens: ['Wheat', 'Milk'],
           priceCents: 525,
           availability: { total: 20, reserved: 5, sold: 0, available: 15 },
         },
@@ -32,6 +35,9 @@ function fixture() {
           id: '01K00000000000000000000002',
           cookieUnits: 1,
           name: 'Vanilla cookie',
+          description: 'A buttery cookie with a soft center.',
+          ingredients: ['Flour', 'Butter'],
+          allergens: ['Wheat', 'Milk'],
           priceCents: 450,
           availability: { total: 20, reserved: 0, sold: 20, available: 0 },
         },
@@ -286,4 +292,47 @@ describe('configuration and network boundary', () => {
     await vi.advanceTimersByTimeAsync(5000);
     expect(await result).toEqual({ kind: 'unavailable' });
   });
+});
+
+it('allowlists public product information and escapes customer-visible details', () => {
+  const f = fixture();
+  Object.assign(f.drop.products[0], {
+    description: '<script>private()</script>',
+    PK: 'PRIVATE_KEY',
+    adminNotes: 'PRIVATE_NOTE',
+  });
+  const d = parseDropResponse(f)!;
+  expect(Object.keys(d.products[0]).sort()).toEqual(
+    [
+      'id',
+      'name',
+      'description',
+      'ingredients',
+      'allergens',
+      'priceCents',
+      'available',
+      'cookieUnits',
+    ].sort(),
+  );
+  const html = render(f);
+  expect(html).toContain('&lt;script&gt;');
+  expect(html).toContain('Flour, Butter');
+  expect(html).toContain('Wheat, Milk');
+  expect(html).not.toMatch(/PRIVATE_KEY|PRIVATE_NOTE|<script/);
+});
+it.each([
+  { ingredients: null },
+  { allergens: [''] },
+  { allergens: Array(101).fill('Milk') },
+  { description: 'x'.repeat(4001) },
+])('rejects malformed product information %j', (patch) => {
+  const f = fixture();
+  Object.assign(f.drop.products[0], patch);
+  expect(() => parseDropResponse(f)).toThrow();
+});
+it('does not imply missing allergen information means allergen-free', () => {
+  const f = fixture();
+  f.drop.products[0].allergens = [];
+  expect(render(f)).toContain('No allergen information listed.');
+  expect(render(f)).toContain('Contact the bakery before ordering.');
 });

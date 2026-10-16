@@ -88,6 +88,9 @@ function fresh(): CheckoutSnapshot {
         {
           id: productId,
           name: 'Cookie',
+          description: 'A buttery cookie with a soft center.',
+          ingredients: ['Flour', 'Butter'],
+          allergens: ['Wheat', 'Milk'],
           priceCents: 999,
           cookieUnits: 1,
           available: 10,

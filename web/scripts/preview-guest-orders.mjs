@@ -107,10 +107,99 @@ const refunds = new Refunds(
   () => ++refundNow,
 );
 const token = email.messages[0].text.split('/order/manage#')[1].split(/\s/)[0];
+const storefrontMode = process.argv.includes('--storefront');
+let catalog, carts, waitlists;
+if (storefrontMode) {
+  const { DynamoCatalogRepository } = require('./dist/src/repository');
+  const { DynamoCartRepository } = require('./dist/src/cart-repository');
+  const { Waitlists } = require('./dist/src/waitlists');
+  const { catalogKeys } = require('./dist/src/keys');
+  const fixture = require('./dist/test/fixtures');
+  const date = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+  await put({
+    ...catalogKeys.drop(fixture.dropId),
+    ...fixture.drop,
+    name: 'The small-batch collection',
+    description:
+      'A little comfort, baked from scratch. Choose your cookies and collect them fresh at pickup.',
+    quantityLimit: 4,
+    status: process.argv.includes('--upcoming') ? 'SCHEDULED' : 'OPEN',
+    opensAt: process.argv.includes('--upcoming')
+      ? new Date(Date.now() + 86400000).toISOString()
+      : fixture.timestamp,
+    pickupLocation: 'Synthetic bakery · 123 Test Lane',
+    pickupInstructions:
+      'Local acceptance only. Bring your order reference to pickup.',
+  });
+  for (const [index, id] of [
+    fixture.productId,
+    fixture.otherProductId,
+  ].entries()) {
+    await put({
+      ...catalogKeys.product(id),
+      ...fixture.product,
+      productId: id,
+      name: index ? 'Brown butter vanilla' : 'Classic chocolate chunk',
+      slug: index ? 'vanilla' : 'chocolate',
+      description: index
+        ? 'Toasty brown butter, fragrant vanilla and a delicate sprinkle of sea salt.'
+        : 'Golden edges, a soft center and generous pockets of dark chocolate.',
+      ingredients: [
+        'Wheat flour',
+        'Butter',
+        'Sugar',
+        'Eggs',
+        index ? 'Vanilla' : 'Dark chocolate',
+      ],
+      allergens: ['Wheat', 'Milk', 'Eggs'],
+    });
+    await put({
+      ...catalogKeys.dropProduct(fixture.dropId, id),
+      ...fixture.relation,
+      productId: id,
+      priceCents: index ? 450 : 525,
+      displayOrder: index,
+    });
+    await put({
+      ...catalogKeys.inventory(fixture.dropId, id),
+      ...fixture.inventory,
+      productId: id,
+      total: index ? 0 : 24,
+      reserved: 0,
+      sold: 0,
+    });
+  }
+  await put({
+    ...catalogKeys.pickup(fixture.dropId, date),
+    ...fixture.pickup,
+    date,
+  });
+  await put({
+    ...catalogKeys.storefront,
+    storefrontDropId: fixture.dropId,
+    updatedAt: fixture.timestamp,
+  });
+  catalog = new DynamoCatalogRepository(f.client, f.table);
+  carts = new DynamoCartRepository(f.client, f.table, f.table, f.table);
+  waitlists = new Waitlists(
+    f.client,
+    f.table,
+    f.table,
+    f.table,
+    Buffer.alloc(32, 7),
+    'https://synthetic.example.test',
+    {
+      enqueue: async () => {
+        throw Error('No availability dispatch in storefront acceptance');
+      },
+    },
+    email,
+  );
+}
 const handler = createHandler(
-  () => ({}),
+  () => catalog ?? {},
   undefined,
-  undefined,
+  () => carts,
   undefined,
   undefined,
   undefined,
@@ -119,7 +208,101 @@ const handler = createHandler(
   undefined,
   () => guest,
   () => refunds,
+  undefined,
+  () => waitlists,
 );
+if (storefrontMode) {
+  const { createServer: httpServer } = await import('node:http');
+  const { spawn } = await import('node:child_process');
+  const api = httpServer(async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    const path = new URL(req.url, 'http://127.0.0.1').pathname;
+    // Only the existing customer contracts are reachable in this disposable fixture.
+    const match = path.match(
+      /^\/carts\/([0-7][0-9A-HJKMNP-TV-Z]{25})(\/items)?$/,
+    );
+    if (
+      !match &&
+      ![
+        '/drops/current',
+        '/carts',
+        '/waitlists',
+        '/waitlists/unsubscribe',
+        '/orders/manage/view',
+        '/orders/manage/pickup',
+        '/orders/manage/request',
+      ].includes(path)
+    ) {
+      res.writeHead(404);
+      res.end();
+      return;
+    }
+    try {
+      let body = '';
+      for await (const chunk of req) {
+        body += chunk;
+        if (body.length > 16384) throw Error('Body too large');
+      }
+      const response = await handler({
+        routeKey:
+          req.method +
+          ' ' +
+          (match ? '/carts/{cartId}' + (match[2] ?? '') : path),
+        headers: req.headers,
+        pathParameters: match ? { cartId: match[1] } : undefined,
+        body: body || undefined,
+        requestContext: {
+          requestId: 'synthetic-local',
+          http: { method: req.method, sourceIp: '127.0.0.1' },
+        },
+      });
+      res.writeHead(response.statusCode, response.headers);
+      res.end(response.body);
+    } catch {
+      res.writeHead(503);
+      res.end('{}');
+    }
+  });
+  await new Promise((resolve) => api.listen(4182, '127.0.0.1', resolve));
+  const child = spawn(
+    process.execPath,
+    [
+      'node_modules/next/dist/bin/next',
+      'dev',
+      '--hostname',
+      '127.0.0.1',
+      '--port',
+      '4183',
+    ],
+    {
+      cwd: resolve(new URL('..', import.meta.url).pathname),
+      stdio: 'inherit',
+      env: {
+        PATH: process.env.PATH,
+        HOME: process.env.HOME,
+        NODE_ENV: 'development',
+        STOREFRONT_API_BASE_URL: 'http://127.0.0.1:4182',
+        STOREFRONT_CURRENCY: 'USD',
+        CHECKOUT_PRICING_MODE: 'dev-zero-tax-fee',
+        CHECKOUT_SUBMISSION_MODE: 'disabled',
+        NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: '',
+      },
+    },
+  );
+  console.log(
+    'SYNTHETIC LOCAL ONLY: storefront http://127.0.0.1:4183. Run the default preview separately for the existing captured guest order. No payment provider.',
+  );
+  process.on('SIGINT', async () => {
+    child.kill('SIGTERM');
+    api.close();
+    await f.close();
+    process.exit(0);
+  });
+  await new Promise((resolve) => child.on('exit', resolve));
+  api.close();
+  await f.close();
+  process.exit(0);
+}
 const web = resolve(new URL('..', import.meta.url).pathname),
   root = await mkdtemp(join(tmpdir(), 'bb-guest-preview-'));
 await writeFile(

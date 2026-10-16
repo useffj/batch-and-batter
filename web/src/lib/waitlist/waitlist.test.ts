@@ -129,6 +129,9 @@ it('only eligible sold-out product cards offer Join Waitlist', async () => {
       {
         id: '01K00000000000000000000002',
         name: 'Cookie',
+        description: 'A buttery cookie with a soft center.',
+        ingredients: ['Flour', 'Butter'],
+        allergens: ['Wheat', 'Milk'],
         priceCents: 400,
         available: 0,
         cookieUnits: 1,
