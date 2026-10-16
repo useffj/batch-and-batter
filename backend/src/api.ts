@@ -1,3 +1,4 @@
+import type { RefundWorklist } from './refund-worklist';
 import { type Refunds } from './refunds';
 import { refundInput } from './refund-domain';
 const refundRoutes = [
@@ -119,6 +120,9 @@ export function createHandler(
       'Refund execution is not activated.',
     );
   },
+  getRefundWorklist: () => RefundWorklist = () => {
+    throw Error('Refund worklist unavailable');
+  },
 ) {
   return async (
     event: ApiEvent,
@@ -206,6 +210,7 @@ export function createHandler(
     }
     if (event.routeKey === 'GET /health') return complete(await health());
     if (
+      event.routeKey === 'GET /admin/refund-worklist' ||
       refundRoutes.includes(event.routeKey) ||
       [
         'GET /admin/orders/{orderId}/requests',
@@ -233,6 +238,29 @@ export function createHandler(
     ) {
       try {
         const identity = requireAdmin(event);
+        if (event.routeKey === 'GET /admin/refund-worklist') {
+          const q = event.queryStringParameters ?? {};
+          if (q.orderId || q.operationId) {
+            if (
+              !idSchema.safeParse(q.orderId).success ||
+              !/^[a-f0-9-]{36}$/.test(q.operationId ?? '') ||
+              Object.keys(q).some(
+                (k) => !['orderId', 'operationId', 'cursor'].includes(k),
+              )
+            )
+              return error(400, 'INVALID_REQUEST', 'Invalid request.');
+            return json(
+              200,
+              await getRefundWorklist().detail(
+                q.orderId!,
+                q.operationId!,
+                q.cursor,
+              ),
+            );
+          }
+          return json(200, await getRefundWorklist().list(q));
+        }
+
         if (refundRoutes.includes(event.routeKey)) {
           const id = idSchema.safeParse(event.pathParameters?.orderId);
           if (

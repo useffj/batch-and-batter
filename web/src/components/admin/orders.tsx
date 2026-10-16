@@ -249,6 +249,7 @@ export function Orders({ expiresAt }: { expiresAt: number }) {
       <AdminNavigation current="orders" />
       <main className="admin-main weekly-drops admin-orders">
         <h1>Orders</h1>
+        <a href="/admin/orders/refunds">Refunds needing attention</a>
         <p>
           Read-only order records. Dates and timestamps use Denver time. Manage
           pickups in Fulfillment.

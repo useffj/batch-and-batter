@@ -1,3 +1,4 @@
+import { RefundWorklist } from './refund-worklist';
 import type { Refunds } from './refunds';
 import { GuestOrders } from './guest-orders';
 import { AdminNotifications } from './admin-notifications';
@@ -35,6 +36,7 @@ export function createEntrypoint(
   getNotifications?: () => AdminNotifications,
   getGuestOrders?: () => GuestOrders,
   getRefunds?: () => Refunds,
+  getRefundWorklist?: () => RefundWorklist,
 ) {
   const http = createHandler(
     getRepository,
@@ -48,6 +50,7 @@ export function createEntrypoint(
     getNotifications,
     getGuestOrders,
     getRefunds,
+    getRefundWorklist,
   );
   let payment: ReturnType<typeof createPaymentHttp> | undefined;
   const automatic = createAutoOpenHandler(getRepository);
@@ -157,4 +160,11 @@ export const handler = createEntrypoint(
       process.env.GUEST_PICKUP_CUTOFF ?? '15:00',
       Number(process.env.GUEST_CANCELLATION_HOURS ?? '24'),
     )),
+  undefined,
+  () =>
+    new RefundWorklist(
+      DynamoDBDocumentClient.from(new DynamoDBClient({ maxAttempts: 1 })),
+      process.env.COMMERCE_TABLE_NAME ?? '',
+      process.env.OPERATIONS_TABLE_NAME ?? '',
+    ),
 );
