@@ -7,7 +7,15 @@ import { resolve, join } from 'node:path';
 if (process.env.NODE_ENV === 'production') throw Error('Local preview only');
 const { fixtures } =
   await import('../../backend/scripts/orders-local-fixtures.mjs');
-const f = await fixtures();
+const refundMode = process.argv.includes('--refund-worklist');
+const f = refundMode
+  ? await (
+      await import('../../backend/scripts/refund-worklist-local-fixtures.mjs')
+    ).worklistFixtures()
+  : await fixtures();
+const { RefundWorklist } = createRequire(
+  new URL('../../backend/package.json', import.meta.url),
+)('./dist/src/refund-worklist');
 const require = createRequire(
   new URL('../../backend/package.json', import.meta.url),
 );
@@ -20,6 +28,15 @@ const handler = createHandler(
   undefined,
   undefined,
   () => f.repository,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  () =>
+    new RefundWorklist(f.client, f.table, f.table, () =>
+      Date.parse('2026-10-22T18:00:00Z'),
+    ),
 );
 const web = resolve(new URL('..', import.meta.url).pathname),
   root = await mkdtemp(join(tmpdir(), 'bb-orders-preview-'));
@@ -29,7 +46,7 @@ await writeFile(
 );
 await writeFile(
   join(root, 'preview.tsx'),
-  `import React from 'react';import {createRoot} from 'react-dom/client';import {Orders} from '/@fs/${web}/src/components/admin/orders.tsx';import '/@fs/${web}/src/app/globals.css';import '/@fs/${web}/src/app/admin/admin.css';createRoot(document.getElementById('root')).render(<><p role="note">SYNTHETIC LOCAL ACCEPTANCE — isolated DynamoDB Local. No AWS. Read-only orders.</p><Orders expiresAt={Date.now()+900000}/></>);`,
+  `import React from 'react';import {createRoot} from 'react-dom/client';import {${refundMode ? 'RefundWorklistView' : 'Orders'} as Orders} from '/@fs/${web}/src/components/admin/${refundMode ? 'refund-worklist' : 'orders'}.tsx';import '/@fs/${web}/src/app/globals.css';import '/@fs/${web}/src/app/admin/admin.css';createRoot(document.getElementById('root')).render(<><p role="note">SYNTHETIC LOCAL ACCEPTANCE — isolated DynamoDB Local. No AWS. Read-only orders.</p><Orders expiresAt={Date.now()+900000}/></>);`,
 );
 const server = await createServer({
   configFile: false,

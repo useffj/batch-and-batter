@@ -1309,3 +1309,71 @@ export async function guestAccessRelay(
     );
   }
 }
+
+export async function refundWorklistRelay(
+  request: Request,
+  c: AdminConfig,
+  fetcher: typeof fetch = fetch,
+) {
+  try {
+    const config = settings(c);
+    if (request.method !== 'GET') throw new AdminFailure('REQUEST', 405);
+    if (
+      request.headers.has('sec-fetch-site') &&
+      request.headers.get('sec-fetch-site') !== 'same-origin'
+    )
+      throw new AdminFailure('REQUEST', 403);
+    const params = new URL(request.url).searchParams;
+    if (
+      params.toString().length > 5000 ||
+      [...params.keys()].some(
+        (k) =>
+          ![
+            'dropId',
+            'pickupDate',
+            'status',
+            'reference',
+            'cursor',
+            'attentionOnly',
+            'orderId',
+            'operationId',
+          ].includes(k),
+      )
+    )
+      throw new AdminFailure('REQUEST', 400);
+    const session = await authorize(
+      request.headers.get('cookie') ?? '',
+      c,
+      fetcher,
+    );
+    const r = await fetcher(
+      config.api +
+        '/admin/refund-worklist' +
+        (params.size ? '?' + params.toString() : ''),
+      {
+        headers: { Authorization: 'Bearer ' + session.token },
+        cache: 'no-store',
+        redirect: 'error',
+        signal: AbortSignal.timeout(12000),
+      },
+    );
+    if (!r.ok)
+      return output(
+        {
+          message:
+            r.status === 404
+              ? 'Order not found.'
+              : 'Unable to load orders. Refresh or sign in again.',
+        },
+        [400, 401, 403, 404].includes(r.status) ? r.status : 503,
+      );
+    const data = await json(r, 128 * 1024, new AdminFailure('INVALID'));
+    if (session.expiresAt <= Date.now()) throw new AdminFailure('EXPIRED', 401);
+    return output(data, 200);
+  } catch (e) {
+    return output(
+      { message: e instanceof AdminFailure ? e.message : messages.UNAVAILABLE },
+      e instanceof AdminFailure ? e.status : 503,
+    );
+  }
+}

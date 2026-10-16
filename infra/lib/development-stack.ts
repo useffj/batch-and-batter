@@ -513,6 +513,11 @@ export class DevelopmentStack extends Stack {
         apigateway.HttpMethod.POST,
         'AdminGuestRevokeIntegration',
       ],
+      [
+        '/admin/refund-worklist',
+        apigateway.HttpMethod.GET,
+        'AdminRefundWorklistIntegration',
+      ],
       ['/admin/orders', apigateway.HttpMethod.GET, 'AdminOrdersIntegration'],
       [
         '/admin/orders/{orderId}',

@@ -235,3 +235,19 @@ export async function accessRelay(
     );
   }
 }
+
+export async function worklistRelay(request: Request, config: RuntimeConfig) {
+  try {
+    const key = await loadSessionKey(config);
+    const { refundWorklistRelay } = await import('./server');
+    return refundWorklistRelay(request, { ...config, ADMIN_SESSION_KEY: key });
+  } catch {
+    return NextResponse.json(
+      { message: messages.CONFIGURATION },
+      {
+        status: 503,
+        headers: { 'Cache-Control': 'no-store, private', Vary: 'Cookie' },
+      },
+    );
+  }
+}
