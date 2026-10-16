@@ -1,3 +1,4 @@
+import { cancellationKey, cancellationState } from './cancellation-requests';
 import {
   GetCommand,
   QueryCommand,
@@ -143,6 +144,18 @@ export class Notifications {
     if (o.kind === 'PICKUP_CHANGE' && order.pickup.date !== o.pickupDate)
       return 'PICKUP_CHANGED';
     if (o.kind === 'REMINDER') {
+      const request = await this.read(
+        this.commerce,
+        cancellationKey(order.orderId),
+      );
+      if (request) {
+        const parsed = cancellationState.safeParse(request);
+        if (!parsed.success || parsed.data.orderId !== order.orderId)
+          return 'CANCELLATION_REQUIRES_REVIEW';
+        if (parsed.data.type === 'GUARANTEED')
+          return 'CANCELLATION_REQUEST_PENDING';
+      }
+
       if (order.pickup.date !== o.pickupDate) return 'PICKUP_CHANGED';
       const local = this.localTime().slice(0, 10);
       if (
@@ -437,11 +450,13 @@ export class Notifications {
     const title =
       o.kind === 'CONFIRMATION'
         ? 'Your Batch & Batter order'
-        : o.kind === 'ACCESS'
-          ? 'Your Batch & Batter order link'
-          : o.kind === 'PICKUP_CHANGE'
-            ? 'Your Batch & Batter pickup has changed'
-            : 'Your Batch & Batter pickup reminder';
+        : o.kind === 'REQUEST'
+          ? 'Your bakery assistance request has been received'
+          : o.kind === 'ACCESS'
+            ? 'Your Batch & Batter order link'
+            : o.kind === 'PICKUP_CHANGE'
+              ? 'Your Batch & Batter pickup has changed'
+              : 'Your Batch & Batter pickup reminder';
     const text = [
       title,
       value.displayOrderNumber
@@ -452,6 +467,11 @@ export class Notifications {
       `Pickup: ${value.pickup.date}, ${value.pickup.startTime}–${value.pickup.endTime} America/Denver`,
       value.pickup.location,
       value.pickup.instructions,
+      ...(o.kind === 'REQUEST'
+        ? [
+            'Your cancellation or refund-exception request has been received. Review or financial processing may still be pending. This message does not confirm cancellation or a refund.',
+          ]
+        : []),
       this.options.policies,
     ].join('\n');
     let link: string | undefined;

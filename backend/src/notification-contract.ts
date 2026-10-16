@@ -47,13 +47,19 @@ export const operationKey = (orderId: string, key: string) => ({
 export const notificationKey = z
   .string()
   .regex(
-    /^(CONFIRMATION#email|REMINDER#\d{4}-\d\d-\d\d#(email|sms)|(ACCESS|PICKUP_CHANGE)#[a-f0-9-]{36}#email)$/,
+    /^(CONFIRMATION#email|REMINDER#\d{4}-\d\d-\d\d#(email|sms)|(ACCESS|PICKUP_CHANGE|REQUEST)#[a-f0-9-]{36}#email)$/,
   );
 export const operationSchema = z
   .strictObject({
     orderId: idSchema,
     key: notificationKey,
-    kind: z.enum(['CONFIRMATION', 'REMINDER', 'ACCESS', 'PICKUP_CHANGE']),
+    kind: z.enum([
+      'CONFIRMATION',
+      'REMINDER',
+      'ACCESS',
+      'PICKUP_CHANGE',
+      'REQUEST',
+    ]),
     channel: z.enum(['email', 'sms']),
     pickupDate: dateSchema,
     status: z.enum([

@@ -1189,7 +1189,7 @@ export async function notificationsRelay(
 export async function guestAccessRelay(
   request: Request,
   orderId: string,
-  action: 'status' | 'reissue' | 'revoke',
+  action: 'status' | 'reissue' | 'revoke' | 'request-status' | 'review',
   c: AdminConfig,
   fetcher: typeof fetch = fetch,
 ) {
@@ -1198,7 +1198,8 @@ export async function guestAccessRelay(
     if (
       id(orderId) !== orderId ||
       new URL(request.url).search ||
-      request.method !== (action === 'status' ? 'GET' : 'POST')
+      request.method !==
+        (action === 'status' || action === 'request-status' ? 'GET' : 'POST')
     )
       throw new AdminFailure('REQUEST', 400);
     if (
@@ -1207,7 +1208,7 @@ export async function guestAccessRelay(
     )
       throw new AdminFailure('REQUEST', 403);
     let body: string | undefined;
-    if (action !== 'status') {
+    if (action !== 'status' && action !== 'request-status') {
       if (
         request.headers.get('origin') !== config.origin ||
         request.headers.get('content-type')?.split(';')[0] !==
@@ -1244,8 +1245,12 @@ export async function guestAccessRelay(
       config.api +
         '/admin/orders/' +
         orderId +
-        '/access' +
-        (action === 'status' ? '' : '/' + action),
+        (action === 'review' || action === 'request-status'
+          ? '/requests'
+          : '/access') +
+        (action === 'status' || action === 'request-status'
+          ? ''
+          : '/' + action),
       {
         method: request.method,
         headers: {
@@ -1262,11 +1267,17 @@ export async function guestAccessRelay(
       return output(
         {
           message:
-            'Access action unavailable. Refresh status and review the active-link limit.',
+            action === 'review' || action === 'request-status'
+              ? 'Request review unavailable. Refresh the Order and request status.'
+              : 'Access action unavailable. Refresh status and review the active-link limit.',
         },
         [400, 401, 403, 404, 409].includes(r.status) ? r.status : 503,
       );
-    const data = await json(r, 32768, new AdminFailure('INVALID'));
+    const data = await json(
+      r,
+      action === 'request-status' ? 131072 : 32768,
+      new AdminFailure('INVALID'),
+    );
     if (session.expiresAt <= Date.now()) throw new AdminFailure('EXPIRED', 401);
     return output(data, 200);
   } catch (e) {

@@ -2,7 +2,7 @@
 import { useState } from 'react';
 type Notice = {
   key: string;
-  kind: 'CONFIRMATION' | 'REMINDER' | 'ACCESS' | 'PICKUP_CHANGE';
+  kind: 'CONFIRMATION' | 'REMINDER' | 'ACCESS' | 'PICKUP_CHANGE' | 'REQUEST';
   channel: 'email' | 'sms';
   status: string;
   reason?: string;
@@ -48,64 +48,70 @@ export function NotificationRows({ data }: { data: NotificationSummary }) {
         Confirmation SMS: not configured. Provider acceptance does not confirm
         customer receipt.
       </p>
-      {(['CONFIRMATION', 'REMINDER', 'ACCESS', 'PICKUP_CHANGE'] as const).map(
-        (kind) => (
-          <div key={kind}>
-            <h4>
-              {kind === 'CONFIRMATION'
+      {(
+        [
+          'CONFIRMATION',
+          'REMINDER',
+          'ACCESS',
+          'PICKUP_CHANGE',
+          'REQUEST',
+        ] as const
+      ).map((kind) => (
+        <div key={kind}>
+          <h4>
+            {kind === 'REQUEST'
+              ? 'Cancellation or assistance request'
+              : kind === 'CONFIRMATION'
                 ? 'Order confirmation'
                 : kind === 'ACCESS'
                   ? 'Replacement order link'
                   : kind === 'PICKUP_CHANGE'
                     ? 'Pickup change'
                     : 'Pickup reminder'}
-            </h4>
-            {(['email', 'sms'] as const)
-              .filter((channel) => kind === 'REMINDER' || channel === 'email')
-              .map((channel) => {
-                const rows = data.notifications.filter(
-                  (n) => n.kind === kind && n.channel === channel,
-                );
-                return (
-                  <div key={channel}>
-                    <strong>{channel === 'email' ? 'Email' : 'SMS'}</strong>
-                    {rows.length ? (
-                      rows.map((n) => (
-                        <p key={n.key}>
-                          {labels[n.status] ?? 'Unknown status'}
-                          {kind === 'REMINDER'
-                            ? ` · Pickup ${n.pickupDate}`
-                            : ''}
-                          {n.reason && (
-                            <>
-                              <br />
-                              {reasons[n.reason] ??
-                                'Review eligibility or delivery configuration.'}
-                            </>
-                          )}
-                          {n.sentAt && (
-                            <>
-                              <br />
-                              Accepted{' '}
-                              {new Intl.DateTimeFormat('en-US', {
-                                timeZone: 'America/Denver',
-                                dateStyle: 'medium',
-                                timeStyle: 'short',
-                              }).format(new Date(n.sentAt))}{' '}
-                              Denver
-                            </>
-                          )}
-                        </p>
-                      ))
-                    ) : (
-                      <p>Not recorded — no delivery is implied.</p>
-                    )}
-                  </div>
-                );
-              })}
-          </div>
-        ),
-      )}
+          </h4>
+          {(['email', 'sms'] as const)
+            .filter((channel) => kind === 'REMINDER' || channel === 'email')
+            .map((channel) => {
+              const rows = data.notifications.filter(
+                (n) => n.kind === kind && n.channel === channel,
+              );
+              return (
+                <div key={channel}>
+                  <strong>{channel === 'email' ? 'Email' : 'SMS'}</strong>
+                  {rows.length ? (
+                    rows.map((n) => (
+                      <p key={n.key}>
+                        {labels[n.status] ?? 'Unknown status'}
+                        {kind === 'REMINDER' ? ` · Pickup ${n.pickupDate}` : ''}
+                        {n.reason && (
+                          <>
+                            <br />
+                            {reasons[n.reason] ??
+                              'Review eligibility or delivery configuration.'}
+                          </>
+                        )}
+                        {n.sentAt && (
+                          <>
+                            <br />
+                            Accepted{' '}
+                            {new Intl.DateTimeFormat('en-US', {
+                              timeZone: 'America/Denver',
+                              dateStyle: 'medium',
+                              timeStyle: 'short',
+                            }).format(new Date(n.sentAt))}{' '}
+                            Denver
+                          </>
+                        )}
+                      </p>
+                    ))
+                  ) : (
+                    <p>Not recorded — no delivery is implied.</p>
+                  )}
+                </div>
+              );
+            })}
+        </div>
+      ))}
       {data.truncated && (
         <p role="status">
           Only the first 50 operations are shown. Older or additional records

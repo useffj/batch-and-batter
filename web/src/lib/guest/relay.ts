@@ -17,7 +17,10 @@ export async function guestRelay(
       },
     });
   try {
-    if (request.method !== 'POST' || !['view', 'pickup'].includes(action))
+    if (
+      request.method !== 'POST' ||
+      !['view', 'pickup', 'request'].includes(action)
+    )
       return output({ message: 'Unsupported request.' }, 405);
     const url = new URL(request.url);
     if (
@@ -59,7 +62,9 @@ export async function guestRelay(
           !(
             action === 'view'
               ? ['token']
-              : ['token', 'date', 'requestId', 'revision']
+              : action === 'request'
+                ? ['token', 'request']
+                : ['token', 'date', 'requestId', 'revision']
           ).includes(k),
       )
     )

@@ -49,7 +49,7 @@ it('guest presentation uses human dates and frozen historical prices without int
 it('guest landing does not expose data or require Cognito', () => {
   const html = renderToStaticMarkup(createElement(ManageOrder));
   expect(html).toContain('Your order');
-  expect(html).toContain('Refunds and cancellations are not available');
+  expect(html).toContain('Refund execution is not available');
   expect(html).not.toContain('localStorage');
   expect(html).not.toContain('Cognito');
 });
