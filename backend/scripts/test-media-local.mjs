@@ -969,6 +969,217 @@ try {
       },
     );
   }
+  await check(
+    'isolated media API: authorize, synthetic transfer, actual Sharp, attach, reload, draft and private derivative',
+    async (s) => {
+      const { Readable } = await import('node:stream');
+      const { S3Client } = require('@aws-sdk/client-s3');
+      const { S3MediaStorage } = require('../dist/src/media-storage');
+      const { MediaOrchestration } = require('../dist/src/media-orchestration');
+      const {
+        IsolatedMedia,
+        ISOLATED_MEDIA_BUCKET,
+        ISOLATED_PROCESSOR,
+      } = require('../dist/src/isolated-media');
+      const { mediaCatalog } = require('../dist/src/isolated-media-handler');
+      s.repo = new MediaRepository(client, s.table);
+      const objects = new Map();
+      let processing;
+      const store = new S3MediaStorage(
+        new S3Client({
+          region: 'us-east-2',
+          credentials: {
+            accessKeyId: 'LOCALONLY',
+            secretAccessKey: 'LOCALONLY',
+            sessionToken: 'LOCALONLY',
+            expiration: new Date(Date.now() + 3600000),
+          },
+        }),
+        {
+          enabled: true,
+          region: 'us-east-2',
+          bucket: ISOLATED_MEDIA_BUCKET,
+          processorArn: ISOLATED_PROCESSOR,
+        },
+      );
+      const workerStorage = {
+        source: async (i) =>
+          objects.get(
+            'staging/products/' + i.productId + '/' + i.uploadId + '/source',
+          ),
+        output: async (i, a, v) => {
+          const k = outputKey(i, a, v.size, v.format);
+          assert.ok(!objects.has(k));
+          objects.set(k, v.data);
+          return k;
+        },
+      };
+      const service = new MediaOrchestration(s.repo, store, {
+        invoke: async (i) => {
+          processing = await processMedia(
+            envelope(i),
+            s.repo,
+            workerStorage,
+            processImage,
+          );
+        },
+      });
+      const adapter = {
+        send: async (c) => {
+          assert.equal(c.input.Bucket, ISOLATED_MEDIA_BUCKET);
+          const b = objects.get(c.input.Key);
+          return {
+            Body: Readable.from([b]),
+            ContentLength: b.length,
+            ContentType: 'image/webp',
+          };
+        },
+      };
+      const router = mediaCatalog(
+        () => new DynamoCatalogRepository(client, s.table),
+        () => new IsolatedMedia(s.repo, service, adapter),
+      );
+      const invoke = async (routeKey, body, paths = {}, query) =>
+        router({
+          routeKey,
+          pathParameters: { productId: product.productId, ...paths },
+          queryStringParameters: query,
+          headers: {
+            'content-type': 'application/json',
+            'idempotency-key': '12345678-1234-4234-8234-123456789abc',
+          },
+          body: body === undefined ? undefined : JSON.stringify(body),
+          requestContext: {
+            requestId: 'local',
+            http: { method: routeKey.split(' ')[0] },
+            authorizer: {
+              jwt: {
+                claims: {
+                  sub: owner,
+                  username: owner,
+                  token_use: 'access',
+                  'cognito:groups': ['batch-and-batter-admins'],
+                },
+              },
+            },
+          },
+        });
+      const authorized = await invoke(
+        'POST /admin/products/{productId}/media/uploads',
+        imageRequest,
+      );
+      assert.equal(authorized.statusCode, 200);
+      const { upload, authorization } = JSON.parse(authorized.body);
+      assert.equal(
+        authorization.url,
+        `https://${ISOLATED_MEDIA_BUCKET}.s3.us-east-2.amazonaws.com/`,
+      );
+      assert.equal(
+        authorization.fields['x-amz-checksum-sha256'],
+        createHash('sha256').update(source).digest('base64'),
+      );
+      objects.set(authorization.fields.key, source); // Local S3 POST acceptance; never sends a network upload.
+      assert.equal(
+        (
+          await invoke(
+            'POST /admin/products/{productId}/media/uploads/{uploadId}/complete',
+            {},
+            { uploadId: upload.uploadId },
+          )
+        ).statusCode,
+        202,
+      );
+      assert.equal(processing.state, 'READY');
+      const count = objects.size;
+      await invoke(
+        'POST /admin/products/{productId}/media/uploads/{uploadId}/complete',
+        {},
+        { uploadId: upload.uploadId },
+      );
+      assert.equal(objects.size, count);
+      const saved = await invoke('PUT /admin/products/{productId}/media', {
+        expectedRevision: 0,
+        images: [
+          { mediaId: upload.mediaId, alt: 'Synthetic cookie photograph' },
+        ],
+      });
+      assert.equal(saved.statusCode, 200);
+      assert.deepEqual(
+        JSON.parse(
+          (await invoke('GET /admin/products/{productId}/media')).body,
+        ),
+        JSON.parse(saved.body),
+      );
+      const d = JSON.parse(
+        (
+          await invoke('POST /admin/drops', {
+            name: 'Synthetic image draft',
+            description: 'Local only',
+            opensAt: '2027-01-03T19:00:00.000Z',
+            quantityLimit: 12,
+            timezone: 'America/Denver',
+            pickupLocation: 'Local',
+            pickupInstructions: 'No actual pickup',
+          })
+        ).body,
+      ).drop;
+      assert.equal(
+        (
+          await invoke(
+            'PUT /admin/drops/{dropId}/draft',
+            {
+              revision: d.updatedAt,
+              drop: d,
+              products: [
+                {
+                  productId: product.productId,
+                  priceCents: 400,
+                  inventoryTotal: 6,
+                },
+              ],
+              pickups: [
+                {
+                  dropId: d.dropId,
+                  date: '2027-01-07',
+                  startTime: '12:00',
+                  endTime: '14:00',
+                  timezone: 'America/Denver',
+                  active: true,
+                },
+              ],
+            },
+            { dropId: d.dropId },
+          )
+        ).statusCode,
+        200,
+      );
+      const preview = JSON.parse(
+        (
+          await invoke('GET /admin/drops/{dropId}/preview', undefined, {
+            dropId: d.dropId,
+          })
+        ).body,
+      );
+      assert.equal(preview.actionsEnabled, false);
+      assert.equal(preview.drop.status, 'DRAFT');
+      assert.equal(preview.products[0].dropProduct.priceCents, 400);
+      assert.equal(preview.inventory[0].total, 6);
+      const image = await invoke(
+        'GET /admin/products/{productId}/media/assets/{mediaId}',
+        undefined,
+        { mediaId: upload.mediaId },
+        { view: 'image' },
+      );
+      assert.equal(image.statusCode, 200);
+      assert.equal(image.isBase64Encoded, true);
+      assert.equal(
+        (await sharp(Buffer.from(image.body, 'base64')).metadata()).format,
+        'webp',
+      );
+      assert.equal((await invoke('GET /drops/current')).statusCode, 404);
+      assert.equal((await invoke('POST /carts')).statusCode, 404);
+    },
+  );
   console.log(`${passed} media DynamoDB Local integration groups passed`);
 } finally {
   for (const TableName of tables)

@@ -118,20 +118,18 @@ await rm(
   { force: true },
 );
 execFileSync(
-  'zip',
+  'python3',
   [
-    '-q',
-    '-r',
-    fileURLToPath(
-      new URL(
-        linux ? '../out/processor-linux-x64.zip' : '../out/processor-host.zip',
-        import.meta.url,
-      ),
-    ),
-    'index.cjs',
-    'package.json',
-    'package-lock.json',
-    'node_modules',
+    '-c',
+    `import pathlib,zipfile
+root=pathlib.Path('.')
+out=pathlib.Path('../${linux ? 'processor-linux-x64.zip' : 'processor-host.zip'}')
+with zipfile.ZipFile(out,'w',compression=zipfile.ZIP_DEFLATED,compresslevel=9) as z:
+ for p in sorted(root.rglob('*')):
+  if p.is_file():
+   info=zipfile.ZipInfo(p.as_posix(),(1980,1,1,0,0,0));info.create_system=3;info.external_attr=(0o100755 if p.stat().st_mode & 0o111 else 0o100644)<<16;info.compress_type=zipfile.ZIP_DEFLATED
+   z.writestr(info,p.read_bytes(),compresslevel=9)
+`,
   ],
   { cwd: fileURLToPath(out), stdio: 'inherit' },
 );

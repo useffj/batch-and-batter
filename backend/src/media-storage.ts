@@ -14,18 +14,29 @@ import {
   uploadRequestSchema,
 } from './media-contract';
 import type { MediaIntent } from './media-records';
-export const mediaServiceConfigSchema = z.strictObject({
-  enabled: z.literal(true),
-  region: z.literal('us-east-2'),
-  bucket: z
-    .string()
-    .regex(/^batch-and-batter-dev-product-media-302154194958-us-east-2$/),
-  processorArn: z
-    .string()
-    .regex(
-      /^arn:aws:lambda:us-east-2:302154194958:function:batch-and-batter-dev-media-processor(?::[a-zA-Z0-9_-]+)?$/,
-    ),
-});
+export const mediaServiceConfigSchema = z
+  .strictObject({
+    enabled: z.literal(true),
+    region: z.literal('us-east-2'),
+    bucket: z
+      .string()
+      .regex(
+        /^batch-and-batter-dev-(?:product-media|isolated-media)-302154194958-us-east-2$/,
+      ),
+    processorArn: z
+      .string()
+      .regex(
+        /^arn:aws:lambda:us-east-2:302154194958:function:batch-and-batter-dev-(?:isolated-)?media-processor(?::[a-zA-Z0-9_-]+)?$/,
+      ),
+  })
+  .refine(
+    (c) =>
+      c.bucket.includes('-isolated-media-') ===
+      c.processorArn.includes(
+        ':function:batch-and-batter-dev-isolated-media-processor',
+      ),
+    { message: 'Media storage and processor boundary mismatch' },
+  );
 export type UploadAuthorization = {
   url: string;
   fields: Record<string, string>;

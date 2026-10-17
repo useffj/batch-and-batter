@@ -33,9 +33,9 @@ const owner = 'synthetic-admin';
 const cfg = {
   enabled: true,
   region: 'us-east-2',
-  bucket: 'batch-and-batter-dev-product-media-302154194958-us-east-2',
+  bucket: 'batch-and-batter-dev-isolated-media-302154194958-us-east-2',
   processorArn:
-    'arn:aws:lambda:us-east-2:302154194958:function:batch-and-batter-dev-media-processor',
+    'arn:aws:lambda:us-east-2:302154194958:function:batch-and-batter-dev-isolated-media-processor',
 };
 async function setup(options = {}) {
   const bytes = await sharp({
@@ -170,7 +170,7 @@ test('packaged handler export and fail-closed missing/configured destinations', 
       configuration({
         AWS_REGION: cfg.region,
         MEDIA_BUCKET_NAME: cfg.bucket,
-        CATALOG_TABLE_NAME: 'batch-and-batter-dev-catalog',
+        CATALOG_TABLE_NAME: 'batch-and-batter-dev-isolated-catalog',
         ...patch,
       }),
     );

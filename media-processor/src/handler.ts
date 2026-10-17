@@ -12,8 +12,8 @@ export function configuration(env: NodeJS.ProcessEnv) {
   const table = env.CATALOG_TABLE_NAME;
   if (
     region !== 'us-east-2' ||
-    bucket !== 'batch-and-batter-dev-product-media-302154194958-us-east-2' ||
-    table !== 'batch-and-batter-dev-catalog'
+    bucket !== 'batch-and-batter-dev-isolated-media-302154194958-us-east-2' ||
+    table !== 'batch-and-batter-dev-isolated-catalog'
   )
     throw new Error('MEDIA_PROCESSOR_CONFIGURATION_INVALID');
   return { region, bucket, table };
@@ -58,7 +58,7 @@ export async function handler(event: unknown) {
         region: c.region,
         bucket: c.bucket,
         processorArn:
-          'arn:aws:lambda:us-east-2:302154194958:function:batch-and-batter-dev-media-processor',
+          'arn:aws:lambda:us-east-2:302154194958:function:batch-and-batter-dev-isolated-media-processor',
       }),
     );
   }

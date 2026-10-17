@@ -274,3 +274,31 @@ export async function waitlistsRelay(
     );
   }
 }
+
+export async function imageRelay(
+  request: Request,
+  productId: string,
+  mediaId: string,
+  config: RuntimeConfig,
+) {
+  try {
+    const key = await loadSessionKey(config);
+    const { mediaImageRelay } = await import('./server');
+    return mediaImageRelay(request, productId, mediaId, {
+      ...config,
+      ADMIN_SESSION_KEY: key,
+    });
+  } catch {
+    return NextResponse.json(
+      { message: 'Image unavailable.' },
+      {
+        status: 503,
+        headers: {
+          'Cache-Control': 'no-store, private',
+          Vary: 'Cookie',
+          'Referrer-Policy': 'no-referrer',
+        },
+      },
+    );
+  }
+}

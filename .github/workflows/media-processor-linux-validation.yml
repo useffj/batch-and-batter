@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - codex/media-processor-runtime-1b2h
+      - codex/isolated-product-media-1n-m
 
 permissions:
   contents: read
