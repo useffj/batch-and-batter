@@ -256,3 +256,46 @@ test('immutable output puts never overwrite an approved key', async () => {
     },
   );
 });
+
+test('isolated Lambda session credentials without expiry metadata remain capped at five minutes', async () => {
+  const config = {
+    ...cfg,
+    bucket: 'batch-and-batter-dev-isolated-media-302154194958-us-east-2',
+    processorArn:
+      'arn:aws:lambda:us-east-2:302154194958:function:batch-and-batter-dev-isolated-media-processor',
+  };
+  const c = new S3Client({
+    region: 'us-east-2',
+    credentials: {
+      accessKeyId: 'LOCALONLY',
+      secretAccessKey: 'LOCALONLY',
+      sessionToken: 'LOCALONLY',
+    },
+  });
+  const s = new S3MediaStorage(c, config);
+  await s.preflight();
+  const signed = await s.authorize(intent());
+  assert.ok(signed.expiresAt <= Date.now() + 300000);
+  assert.equal(signed.fields['X-Amz-Security-Token'], 'LOCALONLY');
+  await assert.rejects(
+    new S3MediaStorage(c, cfg).preflight(),
+    /MEDIA_UPLOAD_UNAVAILABLE/,
+  );
+  c.destroy();
+  for (const credentials of [
+    { accessKeyId: 'LOCALONLY', secretAccessKey: 'LOCALONLY' },
+    {
+      accessKeyId: 'LOCALONLY',
+      secretAccessKey: 'LOCALONLY',
+      sessionToken: 'LOCALONLY',
+      expiration: new Date(0),
+    },
+  ]) {
+    const client = new S3Client({ region: 'us-east-2', credentials });
+    await assert.rejects(
+      new S3MediaStorage(client, config).preflight(),
+      /MEDIA_UPLOAD_UNAVAILABLE/,
+    );
+    client.destroy();
+  }
+});

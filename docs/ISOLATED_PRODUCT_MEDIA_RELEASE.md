@@ -38,6 +38,13 @@ no-store/private, no-referrer, nosniff and same-origin resource policy. There ar
 S3 image bearer URLs, public endpoints, original-image reads by the API, image
 optimizer caching or public storefront changes.
 
+The isolated signer supports Lambda role session credentials without optional SDK
+expiration metadata; a session token is mandatory and POST policies remain at most
+five minutes. Known expirations further shorten authorization. S3 enforces actual
+session validity independently. Shared-media signing retains its previous stricter
+metadata requirement. This corrects a confirmed compatibility gap in the old
+adapter; see [Lambda runtime credentials](https://docs.aws.amazon.com/lambda/latest/dg/configuration-envvars.html).
+
 The saved-DRAFT page reads saved manifests and verifies ATTACHED primary assets;
 it never selects an unattached READY image. Gallery viewing may show READY images
 for explicit attachment. Alt text is retained. Missing images retain the branded
@@ -130,7 +137,7 @@ There is no lifecycle deletion or cleanup executor in this release.
 
 Local evidence: frontend 594 tests; processor 26 tests; infrastructure 154 tests;
 37 DynamoDB Local groups including actual Sharp, API authorization/processing,
-attachment/reload, saved draft and private derivative retrieval. Backend: 1,133 tests plus 10 legacy and 3 API artifact checks. Type checks, lint, production frontend
+attachment/reload, saved draft and private derivative retrieval. Backend: 1,134 tests plus 10 legacy and 3 API artifact checks. Type checks, lint, production frontend
 build, offline default/opt-in synthesis, formatting and whitespace checks are
 required before checkpoint. Production backend/processor/frontend audits and full
 infrastructure audit have zero findings. No security exception is granted.
@@ -186,8 +193,8 @@ Hosted duplicate-activation acceptance remains **NOT PASSED**.
 
 ## Local candidate identities
 
-- Media API ZIP: SHA-256 `cb54058ec451f5eb0d7cc560c0103d01a28493776f39676de5b7e13303ce6b3e`, 2822205 bytes.
-- Linux processor ZIP: SHA-256 `436f80ea5a1cdc3678c3736182216ca2258da7b8459d935f7b0f14197c7761a5`, 9246954 bytes.
+- Media API ZIP: SHA-256 `4e962eec3b65f0e9e5fb3a93b436d2e69f552566162b24287e2220925fb4e0b3`, 2822491 bytes.
+- Linux processor ZIP: SHA-256 `199c572363986d0ee3b8b58aaa6e752417d764af457ed575656aa4e1101a87ee`, 9246998 bytes.
 
 These are local candidate identities, not published objects or deployment approval.
 Native CI independently builds and validates its exact ZIP; freeze the chosen
