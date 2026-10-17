@@ -1,3 +1,4 @@
+import { isolatedMediaEnabled } from '../../../lib/admin/media-config';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { authorize, AdminFailure } from '../../../lib/admin/runtime';
@@ -26,5 +27,11 @@ export default async function AdminPage() {
         : 'unavailable';
     redirect(`/admin/login${reason ? `?reason=${reason}` : ''}`);
   }
-  return <Products expiresAt={expiresAt} catalogScope={catalogScope} />;
+  return (
+    <Products
+      expiresAt={expiresAt}
+      catalogScope={catalogScope}
+      mediaEnabled={isolatedMediaEnabled(process.env)}
+    />
+  );
 }

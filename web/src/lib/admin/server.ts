@@ -29,6 +29,7 @@ import { composition, id, record, text } from './contract';
 // it does not replace Gateway validation or provide immediate replay revocation.
 export interface AdminConfig {
   ADMIN_CATALOG_MODE?: string;
+  ADMIN_MEDIA_MODE?: string;
   NODE_ENV?: string;
   ADMIN_ORIGIN?: string;
   ADMIN_API_BASE_URL?: string;
@@ -829,7 +830,11 @@ export async function mediaRelay(
         );
       throw new AdminFailure('UNAVAILABLE', 502);
     }
-    const result = mediaResponse(await json(response, 32768), target);
+    const result = mediaResponse(
+      await json(response, 32768),
+      target,
+      c.ADMIN_CATALOG_MODE === 'isolated',
+    );
     if (session.expiresAt <= Date.now()) throw new AdminFailure('EXPIRED', 401);
     return output(result, response.status);
   } catch (e) {
@@ -1465,6 +1470,84 @@ export async function waitlistAdminRelay(
     return output(
       { message: e instanceof AdminFailure ? e.message : messages.UNAVAILABLE },
       e instanceof AdminFailure ? e.status : 503,
+    );
+  }
+}
+
+// Authenticated byte relay, never a redirect or bearer URL. No image optimizer cache.
+export async function mediaImageRelay(
+  request: Request,
+  productId: string,
+  mediaId: string,
+  c: AdminConfig,
+  fetcher: typeof fetch = fetch,
+) {
+  const headers = {
+    'Cache-Control': 'no-store, private',
+    Vary: 'Cookie',
+    'Referrer-Policy': 'no-referrer',
+    'X-Content-Type-Options': 'nosniff',
+    'Cross-Origin-Resource-Policy': 'same-origin',
+  };
+  try {
+    const { isolatedMediaEnabled } = await import('./media-config');
+    if (!isolatedMediaEnabled(c)) throw new AdminFailure('CONFIGURATION');
+    if (
+      request.method !== 'GET' ||
+      new URL(request.url).search ||
+      request.body ||
+      (request.headers.has('sec-fetch-site') &&
+        request.headers.get('sec-fetch-site') !== 'same-origin')
+    )
+      throw new AdminFailure('REQUEST', 403);
+    const path = mediaPath(
+      { productId, kind: 'asset', itemId: mediaId },
+      'GET',
+    );
+    const session = await authorize(
+      request.headers.get('cookie') ?? '',
+      c,
+      fetcher,
+    );
+    const r = await fetcher(settings(c).api + path + '?view=image', {
+      headers: {
+        Authorization: `Bearer ${session.token}`,
+        Accept: 'image/webp',
+      },
+      cache: 'no-store',
+      redirect: 'error',
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!r.ok)
+      throw new AdminFailure(
+        'UNAVAILABLE',
+        [401, 403, 404].includes(r.status) ? r.status : 503,
+      );
+    if (r.headers.get('content-type') !== 'image/webp' || !r.body)
+      throw new AdminFailure('INVALID', 502);
+    const reader = r.body.getReader();
+    const parts: Uint8Array[] = [];
+    let size = 0;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        size += value.length;
+        if (size > 1048576) throw new AdminFailure('INVALID', 502);
+        parts.push(value);
+      }
+    } finally {
+      await reader.cancel().catch(() => undefined);
+    }
+    if (!size || session.expiresAt <= Date.now())
+      throw new AdminFailure('EXPIRED', 401);
+    return new NextResponse(Buffer.concat(parts), {
+      headers: { ...headers, 'Content-Type': 'image/webp' },
+    });
+  } catch (e) {
+    return NextResponse.json(
+      { message: 'Image unavailable.' },
+      { status: e instanceof AdminFailure ? e.status : 503, headers },
     );
   }
 }

@@ -35,8 +35,10 @@ export function Products({
   expiresAt,
   catalogScope,
   renderMedia,
+  mediaEnabled = false,
 }: {
   expiresAt: number;
+  mediaEnabled?: boolean;
   catalogScope?: string;
   renderMedia?: (
     product: CatalogProduct,
@@ -371,6 +373,7 @@ export function Products({
             renderMedia(editing, onGalleryDirty)
           ) : (
             <ProductGallery
+              mediaEnabled={mediaEnabled}
               key={editing.productId + ':' + expiresAt}
               recoveryScope={
                 catalogScope ? catalogScope + ':' + expiresAt : undefined

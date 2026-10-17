@@ -57,7 +57,7 @@ test('isolated stack has only catalog resources, exclusive catalog writes and au
   );
   assert.deepEqual(
     routes.map((r) => r.RouteKey).sort(),
-    [...isolatedRoutes].sort(),
+    isolatedRoutes.filter((r) => !r.includes('/media')).sort(),
   );
   assert.ok(routes.every((r) => r.AuthorizationType === 'JWT'));
   const policies = JSON.stringify(t.findResources('AWS::IAM::Policy'));
@@ -104,4 +104,39 @@ test('CloudFormation exact-version reference accepts opaque Unicode without norm
   assert.deepEqual(json.Resources.CatalogApi.Properties.Code.S3ObjectVersion, {
     Ref: 'ArtifactVersion',
   });
+});
+
+test('isolated media proposal has private dedicated storage, scoped processor and no financial resources', () => {
+  const t = Template.fromStack(
+    new IsolatedCatalogStack(new App(), 'media', true),
+  );
+  t.resourceCountIs('AWS::Lambda::Function', 2);
+  t.resourceCountIs('AWS::ApiGatewayV2::Route', 17);
+  t.resourceCountIs('AWS::S3::Bucket', 1);
+  t.hasResourceProperties('AWS::S3::Bucket', {
+    BucketName: 'batch-and-batter-dev-isolated-media-302154194958-us-east-2',
+    PublicAccessBlockConfiguration: {
+      BlockPublicAcls: true,
+      IgnorePublicAcls: true,
+      BlockPublicPolicy: true,
+      RestrictPublicBuckets: true,
+    },
+  });
+  t.hasResourceProperties('AWS::Lambda::Function', {
+    FunctionName: 'batch-and-batter-dev-isolated-media-processor',
+    Runtime: 'nodejs24.x',
+    Handler: 'index.handler',
+    ReservedConcurrentExecutions: 2,
+  });
+  const all = JSON.stringify(t.toJSON());
+  assert.ok(
+    !/commerce|operations|stripe|sqs:|ssm:|DeleteObject|ListBucket/.test(all),
+  );
+  assert.match(all, /s3:if-none-match/);
+  assert.match(all, /PRODUCT_MEDIA_UPLOAD#/);
+  assert.equal(
+    t.toJSON().Resources.Catalog.Properties.ResourcePolicy.PolicyDocument
+      .Statement[0].Condition.ArnNotEquals['aws:PrincipalArn'].length,
+    2,
+  );
 });

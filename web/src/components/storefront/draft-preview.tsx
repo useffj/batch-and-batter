@@ -1,9 +1,12 @@
+import { PrivateImage } from '../admin/private-image';
 import type { previewData } from '../../lib/admin/preview';
 import { BrandLogo, CookiePhoto } from './presentation';
 export function DraftPreview({
   data,
+  images = {},
 }: {
   data: ReturnType<typeof previewData>;
+  images?: Record<string, { mediaId: string; alt: string }>;
 }) {
   return (
     <main className="storefront">
@@ -26,7 +29,15 @@ export function DraftPreview({
         <ul className="products">
           {data.products.map((p) => (
             <li className="cookie-card" key={p.id}>
-              <CookiePhoto name={p.name} />
+              {images[p.id] ? (
+                <PrivateImage
+                  productId={p.id}
+                  mediaId={images[p.id].mediaId}
+                  alt={images[p.id].alt}
+                />
+              ) : (
+                <CookiePhoto name={p.name} />
+              )}
               <div className="cookie-content">
                 <h3>{p.name}</h3>
                 <p>{p.description}</p>

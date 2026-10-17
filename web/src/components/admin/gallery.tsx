@@ -10,22 +10,31 @@ import {
   type PreviewTransfer,
 } from '../../lib/admin/gallery-upload';
 import './gallery.css';
+import { transferImage } from '../../lib/admin/image-transfer';
+import { PrivateImage } from './private-image';
 export function ProductGallery({
   productId,
   name,
   onDirty,
   transfer,
   recoveryScope,
+  mediaEnabled = false,
 }: {
   productId: string;
   name: string;
   onDirty?: (dirty: boolean) => void;
   transfer?: PreviewTransfer;
   recoveryScope?: string;
+  mediaEnabled?: boolean;
 }) {
   const [model] = useState(() => new GalleryModel(productId, mediaClient()));
   const [upload] = useState(
-    () => new GalleryUpload(productId, mediaClient(), transfer),
+    () =>
+      new GalleryUpload(
+        productId,
+        mediaClient(),
+        transfer ?? (mediaEnabled ? transferImage : undefined),
+      ),
   );
   const s = useSyncExternalStore(
     model.subscribe,
@@ -98,8 +107,10 @@ export function ProductGallery({
         <span>{s.draft.length} of 6 images</span>
       </div>
       <p className="admin-muted">
-        The first image is primary. Image previews are unavailable until private
-        image delivery is enabled.
+        The first image is primary.{' '}
+        {mediaEnabled
+          ? 'Processed images are private to administrators.'
+          : 'Image previews are unavailable until private image delivery is enabled.'}
       </p>
       {s.busy && <p role="status">Loading or saving gallery…</p>}
       {s.message && <p role={s.blocked ? 'alert' : 'status'}>{s.message}</p>}
@@ -120,9 +131,17 @@ export function ProductGallery({
                     aria-pressed={current?.mediaId === image.mediaId}
                     onClick={() => setSelected(image.mediaId)}
                   >
-                    <span className="gallery-placeholder">
-                      Preview unavailable
-                    </span>
+                    {mediaEnabled ? (
+                      <PrivateImage
+                        productId={productId}
+                        mediaId={image.mediaId}
+                        alt={image.alt}
+                      />
+                    ) : (
+                      <span className="gallery-placeholder">
+                        Preview unavailable
+                      </span>
+                    )}
                     <strong>
                       {n === 0 ? 'Primary image' : `Image ${n + 1}`}
                     </strong>
@@ -274,9 +293,17 @@ export function ProductGallery({
                         setRecoveryAlt('');
                       }}
                     >
-                      <span className="gallery-placeholder">
-                        Preview unavailable
-                      </span>
+                      {mediaEnabled ? (
+                        <PrivateImage
+                          productId={productId}
+                          mediaId={a.mediaId}
+                          alt="Unattached processed image"
+                        />
+                      ) : (
+                        <span className="gallery-placeholder">
+                          Preview unavailable
+                        </span>
+                      )}
                       <strong>Ready image {n + 1}</strong>
                       <span>
                         {a.width} × {a.height} · Not attached

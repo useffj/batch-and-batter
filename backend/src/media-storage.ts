@@ -14,18 +14,29 @@ import {
   uploadRequestSchema,
 } from './media-contract';
 import type { MediaIntent } from './media-records';
-export const mediaServiceConfigSchema = z.strictObject({
-  enabled: z.literal(true),
-  region: z.literal('us-east-2'),
-  bucket: z
-    .string()
-    .regex(/^batch-and-batter-dev-product-media-302154194958-us-east-2$/),
-  processorArn: z
-    .string()
-    .regex(
-      /^arn:aws:lambda:us-east-2:302154194958:function:batch-and-batter-dev-media-processor(?::[a-zA-Z0-9_-]+)?$/,
-    ),
-});
+export const mediaServiceConfigSchema = z
+  .strictObject({
+    enabled: z.literal(true),
+    region: z.literal('us-east-2'),
+    bucket: z
+      .string()
+      .regex(
+        /^batch-and-batter-dev-(?:product-media|isolated-media)-302154194958-us-east-2$/,
+      ),
+    processorArn: z
+      .string()
+      .regex(
+        /^arn:aws:lambda:us-east-2:302154194958:function:batch-and-batter-dev-(?:isolated-)?media-processor(?::[a-zA-Z0-9_-]+)?$/,
+      ),
+  })
+  .refine(
+    (c) =>
+      c.bucket.includes('-isolated-media-') ===
+      c.processorArn.includes(
+        ':function:batch-and-batter-dev-isolated-media-processor',
+      ),
+    { message: 'Media storage and processor boundary mismatch' },
+  );
 export type UploadAuthorization = {
   url: string;
   fields: Record<string, string>;
@@ -45,8 +56,10 @@ export class S3MediaStorage {
       const c = await this.client.config.credentials();
       if (
         !c.sessionToken ||
-        !c.expiration ||
-        c.expiration.getTime() <= this.now() + 1000
+        (!c.expiration && !this.config.bucket.includes('-isolated-media-')) ||
+        (c.expiration !== undefined &&
+          (!Number.isFinite(c.expiration.getTime()) ||
+            c.expiration.getTime() <= this.now() + 1000))
       )
         throw new Error();
     } catch {
@@ -62,12 +75,21 @@ export class S3MediaStorage {
       throw new MediaConflict('UPLOAD_AUTHORIZATION_EXPIRED');
     try {
       const credentials = await this.client.config.credentials();
-      if (!credentials.sessionToken || !credentials.expiration)
+      if (
+        !credentials.sessionToken ||
+        (!credentials.expiration &&
+          !this.config.bucket.includes('-isolated-media-'))
+      )
         throw new Error();
+      // Lambda execution-role environment credentials need not expose expiry.
+      // S3 still enforces the session's validity; the signed POST itself is <=5 min.
+      const credentialEnd =
+        credentials.expiration?.getTime() ?? this.now() + 300000;
+      if (!Number.isFinite(credentialEnd)) throw new Error();
       const seconds = Math.min(
         remaining,
         300,
-        Math.floor((credentials.expiration.getTime() - this.now()) / 1000),
+        Math.floor((credentialEnd - this.now()) / 1000),
       );
       if (seconds < 1) throw new Error();
       const signed = await createPresignedPost(this.client, {
@@ -95,7 +117,7 @@ export class S3MediaStorage {
       if (
         expiresAt > i.authorizationExpiresAt ||
         expiresAt <= this.now() ||
-        expiresAt > credentials.expiration.getTime() ||
+        expiresAt > credentialEnd ||
         signed.url !==
           `https://${this.config.bucket}.s3.${this.config.region}.amazonaws.com/`
       )

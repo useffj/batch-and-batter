@@ -5,11 +5,21 @@ import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 const root = fileURLToPath(new URL('../', import.meta.url));
-const isolated = process.argv.includes('--isolated-catalog');
-if (process.argv.slice(2).some((a) => a !== '--isolated-catalog'))
+const media = process.argv.includes('--isolated-media');
+const isolated = media || process.argv.includes('--isolated-catalog');
+if (
+  process.argv.length > 3 ||
+  process.argv
+    .slice(2)
+    .some((a) => !['--isolated-catalog', '--isolated-media'].includes(a))
+)
   throw Error('UNKNOWN_BUILD_OPTION');
 const out = new URL(
-  isolated ? '../dist/isolated-catalog-release/' : '../dist/api-release/',
+  media
+    ? '../dist/isolated-media-release/'
+    : isolated
+      ? '../dist/isolated-catalog-release/'
+      : '../dist/api-release/',
   import.meta.url,
 );
 await rm(out, { recursive: true, force: true });
@@ -17,7 +27,11 @@ await mkdir(out, { recursive: true });
 const result = await build({
   absWorkingDir: root,
   entryPoints: [
-    isolated ? 'src/isolated-catalog-handler.ts' : 'src/handler.ts',
+    media
+      ? 'src/isolated-media-handler.ts'
+      : isolated
+        ? 'src/isolated-catalog-handler.ts'
+        : 'src/handler.ts',
   ],
   outfile: fileURLToPath(new URL('handler.js', out)),
   bundle: true,
@@ -37,7 +51,7 @@ for (const input of Object.keys(result.metafile.inputs)) {
   if (
     isolated &&
     /(?:stripe|payment|cart-|refund|guest-order|waitlist|notification|media-|client-s3|client-sqs|client-ssm|client-scheduler)/i.test(
-      input,
+      media ? input.replace(/media-|client-s3/g, '') : input,
     )
   )
     throw Error('FORBIDDEN_ISOLATED_INPUT: ' + input);

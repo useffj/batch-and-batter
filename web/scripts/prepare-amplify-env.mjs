@@ -77,6 +77,16 @@ function prepare() {
       );
     lines.push('ADMIN_CATALOG_MODE=isolated');
   }
+  if (process.env.ADMIN_MEDIA_MODE !== undefined) {
+    if (
+      process.env.ADMIN_MEDIA_MODE !== 'isolated' ||
+      process.env.ADMIN_CATALOG_MODE !== 'isolated' ||
+      process.env.ADMIN_API_BASE_URL !==
+        'https://ui8k11k343.execute-api.us-east-2.amazonaws.com'
+    )
+      throw new Error('Invalid isolated media configuration');
+    lines.push('ADMIN_MEDIA_MODE=isolated');
+  }
   const adminNames = [
     'ADMIN_ORIGIN',
     'ADMIN_API_BASE_URL',

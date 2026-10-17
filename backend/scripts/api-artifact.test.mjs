@@ -68,3 +68,43 @@ test('isolated catalog ZIP is deterministic and excludes financial and dispatch 
     ),
   );
 });
+
+test('media Catalog candidate is separate from the accepted Catalog and contains no Sharp or financial runtime', () => {
+  const root = fileURLToPath(new URL('../', import.meta.url));
+  execFileSync(
+    process.execPath,
+    ['scripts/build-api.mjs', '--isolated-media'],
+    { cwd: root },
+  );
+  const path = new URL(
+    '../dist/isolated-media-release/api.zip',
+    import.meta.url,
+  );
+  const first = readFileSync(path);
+  execFileSync(
+    process.execPath,
+    ['scripts/build-api.mjs', '--isolated-media'],
+    { cwd: root },
+  );
+  assert.deepEqual(readFileSync(path), first);
+  const meta = JSON.parse(
+    readFileSync(
+      new URL(
+        '../dist/isolated-media-release/bundle-meta.json',
+        import.meta.url,
+      ),
+    ),
+  );
+  assert.ok(
+    Object.keys(meta.inputs).some((p) =>
+      p.endsWith('isolated-media-handler.ts'),
+    ),
+  );
+  assert.ok(
+    !Object.keys(meta.inputs).some((p) =>
+      /sharp|stripe|payment-|refund|notification|waitlist|cart-repository/.test(
+        p,
+      ),
+    ),
+  );
+});

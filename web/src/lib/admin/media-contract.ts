@@ -139,7 +139,11 @@ function asset(value: unknown, productId: string) {
     }),
   };
 }
-export function mediaResponse(value: unknown, t: MediaTarget) {
+export function mediaResponse(
+  value: unknown,
+  t: MediaTarget,
+  isolated = false,
+) {
   const v = record(value);
   if (t.kind === 'ready') {
     exact(v, ['assets', 'nextCursor']);
@@ -207,7 +211,7 @@ export function mediaResponse(value: unknown, t: MediaTarget) {
   const authorization =
     v.authorization === undefined
       ? undefined
-      : uploadAuthorization(v.authorization, t.productId, u.uploadId);
+      : uploadAuthorization(v.authorization, t.productId, u.uploadId, isolated);
   if (authorization && (t.kind !== 'uploads' || u.state !== 'PENDING'))
     throw new Error('Unexpected authorization');
   return {
@@ -251,11 +255,14 @@ function uploadAuthorization(
   value: unknown,
   productId: string,
   uploadId: string,
+  isolated = false,
 ) {
   const a = record(value);
   exact(a, ['url', 'fields', 'expiresAt']);
-  const destination =
-    'https://batch-and-batter-dev-product-media-302154194958-us-east-2.s3.us-east-2.amazonaws.com/';
+  const bucket = isolated
+    ? 'batch-and-batter-dev-isolated-media-302154194958-us-east-2'
+    : 'batch-and-batter-dev-product-media-302154194958-us-east-2';
+  const destination = `https://${bucket}.s3.us-east-2.amazonaws.com/`;
   if (a.url !== destination) throw new Error('Invalid upload destination');
   const fields = record(a.fields),
     allowed = [
@@ -285,8 +292,7 @@ function uploadAuthorization(
     throw new Error('Invalid authorization fields');
   if (
     fields.key !== `staging/products/${productId}/${uploadId}/source` ||
-    fields.bucket !==
-      'batch-and-batter-dev-product-media-302154194958-us-east-2' ||
+    fields.bucket !== bucket ||
     fields['x-amz-checksum-algorithm'] !== 'SHA256' ||
     fields['x-amz-server-side-encryption'] !== 'AES256' ||
     fields.success_action_status !== '204' ||

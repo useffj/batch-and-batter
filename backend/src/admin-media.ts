@@ -13,14 +13,8 @@ import {
   MediaConflict,
 } from './media-contract';
 import type { MediaAsset, MediaUpload } from './media-records';
-export const mediaRoutes = [
-  'GET /admin/products/{productId}/media',
-  'POST /admin/products/{productId}/media/uploads',
-  'GET /admin/products/{productId}/media/uploads/{uploadId}',
-  'POST /admin/products/{productId}/media/uploads/{uploadId}/complete',
-  'GET /admin/products/{productId}/media/assets/{mediaId}',
-  'PUT /admin/products/{productId}/media',
-];
+import { mediaRoutes } from './media-routes';
+export { mediaRoutes } from './media-routes';
 export type MediaApiRepository = Pick<
   MediaRepository,
   'manifest' | 'asset' | 'upload' | 'replaceManifest' | 'readyAssets'
