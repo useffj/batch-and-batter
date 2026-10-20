@@ -17,14 +17,13 @@ const validVersion = (v) =>
 function check(value, code) {
   if (!value) throw Error(code);
 }
-function createS3Adapter({
-  key,
-  sha256,
-  bytes,
-  credentials,
-  requestHandler,
-} = {}) {
-  materializeIdentityPolicy(key);
+function createAdapter(
+  { key, sha256, bytes, credentials, requestHandler } = {},
+  validateKey = materializeIdentityPolicy,
+  validateSession = () => {},
+) {
+  validateKey(key, sha256, bytes);
+  validateSession();
   check(
     /^[a-f0-9]{64}$/.test(sha256) && key.endsWith('/' + sha256 + '.zip'),
     'INVALID_HASH',
@@ -105,6 +104,7 @@ function createS3Adapter({
     );
   }
   async function send(command) {
+    validateSession();
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 30000);
     try {
@@ -309,4 +309,46 @@ function createS3Adapter({
     },
   };
 }
-module.exports = { createS3Adapter };
+function createS3Adapter(args) {
+  return createAdapter(args);
+}
+function createMediaS3Adapter(args) {
+  const descriptors = require('../config/frozen-media-artifacts.json');
+  const expected = Object.values(descriptors).find(
+    (d) => d.proposedKey === args?.key,
+  );
+  check(expected, 'UNAPPROVED_MEDIA_KEY');
+  // Capture a fixed expiry; caller mutation cannot extend the session.
+  const expires = args.credentials?.expiration?.getTime?.();
+  const started = Date.now();
+  const validateSession = () =>
+    check(
+      Number.isFinite(expires) &&
+        expires > Date.now() &&
+        expires - started <= 3600000,
+      'SHORT_LIVED_SESSION_REQUIRED',
+    );
+  const adapter = createAdapter(
+    args,
+    (key, sha256, bytes) => {
+      check(
+        key === expected.proposedKey &&
+          sha256 === expected.sha256 &&
+          bytes === expected.bytes,
+        'FROZEN_IDENTITY_MISMATCH',
+      );
+    },
+    validateSession,
+  );
+  return {
+    ...adapter,
+    put(request) {
+      check(
+        request.Metadata?.source === expected.sourceCommit,
+        'FROZEN_SOURCE_MISMATCH',
+      );
+      return adapter.put(request);
+    },
+  };
+}
+module.exports = { createS3Adapter, createMediaS3Adapter };
