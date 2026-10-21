@@ -32,7 +32,7 @@ export function ProductGallery({
     () =>
       new GalleryUpload(
         productId,
-        mediaClient(),
+        mediaClient(fetch, mediaEnabled),
         transfer ?? (mediaEnabled ? transferImage : undefined),
       ),
   );
