@@ -372,3 +372,62 @@ is granted. The frontend development-only braces finding and actual Amplify
 artifact review remain separate release gates. No AWS deployment, role attachment,
 secret retrieval or payment acceptance is included. Hosted duplicate-activation
 acceptance remains **NOT PASSED**.
+
+## Restricted frontend Vite remediation — 1N-V, 2026-10-21
+
+The transitive development dependency `vitest@4.1.11 -> vite@8.3.0`
+(including `@vitest/mocker@4.1.11 -> vite`) is resolved to exactly **8.3.3**.
+Vite 8.3.3 requires `rolldown ~1.2.11`; the lockfile therefore also updates
+Rolldown and its platform bindings from 1.2.9 to 1.2.11 and its required
+`@oxc-project/types` from 0.150.0 to 0.151.0. Registry metadata and integrity
+values were used, followed by a clean npm installation. No direct dependency
+was added. Vitest, Next 15.5.27, React, both PostCSS resolutions, application
+source, backend/infra packages and frozen Lambda artifacts are unchanged.
+
+Official GitHub advisories reviewed on October 21, 2026 identify 8.3.3 as the
+patched Vite release for all three findings affecting installed 8.3.0:
+
+- [GHSA-698v-4r3x-3vcv](https://github.com/advisories/GHSA-698v-4r3x-3vcv),
+  moderate: Windows command escaping in bundled launch-editor permits malicious
+  environment-variable/filename expansion under the stated attack conditions.
+- [GHSA-r825-w8mm-5pxw](https://github.com/advisories/GHSA-r825-w8mm-5pxw),
+  moderate: crafted filenames can become editor CLI commands; Vite exploitation
+  requires WSL and an affected editor plus an attacker-created filesystem entry.
+- [GHSA-587h-7wmj-h5pm](https://github.com/advisories/GHSA-587h-7wmj-h5pm),
+  high: Windows filename existence-check bypass can combine with command
+  escaping to remove the malicious-file prerequisite.
+
+Vite runs as Vitest development/CI tooling. Serving uses Next's production
+server, not Vite's development server. Application source has no Vite/editor
+launcher imports or exposed editor-launch route. The local production build's
+56 file traces contain no package references to Vite, launch-editor, braces,
+micromatch or fast-glob. Inspection of 141 generated server and 67 browser
+JavaScript files found no launch-editor, `__open-in-editor`, or affected package
+path markers. These are local artifact findings, not proof of the future Amplify
+artifact: the actual available serving artifact must be reviewed after release.
+
+Node 24.19.0 / npm 11.11.0 clean installation, all **595 frontend tests**, type
+checking, lint, formatting and production build pass. Production audit returns
+**zero findings**. Full audit remains nonzero: **five high-severity package
+nodes, one unique advisory**, solely the unchanged chain
+`eslint-config-next@15.5.27 -> @next/eslint-plugin-next@15.5.27 -> fast-glob@3.3.1
+-> micromatch@4.0.8 -> braces@3.0.3`. All three Vite findings are absent from the
+installed-tree audit.
+
+[GHSA-vfj7-8cjw-p6xm](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm)
+remains high severity with no patched version listed. It concerns stack
+exhaustion from deeply nested patterns. The chain and risk classification are
+unchanged, and the current audit identifies no additional advisory on it.
+Lint uses repository configuration; no customer-controlled glob/pattern input
+or hosted request path into this chain was identified. The local serving traces
+and bundles show no new runtime exposure.
+
+The owner conditionally accepts **only this existing braces development-tooling
+risk for one restricted DEV frontend release in 1N-V**, subject to unchanged
+path/classification, no additional advisory, no customer-controlled patterns,
+no hosted reachability or new runtime exposure, and a clean production audit.
+This does not renew historical exceptions or authorize public-production,
+payment launch, future releases or other risks. Actual Amplify artifact review
+remains required. No photograph upload, expired-intent retry, Gallery save,
+business-data write or backend deployment is authorized by this checkpoint.
+Hosted duplicate-activation acceptance remains **NOT PASSED**.
