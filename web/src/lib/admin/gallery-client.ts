@@ -13,7 +13,10 @@ export type MediaCall = (
   body?: unknown,
   key?: string,
 ) => Promise<unknown>;
-export function mediaClient(transport: typeof fetch = fetch): MediaCall {
+export function mediaClient(
+  transport: typeof fetch = fetch,
+  isolated = false,
+): MediaCall {
   return async (target, method = 'GET', body, key) => {
     const response = await transport('/api' + mediaPath(target, method), {
       method,
@@ -56,7 +59,7 @@ export function mediaClient(transport: typeof fetch = fetch): MediaCall {
         typeof data.code === 'string' ? data.code : 'UNAVAILABLE',
         'Media request failed.',
       );
-    return mediaResponse(data, target);
+    return mediaResponse(data, target, isolated);
   };
 }
 export const mediaMessage = (e: unknown) =>

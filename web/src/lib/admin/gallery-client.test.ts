@@ -698,3 +698,77 @@ it('READY discovery follows empty bounded pages without looping or accumulating 
   expect(d.state.message).not.toBe('');
   expect(d.state.nextCursor).toBeNull();
 });
+
+it('accepts isolated authorization only when the trusted page enables isolated media', async () => {
+  const { mediaResponse } = await import('./media-contract');
+  const uploadId = 'b'.repeat(64);
+  const expiresAt = Math.floor((Date.now() + 60000) / 1000) * 1000;
+  const bucket = 'batch-and-batter-dev-isolated-media-302154194958-us-east-2';
+  const fields: Record<string, string> = {
+    'Content-Type': 'image/jpeg',
+    'x-amz-checksum-algorithm': 'SHA256',
+    'x-amz-checksum-sha256': Buffer.alloc(32).toString('base64'),
+    'x-amz-server-side-encryption': 'AES256',
+    success_action_status: '204',
+    bucket,
+    'X-Amz-Algorithm': 'AWS4-HMAC-SHA256',
+    'X-Amz-Credential': 'SYNTHETICONLY',
+    'X-Amz-Date': '20261021T000000Z',
+    'X-Amz-Security-Token': 'SYNTHETICONLY',
+    key: `staging/products/${productId}/${uploadId}/source`,
+  };
+  fields.Policy = Buffer.from(
+    JSON.stringify({
+      expiration: new Date(expiresAt).toISOString(),
+      conditions: [
+        ...Object.entries(fields).map(([k, v]) => ({ [k]: v })),
+        ['content-length-range', 1000, 1000],
+      ],
+    }),
+  ).toString('base64');
+  fields['X-Amz-Signature'] = 'synthetic-only';
+  const reply = {
+    upload: {
+      productId,
+      uploadId,
+      mediaId: productId,
+      state: 'PENDING',
+      expiresAt: Date.now() + 900000,
+    },
+    authorization: {
+      url: `https://${bucket}.s3.us-east-2.amazonaws.com/`,
+      fields,
+      expiresAt,
+    },
+  };
+  const target = { productId, kind: 'uploads' as const };
+  // The isolated SSR projection succeeds; browser validation must agree.
+  const projected = mediaResponse(reply, target, true);
+  const transport: typeof fetch = async () => Response.json(projected);
+  await expect(
+    mediaClient(transport, true)(target, 'POST', {}, 'synthetic'),
+  ).resolves.toEqual(projected);
+  await expect(
+    mediaClient(transport)(target, 'POST', {}, 'synthetic'),
+  ).rejects.toThrow('Invalid upload destination');
+  const bad = structuredClone(reply);
+  bad.authorization!.fields.key = `staging/products/another-product/${uploadId}/source`;
+  await expect(
+    mediaClient(async () => Response.json(bad), true)(
+      target,
+      'POST',
+      {},
+      'synthetic',
+    ),
+  ).rejects.toThrow('Invalid upload policy fields');
+  const unsigned = structuredClone(reply);
+  unsigned.authorization!.fields['Content-Type'] = 'image/png';
+  await expect(
+    mediaClient(async () => Response.json(unsigned), true)(
+      target,
+      'POST',
+      {},
+      'synthetic',
+    ),
+  ).rejects.toThrow('Unsigned upload field');
+});
