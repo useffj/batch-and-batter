@@ -8,6 +8,7 @@ import {
   cartKey,
   cartSchema,
   etag,
+  hash,
   ownsReserved,
   type Cart,
 } from '../src/cart-domain';
@@ -98,6 +99,7 @@ async function setup(count = 1) {
     true,
   );
   const request = {
+    quoteId: (await repo.quote(created.cart.cartId, tokenHash)).id,
     cartId: created.cart.cartId,
     tokenHash,
     key: s.keyValue(),
@@ -646,6 +648,7 @@ test('local API safe DTO/logs and production entrypoint leaves payment routes un
       pickupDate: pickup.date,
       customer,
       confirmationTokenId: request.confirmationTokenId,
+      quoteId: request.quoteId,
     }),
   };
   const logs: string[] = [];
@@ -919,6 +922,7 @@ test('local API rejects amount injection and does not log malicious error payloa
       pickupDate: pickup.date,
       customer,
       confirmationTokenId: request.confirmationTokenId,
+      quoteId: request.quoteId,
     });
     const response = await localPaymentApi(event, {
       get: repo.get.bind(repo),
@@ -990,5 +994,202 @@ test('customer lookup collision aborts handoff atomically without financial or i
   assert.deepEqual(
     [...s.rows].filter(([k]) => !k.includes('CUSTOMER_LOOKUP#')),
     before,
+  );
+});
+
+test('authoritative quote binds reserved items, integer subtotal, policy and pickup terms without writes', async () => {
+  for (const count of [1, 3]) {
+    const { repo, request, s, cart } = await setup(count);
+    const before = structuredClone(s.rows),
+      commits = s.commits;
+    const q = await repo.quote(request.cartId, tokenHash);
+    assert.equal(q.cartRevision, request.ifMatch);
+    assert.equal(q.validUntil, cart().shoppingExpiresAt);
+    assert.deepEqual(q.items, cart().items);
+    assert.equal(
+      q.amount.subtotalCents,
+      cart().items.reduce((n, i) => n + i.quantity * i.priceCents, 0),
+    );
+    assert.equal(q.amount.totalCents, q.amount.subtotalCents);
+    assert.equal(q.policy.version, '1');
+    assert.equal(q.pickups[0].date, pickup.date);
+    assert.equal(q.id, request.quoteId);
+    assert.deepEqual(s.rows, before);
+    assert.equal(s.commits, commits);
+  }
+});
+
+function withPolicy(s: CartStore, version: string, enabled = true) {
+  return new PaymentRepository(
+    client(s),
+    'catalog',
+    'commerce',
+    'operations',
+    { ...DEVELOPMENT_ONLY_ZERO_TAX_ZERO_FEE, version },
+    { now: () => s.now, id: () => pid(++s.sequence) },
+    {
+      retrieveConfirmationToken: async (id) => ({
+        id,
+        livemode: false,
+        type: 'card',
+        expiresAt: s.now + 3600000,
+        paymentIntent: null,
+        setupIntent: null,
+      }),
+    },
+    'dev:local',
+    enabled,
+  );
+}
+
+test('changed policy rejects stale quote before any financial or inventory writes', async () => {
+  const { s, request } = await setup();
+  const before = structuredClone(s.rows),
+    commits = s.commits;
+  const repo = withPolicy(s, '2');
+  await assert.rejects(repo.start(request), fails('QUOTE_STALE'));
+  assert.deepEqual(s.rows, before);
+  assert.equal(s.commits, commits);
+  const q = await repo.quote(request.cartId, tokenHash);
+  assert.notEqual(q.id, request.quoteId);
+  const result = await repo.start({ ...request, quoteId: q.id });
+  const row = s.row('commerce', cartKey(result.cart.cartId))!;
+  const attempt = s.row('commerce', attemptKey(row.paymentAttemptId))!;
+  const order = s.row('commerce', orderKey(row.orderId))!;
+  assert.equal(attempt.amountCents, q.amount.totalCents);
+  assert.equal(attempt.execution.parameters.amountCents, q.amount.totalCents);
+  assert.equal(order.totalCents, q.amount.totalCents);
+});
+
+test('missing, forged and changed-pickup quote identities have no new side effects', async () => {
+  for (const mode of ['missing', 'forged', 'pickup', 'location']) {
+    const { repo, request, s } = await setup();
+    if (mode === 'pickup')
+      s.row('catalog', catalogKeys.pickup(dropId, pickup.date))!.startTime =
+        '01:00';
+    if (mode === 'location')
+      s.row('catalog', catalogKeys.drop(dropId))!.pickupLocation =
+        'Different terms';
+    const before = structuredClone(s.rows);
+    await assert.rejects(
+      repo.start({
+        ...request,
+        quoteId:
+          mode === 'missing'
+            ? undefined
+            : mode === 'forged'
+              ? '0'.repeat(64)
+              : request.quoteId,
+      }),
+      fails('QUOTE_STALE'),
+    );
+    assert.deepEqual(s.rows, before);
+  }
+});
+
+test('cart revision and expiration still reject quoted starts', async () => {
+  const { repo, request, s } = await setup();
+  const row = s.row('commerce', cartKey(request.cartId))!;
+  row.updatedAt = new Date(s.now + 1).toISOString();
+  await assert.rejects(repo.start(request), fails('CART_CONFLICT'));
+  await assert.rejects(
+    repo.start({ ...request, ifMatch: etag(row.updatedAt) }),
+    fails('QUOTE_STALE'),
+  );
+  s.now = Date.parse(row.shoppingExpiresAt);
+  await assert.rejects(
+    repo.start({ ...request, key: s.keyValue() }),
+    fails('RESERVATION_EXPIRED'),
+  );
+});
+
+test('original receipt and frozen amounts survive changed or invalid policy and disabled admission', async () => {
+  const { repo, request, s } = await setup();
+  const result = await repo.start(request);
+  const before = structuredClone(s.rows);
+  assert.deepEqual(await withPolicy(s, '2', false).start(request), result);
+  assert.deepEqual(await withPolicy(s, '', false).start(request), result);
+  assert.deepEqual(s.rows, before);
+  const row = s.row('commerce', cartKey(request.cartId))!;
+  const {
+    PK: _pk,
+    SK: _sk,
+    ...order
+  } = s.row('commerce', orderKey(row.orderId))!;
+  assert.equal(orderSchema.safeParse(order).success, true);
+  assert.equal('quoteId' in order, false); // no financial-record migration
+});
+
+test('invalid policy fails closed and quote route remains capability protected', async () => {
+  const { repo, request, s } = await setup();
+  for (const invalid of ['', ' ', null])
+    await assert.rejects(
+      withPolicy(s, invalid as string).quote(request.cartId, tokenHash),
+      fails('PAYMENT_UNAVAILABLE'),
+    );
+  const event: ApiEvent = {
+    routeKey: 'GET /carts/{cartId}/payment',
+    requestContext: { requestId: 'quote-test', http: { method: 'GET' } },
+    headers: { 'X-Cart-Token': token },
+    pathParameters: { cartId: request.cartId },
+    queryStringParameters: { quote: '1' },
+  };
+  const before = structuredClone(s.rows);
+  const r = await localPaymentApi(event, repo);
+  assert.equal(r.statusCode, 200);
+  assert.equal(JSON.parse(r.body).quote.id, request.quoteId);
+  assert.equal(r.headers['cache-control'], 'no-store');
+  assert.equal(
+    (await localPaymentApi({ ...event, headers: {} }, repo)).statusCode,
+    401,
+  );
+  assert.equal(
+    (
+      await localPaymentApi(
+        { ...event, queryStringParameters: { quote: '1', total: '1' } },
+        repo,
+      )
+    ).statusCode,
+    400,
+  );
+  assert.deepEqual(s.rows, before);
+});
+
+test('historical receipt without quote metadata replays before invalid current policy', async () => {
+  const { repo, request, s } = await setup();
+  const result = await repo.start(request);
+  // Model the exact pre-change receipt fingerprint; financial record schemas
+  // and amounts are already identical to the historical format.
+  const receipt = [...s.rows.values()].find(
+    (r) => r.operation === 'beginPayment',
+  )!;
+  receipt.fingerprint = hash(
+    JSON.stringify({
+      cartId: request.cartId,
+      confirmationTokenId: request.confirmationTokenId,
+      pickupDate: request.pickupDate,
+      customer: request.customer,
+      ifMatch: request.ifMatch,
+    }),
+  );
+  const before = structuredClone(s.rows);
+  assert.deepEqual(
+    await withPolicy(s, '', false).start({ ...request, quoteId: undefined }),
+    result,
+  );
+  assert.deepEqual(s.rows, before);
+});
+
+test('truncated pickup enumeration fails closed without returning a partial quote', async () => {
+  const { repo, request, s } = await setup();
+  s.put('catalog', {
+    ...pickup,
+    date: '2026-10-09',
+    ...catalogKeys.pickup(dropId, '2026-10-09'),
+  });
+  s.queryPageSize = 1;
+  await assert.rejects(
+    repo.quote(request.cartId, tokenHash),
+    fails('PAYMENT_UNAVAILABLE'),
   );
 });

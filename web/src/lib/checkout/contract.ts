@@ -10,6 +10,7 @@ export interface Start {
   confirmationTokenId: string;
   pickupDate: string;
   customer: Customer;
+  quoteId?: string;
 }
 // Matches the current backend Zod default email expression; backend remains validator.
 export const EMAIL =
@@ -53,7 +54,17 @@ export function date(value: unknown): string {
 }
 export function startBody(value: unknown): Start {
   const b = record(value);
-  exact(b, ['confirmationTokenId', 'pickupDate', 'customer']);
+  exact(b, [
+    'confirmationTokenId',
+    'pickupDate',
+    'customer',
+    ...(b.quoteId === undefined ? [] : ['quoteId']),
+  ]);
+  if (
+    b.quoteId !== undefined &&
+    (typeof b.quoteId !== 'string' || !/^[a-f0-9]{64}$/.test(b.quoteId))
+  )
+    throw new Error('Invalid quote');
   if (
     typeof b.confirmationTokenId !== 'string' ||
     b.confirmationTokenId.length > 255 ||
@@ -64,6 +75,7 @@ export function startBody(value: unknown): Start {
     confirmationTokenId: b.confirmationTokenId,
     pickupDate: date(b.pickupDate),
     customer: customer(b.customer),
+    ...(b.quoteId === undefined ? {} : { quoteId: b.quoteId as string }),
   };
 }
 export function timestamp(value: unknown): string {
@@ -141,6 +153,7 @@ export interface CheckoutSnapshot {
   available: boolean;
   paymentSubmissionAllowed: boolean;
   summary: Summary | null;
+  quoteId?: string;
   drop: StorefrontDrop | null;
 }
 export function revision(value: unknown): string {

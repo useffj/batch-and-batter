@@ -12,7 +12,7 @@ import {
 } from './contract';
 import {
   pricingEnabled,
-  projectPricing,
+  parseQuote,
   publishableKey,
   type PricingConfig,
 } from './pricing';
@@ -26,6 +26,8 @@ const submissionAllowed = (config: Config) =>
   config.CHECKOUT_SUBMISSION_MODE === 'enabled';
 const statuses: Record<string, number> = {
   VALIDATION_ERROR: 400,
+  QUOTE_STALE: 409,
+  PAYMENT_UNAVAILABLE: 503,
   INVALID_PICKUP_DATE: 400,
   UNAUTHORIZED: 401,
   RESERVATION_EXPIRED: 410,
@@ -93,12 +95,14 @@ export async function checkoutRelay(
     suffix: '' | '/payment' | '/payment/start' | '/payment/confirm',
     body?: unknown,
     headers?: Record<string, string>,
+    quote = false,
   ) {
     const endpoint = publicEndpoint(config);
     endpoint.pathname = endpoint.pathname.replace(
       /\/drops\/current$/,
       `/carts/${s!.cartId}${suffix}`,
     );
+    if (quote) endpoint.searchParams.set('quote', '1');
     const result = await backend(endpoint, {
       method: body === undefined ? 'GET' : 'POST',
       cache: 'no-store',
@@ -154,11 +158,32 @@ export async function checkoutRelay(
       const serverNow = Number.isFinite(stamp) ? stamp : Date.now();
       // Current Drop presentation is not a frozen paid-Order snapshot.
       const store = await loadStorefront(config, backend);
-      const drop =
+      let drop =
         store.kind === 'ready' && store.drop?.id === cart.dropId
           ? store.drop
           : null;
-      const summary = projectPricing(cart, config);
+      let summary = null;
+      let quoteId: string | undefined;
+      // Never reprice an existing attempt from today's cart/policy. Its status
+      // recovery remains available independently of pricing configuration.
+      if (
+        !p &&
+        cart.status === 'ACTIVE' &&
+        !c.data.expired &&
+        pricingEnabled(config)
+      ) {
+        const response = await call('/payment', undefined, undefined, true);
+        const quote = parseQuote(response.data.quote, cart, etag);
+        summary = quote.summary;
+        quoteId = quote.id;
+        if (drop)
+          drop = {
+            ...drop,
+            pickupDates: quote.pickups,
+            pickupLocation: quote.pickupLocation,
+            pickupInstructions: quote.pickupInstructions,
+          };
+      }
       const value: CheckoutSnapshot = {
         cart,
         etag,
@@ -166,6 +191,7 @@ export async function checkoutRelay(
         paymentEtag,
         serverNow,
         summary,
+        ...(quoteId ? { quoteId } : {}),
         drop,
         paymentSubmissionAllowed: submissionAllowed(config),
         available:

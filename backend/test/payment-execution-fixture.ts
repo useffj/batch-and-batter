@@ -150,6 +150,7 @@ export async function paymentFixture(
     true,
   );
   const request = {
+    quoteId: (await repo.quote(created.cart.cartId, tokenHash)).id,
     cartId: created.cart.cartId,
     tokenHash,
     key: s.keyValue(),

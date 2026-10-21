@@ -36,6 +36,11 @@ export const startPaymentSchema = z.strictObject({
   confirmationTokenId,
   pickupDate: dateSchema,
   customer: customerSchema,
+  // Optional only to read/replay historical receipts; new starts require it.
+  quoteId: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .optional(),
 });
 export type CheckoutInput = z.infer<typeof startPaymentSchema>;
 export const paymentAttemptSchema = z.strictObject({
@@ -134,7 +139,9 @@ export const orderKey = (id: string) => ({
 export interface PaymentPricing {
   readonly fixture: 'DEVELOPMENT_ONLY_ZERO_TAX_ZERO_FEE';
   readonly currency: string;
+  readonly version?: string;
 }
+
 export function paymentAmount(cart: Cart, pricing: PaymentPricing) {
   if (
     pricing.fixture !== 'DEVELOPMENT_ONLY_ZERO_TAX_ZERO_FEE' ||

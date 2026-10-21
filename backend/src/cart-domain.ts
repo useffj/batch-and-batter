@@ -193,6 +193,10 @@ const errors = {
     503,
     'Cart could not be confirmed. Retry with the same idempotency key.',
   ],
+  QUOTE_STALE: [
+    409,
+    'Checkout pricing changed. Reload and review before paying.',
+  ],
   PAYMENTS_DISABLED: [503, 'New payments are disabled.'],
   PAYMENT_UNAVAILABLE: [503, 'Payment service is temporarily unavailable.'],
   INTERNAL_ERROR: [500, 'Unable to complete the cart request.'],

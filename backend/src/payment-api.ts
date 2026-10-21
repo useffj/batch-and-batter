@@ -7,13 +7,16 @@ import { startPaymentSchema } from './payment-domain';
 import type { PaymentRepository } from './payment-repository';
 import type { ApiEvent, ApiResponse } from './api';
 export interface PaymentHttpServices {
-  repository: Pick<PaymentRepository, 'start' | 'get'>;
+  repository: Pick<PaymentRepository, 'start' | 'get'> &
+    Partial<Pick<PaymentRepository, 'quote'>>;
   payment?: PaymentCustomer;
 }
 export async function localPaymentApi(
   event: ApiEvent,
   source:
-    Pick<PaymentRepository, 'start' | 'get'> | (() => PaymentHttpServices),
+    | (Pick<PaymentRepository, 'start' | 'get'> &
+        Partial<Pick<PaymentRepository, 'quote'>>)
+    | (() => PaymentHttpServices),
   payment?: PaymentCustomer,
 ): Promise<ApiResponse> {
   const start = event.routeKey === 'POST /carts/{cartId}/payment/start';
@@ -49,7 +52,22 @@ export async function localPaymentApi(
     payment = services.payment;
     const tokenHash = secretHash(header('x-cart-token'));
     const cartId = idSchema.parse(event.pathParameters?.cartId);
-    if (get && payment) {
+    const query = event.queryStringParameters ?? {};
+    if (
+      Object.keys(query).length &&
+      (!get || Object.keys(query).length !== 1 || query.quote !== '1')
+    )
+      throw new CartError('VALIDATION_ERROR');
+    if (get && query.quote === '1') {
+      if (!repository.quote) throw new CartError('PAYMENT_UNAVAILABLE');
+      response = {
+        statusCode: 200,
+        headers,
+        body: JSON.stringify({
+          quote: await repository.quote(cartId, tokenHash),
+        }),
+      };
+    } else if (get && payment) {
       const result = await payment.get(cartId, tokenHash);
       response = {
         statusCode: 200,

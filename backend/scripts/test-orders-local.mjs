@@ -76,6 +76,7 @@ try {
     true,
   );
   const input = {
+    quoteId: (await writer.quote(created.cart.cartId, tokenHash)).id,
     cartId: created.cart.cartId,
     tokenHash,
     key: store.keyValue(),

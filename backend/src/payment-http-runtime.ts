@@ -49,7 +49,11 @@ function createServices() {
     catalog,
     commerce,
     operations,
-    { fixture: 'DEVELOPMENT_ONLY_ZERO_TAX_ZERO_FEE', currency: 'usd' },
+    {
+      fixture: 'DEVELOPMENT_ONLY_ZERO_TAX_ZERO_FEE',
+      currency: 'usd',
+      version: '1',
+    },
     undefined,
     reader,
     scope,
