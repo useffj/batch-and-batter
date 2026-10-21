@@ -48,21 +48,23 @@ export class CheckoutFailure extends Error {
     super(
       code === 'PAYMENTS_DISABLED' || code === 'CHECKOUT_UNAVAILABLE'
         ? 'Online payment is not available right now.'
-        : code === 'VALIDATION_ERROR'
-          ? 'Check your contact, pickup and payment information.'
-          : code === 'INVALID_PICKUP_DATE'
-            ? 'Choose an available pickup date.'
-            : code === 'UNAUTHORIZED'
-              ? 'Your Cart is not available. Return to the store.'
-              : code === 'UNSUPPORTED_BROWSER'
-                ? 'This browser cannot safely submit payment. Please use a current browser.'
-                : code === 'PAYMENT_DETAILS'
-                  ? 'Check your payment details in the secure payment form.'
-                  : code === 'CART_CONFLICT' ||
-                      code === 'RESERVATION_EXPIRED' ||
-                      code === 'DROP_NOT_OPEN'
-                    ? 'Your Cart or pickup availability changed. Review the latest status.'
-                    : recoveryMessage,
+        : code === 'QUOTE_STALE'
+          ? 'Checkout pricing or pickup details changed. Review the refreshed checkout before paying again.'
+          : code === 'VALIDATION_ERROR'
+            ? 'Check your contact, pickup and payment information.'
+            : code === 'INVALID_PICKUP_DATE'
+              ? 'Choose an available pickup date.'
+              : code === 'UNAUTHORIZED'
+                ? 'Your Cart is not available. Return to the store.'
+                : code === 'UNSUPPORTED_BROWSER'
+                  ? 'This browser cannot safely submit payment. Please use a current browser.'
+                  : code === 'PAYMENT_DETAILS'
+                    ? 'Check your payment details in the secure payment form.'
+                    : code === 'CART_CONFLICT' ||
+                        code === 'RESERVATION_EXPIRED' ||
+                        code === 'DROP_NOT_OPEN'
+                      ? 'Your Cart or pickup availability changed. Review the latest status.'
+                      : recoveryMessage,
     );
   }
 }
@@ -72,6 +74,12 @@ export function parseCheckout(value: unknown): CheckoutSnapshot {
   const p = v.payment === null ? null : payment(v.payment);
   if (typeof v.available !== 'boolean' || !Number.isFinite(v.serverNow))
     throw new Error();
+  const quoteId = v.quoteId;
+  if (
+    quoteId !== undefined &&
+    (typeof quoteId !== 'string' || !/^[a-f0-9]{64}$/.test(quoteId))
+  )
+    throw new Error('Invalid quote');
   let summary = null;
   if (v.summary !== null) {
     const s = record(v.summary);
@@ -98,10 +106,16 @@ export function parseCheckout(value: unknown): CheckoutSnapshot {
     etag: cart ? revision(v.etag) : null,
     paymentEtag: p ? revision(v.paymentEtag) : null,
     summary,
+    ...(quoteId ? { quoteId } : {}),
     serverNow: Number(v.serverNow),
     paymentSubmissionAllowed: v.paymentSubmissionAllowed === true,
     available:
-      v.available && !!cart && cart.status === 'ACTIVE' && !p && !!summary,
+      v.available &&
+      !!cart &&
+      cart.status === 'ACTIVE' &&
+      !p &&
+      !!summary &&
+      !!quoteId,
     drop: v.drop as CheckoutSnapshot['drop'],
   };
 }
@@ -230,6 +244,8 @@ export class CheckoutClient {
           )
         )
           throw new CheckoutFailure('CART_CONFLICT');
+        if (!current.quoteId || current.quoteId !== expected.quoteId)
+          throw new CheckoutFailure('QUOTE_STALE');
         const marker = markerKey(current.cart.cartId);
         try {
           this.store!.setItem(marker, 'unresolved');
@@ -256,6 +272,7 @@ export class CheckoutClient {
           confirmationTokenId: token,
           pickupDate,
           customer: c,
+          quoteId: current.quoteId,
         });
         const key = identity(current.serverNow);
         try {
@@ -268,6 +285,7 @@ export class CheckoutClient {
           if (
             error instanceof CheckoutFailure &&
             [
+              'QUOTE_STALE',
               'PAYMENTS_DISABLED',
               'CHECKOUT_UNAVAILABLE',
               'VALIDATION_ERROR',

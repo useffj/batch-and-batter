@@ -1,3 +1,4 @@
+import { checkoutQuote } from './checkout-quote';
 import { consentKey } from './notification-contract';
 import { customerLookupRecords } from './customer-lookup';
 import {
@@ -13,6 +14,7 @@ import {
 } from './payment-execution-domain';
 import {
   GetCommand,
+  QueryCommand,
   TransactWriteCommand,
   type DynamoDBDocumentClient,
   type TransactWriteCommandInput,
@@ -45,7 +47,6 @@ import {
   orderKey,
   orderSchema,
   paymentAttemptSchema,
-  paymentAmount,
   paymentWork,
   paymentRead,
   startPaymentSchema,
@@ -126,11 +127,68 @@ export class PaymentRepository {
       this.runtime.now(),
     );
   }
+  private async quoteFor(cart: Cart, drop: import('./domain').Drop) {
+    const { Items = [], LastEvaluatedKey } = await this.client.send(
+      new QueryCommand({
+        TableName: this.catalog,
+        KeyConditionExpression: 'PK = :pk AND SK BETWEEN :lower AND :upper',
+        ExpressionAttributeValues: {
+          ':pk': `DROP#${cart.dropId}`,
+          ':lower': 'PICKUP#',
+          ':upper': 'PICKUP#~',
+        },
+        ConsistentRead: true,
+        Limit: 32,
+      }),
+      { abortSignal: AbortSignal.timeout(1000) },
+    );
+    // Never quote a truncated set of pickup terms.
+    if (LastEvaluatedKey || Items.length > 31)
+      throw new CartError('PAYMENT_UNAVAILABLE');
+    const pickups = Items.map(({ PK, SK, ...data }) => {
+      const p = pickupSchema.parse(data);
+      if (
+        PK !== `DROP#${cart.dropId}` ||
+        SK !== `PICKUP#${p.date}` ||
+        p.dropId !== cart.dropId
+      )
+        throw new CartError('INTERNAL_ERROR');
+      return p;
+    });
+    return checkoutQuote(cart, drop, pickups, this.pricing);
+  }
+  async quote(id: string, tokenHash: string) {
+    const cart = await this.authorized(id, tokenHash);
+    if (cart.status !== 'ACTIVE' || cart.paymentGraceUsed)
+      throw new CartError('CART_CONFLICT');
+    if (this.runtime.now() >= Date.parse(cart.shoppingExpiresAt))
+      throw new CartError('RESERVATION_EXPIRED');
+    const drop = await this.read(
+      this.catalog,
+      catalogKeys.drop(cart.dropId),
+      dropSchema,
+    );
+    const assignment = await this.read(
+      this.catalog,
+      catalogKeys.storefront,
+      storefrontSchema,
+    );
+    if (
+      !drop ||
+      drop.status !== 'OPEN' ||
+      this.runtime.now() < Date.parse(drop.opensAt)
+    )
+      throw new CartError('DROP_NOT_OPEN');
+    if (assignment?.storefrontDropId !== cart.dropId)
+      throw new CartError('STOREFRONT_CONFLICT');
+    return this.quoteFor(cart, drop);
+  }
   async start(request: PaymentStartRequest) {
     const input = startPaymentSchema.parse({
       confirmationTokenId: request.confirmationTokenId,
       pickupDate: request.pickupDate,
       customer: request.customer,
+      ...(request.quoteId === undefined ? {} : { quoteId: request.quoteId }),
     });
     const key = parseKey(request.key);
     const scope = `cart:v1:beginPayment:${request.cartId}`;
@@ -145,6 +203,7 @@ export class PaymentRepository {
         pickupDate: input.pickupDate,
         customer: input.customer,
         ifMatch: request.ifMatch,
+        ...(input.quoteId === undefined ? {} : { quoteId: input.quoteId }),
       }),
     );
     const replay = async () => {
@@ -235,6 +294,15 @@ export class PaymentRepository {
       });
     }
     if (!pickupEligible()) throw new CartError('INVALID_PICKUP_DATE');
+    const quote = await this.quoteFor(cart, drop);
+    if (
+      !input.quoteId ||
+      quote.id !== input.quoteId ||
+      !quote.pickups.some((p) => JSON.stringify(p) === JSON.stringify(pickup))
+    )
+      throw new CartError('QUOTE_STALE');
+    // This exact validated snapshot supplies every financial amount below.
+    const amount = quote.amount;
     if (!this.provider) throw new CartError('INTERNAL_ERROR');
     let submission;
     try {
@@ -274,7 +342,6 @@ export class PaymentRepository {
       paymentAttemptId,
       orderId,
     });
-    const amount = paymentAmount(cart, this.pricing);
     const initialWork = paymentWork(next).workflow;
     const execution = executionSchema.parse({
       scope: this.providerScope,

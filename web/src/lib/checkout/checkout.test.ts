@@ -22,7 +22,7 @@ import {
   type CheckoutSnapshot,
   type Payment,
 } from './contract';
-import { projectPricing, publishableKey } from './pricing';
+import { pricingEnabled, publishableKey } from './pricing';
 import { checkoutRelay } from './relay';
 const id = '01K00000000000000000000001',
   dropId = '01K00000000000000000000002',
@@ -45,6 +45,7 @@ const contact = {
   smsTransactionalConsent: false,
 };
 const body = {
+  quoteId: 'c'.repeat(64),
   confirmationTokenId: 'ctoken_mock',
   pickupDate: '2026-10-08',
   customer: contact,
@@ -73,6 +74,7 @@ function fresh(): CheckoutSnapshot {
     serverNow: now,
     available: true,
     paymentSubmissionAllowed: true,
+    quoteId: body.quoteId,
     summary: { currency: 'USD', subtotal: 1050, tax: 0, fees: 0, total: 1050 },
     drop: {
       id: dropId,
@@ -166,6 +168,34 @@ function mockBackend(s = fresh()) {
         },
       });
     }
+    if (path.endsWith('/payment?quote=1'))
+      return response({
+        quote: {
+          version: 1,
+          id: body.quoteId,
+          cartId: s.cart!.cartId,
+          cartRevision: etag,
+          dropId,
+          dropRevision: s.cart!.updatedAt,
+          validUntil: s.cart!.shoppingExpiresAt,
+          policy: { id: 'DEVELOPMENT_ONLY_ZERO_TAX_ZERO_FEE', version: '1' },
+          items: s.cart!.items,
+          amount: {
+            currency: 'usd',
+            subtotalCents: 1050,
+            taxCents: 0,
+            feeCents: 0,
+            totalCents: 1050,
+          },
+          pickupLocation: s.drop!.pickupLocation,
+          pickupInstructions: s.drop!.pickupInstructions,
+          pickups: s.drop!.pickupDates.map((p) => ({
+            ...p,
+            dropId,
+            active: true,
+          })),
+        },
+      });
     if (path.endsWith('/payment/start'))
       return response({ cart: { ...s.cart, status: 'PAYMENT_PENDING' } }, 201);
     if (path.endsWith('/payment/confirm'))
@@ -225,7 +255,7 @@ function providers() {
 }
 describe('approved DEV pricing and fields', () => {
   it('uses reserved prices and quantities rather than catalog prices', () => {
-    expect(projectPricing(fresh().cart!, config)).toEqual(fresh().summary);
+    expect(pricingEnabled(config)).toBe(true);
     const html = renderToStaticMarkup(
       createElement(CheckoutSummary, {
         snapshot: fresh(),
@@ -250,21 +280,21 @@ describe('approved DEV pricing and fields', () => {
     'missing/unsupported mode %s fails closed',
     (mode) =>
       expect(
-        projectPricing(fresh().cart!, {
+        pricingEnabled({
           ...config,
           CHECKOUT_PRICING_MODE: mode,
         }),
-      ).toBeNull(),
+      ).toBe(false),
   );
   it.each([undefined, 'EUR', 'usd'])(
     'currency %s is not silently defaulted',
     (currency) =>
       expect(
-        projectPricing(fresh().cart!, {
+        pricingEnabled({
           ...config,
           STOREFRONT_CURRENCY: currency,
         }),
-      ).toBeNull(),
+      ).toBe(false),
   );
   it('uses the same display amount for deferred Elements and card-only scope', () =>
     expect(elementsOptions(fresh().summary!)).toMatchObject({
@@ -327,6 +357,7 @@ describe('approved DEV pricing and fields', () => {
       'confirmationTokenId',
       'customer',
       'pickupDate',
+      'quoteId',
     ]);
     expect(() => startBody({ ...body, pickupDate: '2026-02-30' })).toThrow();
   });
@@ -979,5 +1010,91 @@ describe('secondary checkout submission lock', () => {
     expect(await result.json()).toEqual({ code: 'PAYMENTS_DISABLED' });
     expect(upstream).toHaveBeenCalledTimes(1);
     expect(String(upstream.mock.calls[0][0])).toContain('/payment/start');
+  });
+});
+
+describe('authoritative quote binding', () => {
+  it('uses backend quote identity and totals, and refuses missing authority', async () => {
+    const r = await checkoutRelay(req(), 'read', config, mockBackend());
+    expect(await r.json()).toMatchObject({
+      quoteId: body.quoteId,
+      summary: fresh().summary,
+    });
+    const backend = mockBackend();
+    const missing = await checkoutRelay(req(), 'read', config, async (url) =>
+      String(url).includes('quote=1') ? response({}) : backend(url),
+    );
+    expect(missing.status).toBe(503);
+  });
+  it('does not project current policy pricing for an existing paid attempt', async () => {
+    const backend = mockBackend(pending('paid'));
+    const r = await checkoutRelay(
+      req(),
+      'read',
+      { ...config, CHECKOUT_PRICING_MODE: 'unapproved-production' },
+      backend,
+    );
+    expect(await r.json()).toMatchObject({
+      summary: null,
+      payment: { status: 'paid' },
+    });
+    expect(
+      backend.mock.calls.some(([url]) => String(url).includes('quote=1')),
+    ).toBe(false);
+  });
+  it('rejects a changed quote even when its total is unchanged, before creating a token', async () => {
+    const next = { ...fresh(), quoteId: 'd'.repeat(64) };
+    const request = vi.fn().mockResolvedValue(response(next));
+    const p = providers();
+    await expect(
+      new CheckoutClient(serial(), memory(), request).submit(
+        fresh(),
+        contact,
+        body.pickupDate,
+        p.stripe,
+        p.elements,
+      ),
+    ).rejects.toMatchObject({ code: 'QUOTE_STALE' });
+    expect(p.token).not.toHaveBeenCalled();
+    expect(request.mock.calls.every(([, init]) => init?.method === 'GET')).toBe(
+      true,
+    );
+  });
+  it('stale rejection after token creation clears only the unresolved marker and never retries', async () => {
+    const request = vi.fn(async (_url, init) =>
+      init?.method === 'POST'
+        ? response({ code: 'QUOTE_STALE' }, 409)
+        : response(fresh()),
+    );
+    const store = memory(),
+      p = providers();
+    await expect(
+      new CheckoutClient(serial(), store, request).submit(
+        fresh(),
+        contact,
+        body.pickupDate,
+        p.stripe,
+        p.elements,
+      ),
+    ).rejects.toMatchObject({ code: 'QUOTE_STALE' });
+    expect(
+      request.mock.calls.filter(([, init]) => init?.method === 'POST'),
+    ).toHaveLength(1);
+    expect(p.token).toHaveBeenCalledTimes(1);
+    expect(store.getItem(markerKey(id))).toBeNull();
+  });
+  it('missing quote is rejected by backend authority while legacy receipt replay remains possible', async () => {
+    const legacy = {
+      confirmationTokenId: body.confirmationTokenId,
+      pickupDate: body.pickupDate,
+      customer: body.customer,
+    };
+    const backend = vi
+      .fn()
+      .mockResolvedValue(response({ code: 'QUOTE_STALE' }, 409));
+    const r = await checkoutRelay(req(legacy), 'start', config, backend);
+    expect(r.status).toBe(409);
+    expect(await r.json()).toEqual({ code: 'QUOTE_STALE' });
+    expect(backend).toHaveBeenCalledTimes(1);
   });
 });
