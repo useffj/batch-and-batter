@@ -1,0 +1,89 @@
+{
+  "kmsPolicy": {
+    "Id": "auto-s3-2",
+    "Statement": [
+      {
+        "Action": [
+          "kms:Encrypt",
+          "kms:Decrypt",
+          "kms:ReEncrypt*",
+          "kms:GenerateDataKey*",
+          "kms:DescribeKey"
+        ],
+        "Condition": {
+          "StringEquals": {
+            "kms:CallerAccount": "302154194958",
+            "kms:ViaService": "s3.us-east-2.amazonaws.com"
+          }
+        },
+        "Effect": "Allow",
+        "Principal": {
+          "AWS": "*"
+        },
+        "Resource": "*",
+        "Sid": "Allow access through S3 for all principals in the account that are authorized to use S3"
+      },
+      {
+        "Action": ["kms:Describe*", "kms:Get*", "kms:List*"],
+        "Effect": "Allow",
+        "Principal": {
+          "AWS": "arn:aws:iam::302154194958:root"
+        },
+        "Resource": "*",
+        "Sid": "Allow direct access to key metadata to the account"
+      }
+    ],
+    "Version": "2012-10-17"
+  },
+  "lifecycle": {
+    "Rules": [
+      {
+        "Filter": {
+          "Prefix": ""
+        },
+        "ID": "CleanupOldVersions",
+        "NoncurrentVersionExpiration": {
+          "NoncurrentDays": 30
+        },
+        "Status": "Enabled"
+      },
+      {
+        "AbortIncompleteMultipartUpload": {
+          "DaysAfterInitiation": 1
+        },
+        "Filter": {
+          "Prefix": ""
+        },
+        "ID": "AbortIncompleteMultipartUploads",
+        "Status": "Enabled"
+      }
+    ],
+    "TransitionDefaultMinimumObjectSize": "all_storage_classes_128K"
+  },
+  "encryption": {
+    "ServerSideEncryptionConfiguration": {
+      "Rules": [
+        {
+          "ApplyServerSideEncryptionByDefault": {
+            "SSEAlgorithm": "aws:kms"
+          },
+          "BlockedEncryptionTypes": {
+            "EncryptionType": ["SSE-C"]
+          },
+          "BucketKeyEnabled": false
+        }
+      ]
+    }
+  },
+  "versioning": {
+    "Status": "Enabled"
+  },
+  "publicAccess": {
+    "PublicAccessBlockConfiguration": {
+      "BlockPublicAcls": true,
+      "BlockPublicPolicy": true,
+      "IgnorePublicAcls": true,
+      "RestrictPublicBuckets": true
+    }
+  }
+}
