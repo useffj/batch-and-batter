@@ -91,6 +91,8 @@ export class Notifications {
     private providers: { email: MessageProvider; sms: MessageProvider },
     private options: {
       policies: string;
+      confirmationOnly?: boolean;
+      approvedPickupLocation?: string;
       issueManagementLink?: (operation: Operation) => Promise<string>;
       reminderTime?: string;
       now?: () => number;
@@ -148,6 +150,18 @@ export class Notifications {
     order: Order,
     o: Pick<Operation, 'kind' | 'channel' | 'pickupDate'> & { key?: string },
   ): Promise<string | null> {
+    if (this.options.confirmationOnly) {
+      if (!['CONFIRMATION', 'ACCESS'].includes(o.kind) || o.channel !== 'email')
+        return 'NOTIFICATION_KIND_DISABLED';
+      if (
+        !this.options.approvedPickupLocation?.trim() ||
+        order.pickup.location !== this.options.approvedPickupLocation ||
+        !order.pickup.instructions.trim() ||
+        order.pickup.timezone !== 'America/Denver' ||
+        !order.displayOrderNumber
+      )
+        return 'CONFIRMATION_DETAILS_UNAPPROVED';
+    }
     if (o.kind === 'REFUND') {
       if (!o.key || o.channel !== 'email') return 'REFUND_UNVERIFIED';
       const op = refundOperation.safeParse(
@@ -308,18 +322,20 @@ export class Notifications {
     const order = await this.orders.get(orderId);
     if (!order || !(await this.authority(order))) return;
     await this.create(order, 'CONFIRMATION', 'email');
-    const schedule = reminderSchedule(
-      order.pickup.date,
-      this.options.reminderTime,
-    );
-    // Past dates are not scheduled; receipt delivery is independent of scheduling.
-    if (schedule.expression.slice(3, -1) > this.localTime())
-      await this.transport.schedule(schedule);
-    else if (order.pickup.date > this.localTime().slice(0, 10))
-      await this.transport.enqueue({
-        type: 'REMINDER',
-        date: order.pickup.date,
-      });
+    if (!this.options.confirmationOnly) {
+      const schedule = reminderSchedule(
+        order.pickup.date,
+        this.options.reminderTime,
+      );
+      // Past dates are not scheduled; receipt delivery is independent of scheduling.
+      if (schedule.expression.slice(3, -1) > this.localTime())
+        await this.transport.schedule(schedule);
+      else if (order.pickup.date > this.localTime().slice(0, 10))
+        await this.transport.enqueue({
+          type: 'REMINDER',
+          date: order.pickup.date,
+        });
+    }
     await this.client.send(
       new DeleteCommand({
         TableName: this.operations,
@@ -328,6 +344,7 @@ export class Notifications {
     );
   }
   async reminders(date: string, cursor?: string) {
+    if (this.options.confirmationOnly) throw Error('Reminders disabled');
     dateSchema.parse(date);
     if (
       this.localTime() <
@@ -359,41 +376,57 @@ export class Notifications {
         'NOTIFICATION_DUE',
         'NOTIFICATION_PICKUP_EVENTS',
       ]) {
-        const r = await this.client.send(
-          new QueryCommand({
-            TableName: this.operations,
-            KeyConditionExpression: 'PK=:pk',
-            ExpressionAttributeValues: {
-              ':pk': type + '#' + String(i).padStart(2, '0'),
-            },
-            ConsistentRead: true,
-            Limit: 20,
-          }),
-        );
-        for (const row of r.Items ?? []) {
-          if (type === 'NOTIFICATION_EVENTS')
-            await this.confirmation(idSchema.parse(row.orderId));
-          else if (type === 'NOTIFICATION_PICKUP_EVENTS') {
-            const date = dateSchema.parse(row.pickupDate),
-              schedule = reminderSchedule(date, this.options.reminderTime);
-            if (schedule.expression.slice(3, -1) > this.localTime())
-              await this.transport.schedule(schedule);
-            // A changed date whose reminder time passed is not retroactively sent.
-            await this.client.send(
-              new DeleteCommand({
-                TableName: this.operations,
-                Key: { PK: row.PK, SK: row.SK },
-              }),
-            );
-          } else
-            await this.transport.enqueue(
-              notificationMessage.parse({
-                type: 'DELIVERY',
-                orderId: row.orderId,
-                key: row.key,
-              }),
-            );
-        }
+        if (
+          this.options.confirmationOnly &&
+          type === 'NOTIFICATION_PICKUP_EVENTS'
+        )
+          continue;
+        let cursor: Record<string, unknown> | undefined;
+        do {
+          const r = await this.client.send(
+            new QueryCommand({
+              TableName: this.operations,
+              KeyConditionExpression: 'PK=:pk',
+              ExpressionAttributeValues: {
+                ':pk': type + '#' + String(i).padStart(2, '0'),
+              },
+              ...(cursor ? { ExclusiveStartKey: cursor } : {}),
+              ConsistentRead: true,
+              Limit: 20,
+            }),
+          );
+          for (const row of r.Items ?? []) {
+            if (type === 'NOTIFICATION_EVENTS')
+              await this.confirmation(idSchema.parse(row.orderId));
+            else if (type === 'NOTIFICATION_PICKUP_EVENTS') {
+              const date = dateSchema.parse(row.pickupDate),
+                schedule = reminderSchedule(date, this.options.reminderTime);
+              if (schedule.expression.slice(3, -1) > this.localTime())
+                await this.transport.schedule(schedule);
+              // A changed date whose reminder time passed is not retroactively sent.
+              await this.client.send(
+                new DeleteCommand({
+                  TableName: this.operations,
+                  Key: { PK: row.PK, SK: row.SK },
+                }),
+              );
+            } else if (
+              !this.options.confirmationOnly ||
+              row.key === 'CONFIRMATION#email' ||
+              /^ACCESS#[a-f0-9-]{36}#email$/.test(row.key)
+            )
+              await this.transport.enqueue(
+                notificationMessage.parse({
+                  type: 'DELIVERY',
+                  orderId: row.orderId,
+                  key: row.key,
+                }),
+              );
+          }
+          cursor = this.options.confirmationOnly
+            ? r.LastEvaluatedKey
+            : undefined;
+        } while (cursor);
       }
   }
   private async transition(
@@ -431,6 +464,11 @@ export class Notifications {
     operationSchema.shape.key.parse(key);
     let o = await this.operation(id, key);
     if (!o) return;
+    if (
+      this.options.confirmationOnly &&
+      (!['CONFIRMATION', 'ACCESS'].includes(o.kind) || o.channel !== 'email')
+    )
+      throw Error('Notification kind disabled');
     if (['SENT', 'SUPPRESSED', 'FAILED', 'UNCERTAIN'].includes(o.status)) {
       await this.client.send(
         new DeleteCommand({ TableName: this.operations, Key: dueKey(o) }),
@@ -516,7 +554,7 @@ export class Notifications {
       ...(refund
         ? []
         : [
-            `Pickup: ${value.pickup.date}, ${value.pickup.startTime}–${value.pickup.endTime} America/Denver`,
+            `Pickup: ${value.pickup.date}, ${value.pickup.startTime}–${value.pickup.endTime} ${value.pickup.timezone}`,
             value.pickup.location,
             value.pickup.instructions,
           ]),
@@ -543,7 +581,7 @@ export class Notifications {
         return;
       }
     }
-    if (o.kind === 'ACCESS' && !link) {
+    if ((o.kind === 'ACCESS' || this.options.confirmationOnly) && !link) {
       await this.transition(o, 'FAILED', 'ACCESS_ISSUER_UNAVAILABLE');
       return;
     }
