@@ -2,7 +2,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const assert = require('node:assert/strict');
-const { compareTemplates } = require('./compare-templates.cjs');
+const {
+  compareTemplates,
+  applySharedCommerceDelta,
+  assertMode,
+  sharedCommerceResources,
+} = require('./compare-templates.cjs');
 const anchor = require('../config/api-release-baseline.json');
 const API = 'ApplicationApi5D63FF39';
 const bucket = 'cdk-hnb659fds-assets-302154194958-us-east-2';
@@ -155,9 +160,14 @@ function candidateCode(candidate) {
   artifactHelpers().verifyApiCandidate(selection);
   return { S3Bucket: destinationBucket, S3Key: destinationKey };
 }
-function validateRelease(baseline, proposed, approvedCode) {
+function validateRelease(
+  baseline,
+  proposed,
+  approvedCode,
+  mode = 'api-code-only',
+) {
   validateAcceptedFunctions(baseline);
-  compareTemplates(baseline, proposed, approvedCode);
+  compareTemplates(baseline, proposed, approvedCode, mode);
   if (
     approvedCode &&
     hash(baseline.Resources[API].Properties.Code) === hash(approvedCode)
@@ -165,12 +175,16 @@ function validateRelease(baseline, proposed, approvedCode) {
     throw Error('API_CODE_CHANGE_REQUIRED');
   return true;
 }
-function proposeTemplate(baseline, candidate) {
+function proposeTemplate(baseline, candidate, mode = 'api-code-only') {
+  assertMode(mode);
   validateAcceptedFunctions(baseline);
-  const proposed = structuredClone(baseline);
+  const proposed =
+    mode === 'shared-commerce'
+      ? applySharedCommerceDelta(baseline)
+      : structuredClone(baseline);
   const code = candidate === undefined ? undefined : candidateCode(candidate);
   if (code) proposed.Resources[API].Properties.Code = code;
-  validateRelease(baseline, proposed, code);
+  validateRelease(baseline, proposed, code, mode);
   return proposed;
 }
 function deploymentBlockers(evidence = {}) {
@@ -187,22 +201,52 @@ function deploymentBlockers(evidence = {}) {
     'DEPLOYMENT_EXECUTOR_NOT_IMPLEMENTED',
   ];
 }
-function buildRelease(snapshot, candidate) {
+function buildRelease(snapshot, candidate, mode = 'api-code-only') {
+  assertMode(mode);
   const baseline = validateBaseline(snapshot, anchor);
-  if (candidate === undefined) throw Error('EXPLICIT_CANDIDATE_REQUIRED');
-  const template = proposeTemplate(baseline, candidate);
+  if (mode === 'api-code-only' && candidate === undefined)
+    throw Error('EXPLICIT_CANDIDATE_REQUIRED');
+  const template = proposeTemplate(baseline, candidate, mode);
+  return describeRelease(snapshot, baseline, template, candidate, mode);
+}
+// Descriptive output only; never grants deployment authority or removes blockers.
+function describeRelease(snapshot, baseline, template, candidate, mode) {
+  assertMode(mode);
+  validateRelease(
+    baseline,
+    template,
+    candidate === undefined ? undefined : candidateCode(candidate),
+    mode,
+  );
+
   const rollback = artifactHelpers().acceptedArtifacts()[API];
   return {
     template,
     report: {
-      status: 'NOT DEPLOYABLE',
+      status: 'NOT DEPLOYABLE — SEPARATE AUTHORIZATION REQUIRED',
       deploymentAuthorized: false,
       stackId: anchor.stackId,
       baselineSha256: hash(baseline),
       proposedTemplateSha256: hash(template),
-      candidateSha256: candidate.sha256,
+      candidateSha256: candidate?.sha256 ?? null,
       code: template.Resources[API].Properties.Code,
-      allowedChange: 'Resources.ApplicationApi5D63FF39.Properties.Code',
+      allowedChange:
+        mode === 'shared-commerce'
+          ? 'Fixed four-route resource contract and Catalog-only Scan; API Code only with verified candidate'
+          : 'Resources.ApplicationApi5D63FF39.Properties.Code',
+      allowedPaths: [
+        ...(mode === 'shared-commerce'
+          ? [
+              ...Object.keys(sharedCommerceResources()).map(
+                (id) => `Resources.${id}`,
+              ),
+              'Resources.ApplicationRoleDefaultPolicy2A2BCE7E.Properties.PolicyDocument.Statement[3].Action',
+            ]
+          : []),
+        ...(candidate === undefined
+          ? []
+          : ['Resources.ApplicationApi5D63FF39.Properties.Code']),
+      ],
       rollback: {
         code: baseline.Resources[API].Properties.Code,
         sha256: rollback.sha256,
@@ -214,7 +258,12 @@ function buildRelease(snapshot, candidate) {
         overwriteAllowed: false,
         requiredCondition: 'If-None-Match: *',
       },
-      blockers: deploymentBlockers(),
+      blockers: [
+        ...deploymentBlockers(),
+        ...(mode === 'shared-commerce'
+          ? ['REVIEWED_BOUNDED_SHARED_COMMERCE_CHANGE_SET_REQUIRED']
+          : []),
+      ],
     },
     parameters: snapshot.parameters.map((p) => ({
       ParameterKey: p.ParameterKey,
@@ -228,15 +277,25 @@ module.exports = {
   validateRelease,
   proposeTemplate,
   buildRelease,
+  describeRelease,
   deploymentBlockers,
 };
 if (require.main === module) {
   try {
-    if (process.argv.length !== 5) throw Error('INVALID_ARGUMENTS');
-    const [snapshotFile, candidateFile, out] = process.argv.slice(2);
+    const args = process.argv.slice(2);
+    const shared = args[0] === '--shared-commerce';
+    if (shared) args.shift();
+    if (shared ? ![2, 3].includes(args.length) : args.length !== 3)
+      throw Error('INVALID_ARGUMENTS');
+    const [snapshotFile, second, third] = args;
+    const out = shared ? second : third;
+    const candidateFile = shared ? third : second;
     const result = buildRelease(
       JSON.parse(fs.readFileSync(snapshotFile, 'utf8')),
-      JSON.parse(fs.readFileSync(candidateFile, 'utf8')),
+      candidateFile
+        ? JSON.parse(fs.readFileSync(candidateFile, 'utf8'))
+        : undefined,
+      shared ? 'shared-commerce' : 'api-code-only',
     );
     // Refuse existing destinations and avoid printing template or parameter values.
     fs.mkdirSync(out, { mode: 0o700 });

@@ -264,7 +264,7 @@ test('payment routes have NONE auth and webhook targets only the dedicated Lambd
     );
   }
 });
-test('CMK retained with rotation; no parameters or subscriptions or runtime Scan', () => {
+test('CMK retained with rotation; no parameters or subscriptions; runtime Scan restricted to approved Catalog policy', () => {
   const key = r[find('StripeParameterKey', 'AWS::KMS::Key')];
   assert.equal(key.DeletionPolicy, 'Retain');
   assert.equal(key.UpdateReplacePolicy, 'Retain');
@@ -275,10 +275,31 @@ test('CMK retained with rotation; no parameters or subscriptions or runtime Scan
   );
   t.resourceCountIs('AWS::SSM::Parameter', 0);
   t.resourceCountIs('AWS::SNS::Subscription', 0);
+  let catalogScanStatements = 0;
   for (const [id, p] of Object.entries(t.findResources('AWS::IAM::Policy'))) {
     const statements = p.Properties.PolicyDocument.Statement;
     for (const statement of statements) {
-      if (JSON.stringify(statement.Action).includes('dynamodb:UpdateItem')) {
+      if (JSON.stringify(statement.Action).includes('dynamodb:Scan')) {
+        assert.equal(id, 'ApplicationRoleDefaultPolicy2A2BCE7E');
+        assert.deepEqual(p.Properties.Roles, [
+          { Ref: 'ApplicationRole90C00724' },
+        ]);
+        assert.deepEqual(statement, {
+          Action: [
+            'dynamodb:GetItem',
+            'dynamodb:Query',
+            'dynamodb:Scan',
+            'dynamodb:PutItem',
+            'dynamodb:DeleteItem',
+            'dynamodb:ConditionCheckItem',
+          ],
+          Effect: 'Allow',
+          Resource: { 'Fn::GetAtt': ['CatalogTableF8EA09BD', 'Arn'] },
+        });
+        catalogScanStatements++;
+      } else if (
+        JSON.stringify(statement.Action).includes('dynamodb:UpdateItem')
+      ) {
         assert.ok(id.startsWith('ApplicationRoleDefaultPolicy'));
         assert.deepEqual(statement, {
           Action: 'dynamodb:UpdateItem',
@@ -297,6 +318,7 @@ test('CMK retained with rotation; no parameters or subscriptions or runtime Scan
         );
     }
   }
+  assert.equal(catalogScanStatements, 1);
   assert.doesNotMatch(
     JSON.stringify(t.toJSON()),
     /rk_test_|sk_live_|whsec_|client_secret/,
