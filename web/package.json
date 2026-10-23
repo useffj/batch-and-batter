@@ -21,7 +21,7 @@
   "dependencies": {
     "@stripe/react-stripe-js": "7.0.0",
     "@stripe/stripe-js": "10.0.0",
-    "next": "15.5.27",
+    "next": "15.5.28",
     "react": "19.1.9",
     "react-dom": "19.1.9"
   },
@@ -35,6 +35,12 @@
     "eslint-config-prettier": "10.1.8",
     "prettier": "3.9.7",
     "typescript": "5.9.3",
-    "vitest": "4.1.11"
+    "vitest": "4.1.12"
+  },
+  "overrides": {
+    "next@15.5.28": {
+      "postcss": "8.5.23",
+      "sharp": "0.35.5"
+    }
   }
 }
