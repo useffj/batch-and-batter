@@ -5,6 +5,7 @@ applications:
       phases:
         preBuild:
           commands:
+            - bash ../scripts/select-public-security-source.sh
             - nvm install "$(cat ../.nvmrc)"
             - nvm use "$(cat ../.nvmrc)"
             - npm install --global npm@11.11.0
