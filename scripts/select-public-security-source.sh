@@ -18,25 +18,26 @@ readonly node_blob=60ade1ae01e833a5c291c47883bf26fb031f7727
   echo 'Public candidate requires the reviewed existing API.' >&2
   exit 1
 }
-readonly root="$(git rev-parse --show-toplevel)"
-[[ "$(pwd -P)" == "$(cd "$root/web" && pwd -P)" ]]
+root="$(git rev-parse --show-toplevel)" || exit 1
+readonly root
+[[ "$(pwd -P)" == "$(cd "$root/web" && pwd -P)" ]] || exit 1
 
 # Fetch failure is fatal even if a stale local object happens to exist.
-git fetch --no-tags origin "$candidate"
-[[ "$(git rev-parse 'FETCH_HEAD^{commit}')" == "$candidate" ]]
-[[ "$(git rev-parse "$candidate:web")" == "$web_tree" ]]
-[[ "$(git rev-parse "$candidate:.nvmrc")" == "$node_blob" ]]
+git fetch --no-tags origin "$candidate" || exit 1
+[[ "$(git rev-parse 'FETCH_HEAD^{commit}')" == "$candidate" ]] || exit 1
+[[ "$(git rev-parse "$candidate:web")" == "$web_tree" ]] || exit 1
+[[ "$(git rev-parse "$candidate:.nvmrc")" == "$node_blob" ]] || exit 1
 
-stage="$(mktemp -d)"
+stage="$(mktemp -d)" || exit 1
 trap 'rm -rf "$stage"' EXIT
-git -C "$root" archive "$candidate" web .nvmrc | tar -xf - -C "$stage"
+git -C "$root" archive "$candidate" web .nvmrc | tar -xf - -C "$stage" || exit 1
 
 # Retain appRoot web and .next SSR artifact handling, but remove ALL restored
 # caches, dependency installations, environment files and newer main web source.
 # Do not remove web itself: Amplify's shell is already inside that directory.
-find "$root/web" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
-cp -R "$stage/web/." "$root/web/"
-cp "$stage/.nvmrc" "$root/.nvmrc"
-diff -qr "$stage/web" "$root/web"
-[[ "$(git hash-object "$root/.nvmrc")" == "$node_blob" ]]
+find "$root/web" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + || exit 1
+cp -R "$stage/web/." "$root/web/" || exit 1
+cp "$stage/.nvmrc" "$root/.nvmrc" || exit 1
+diff -qr "$stage/web" "$root/web" || exit 1
+[[ "$(git hash-object "$root/.nvmrc")" == "$node_blob" ]] || exit 1
 echo "Verified public candidate $candidate; web tree $web_tree; checkout locked."
