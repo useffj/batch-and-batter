@@ -219,6 +219,7 @@ export class DevelopmentStack extends Stack {
         actions: [
           'dynamodb:GetItem',
           'dynamodb:Query',
+          'dynamodb:Scan',
           'dynamodb:PutItem',
           'dynamodb:DeleteItem',
           'dynamodb:ConditionCheckItem',

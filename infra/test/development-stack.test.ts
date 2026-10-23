@@ -322,6 +322,7 @@ test('Lambda has only scoped logging and the exact Catalog composition permissio
     Action: [
       'dynamodb:GetItem',
       'dynamodb:Query',
+      'dynamodb:Scan',
       'dynamodb:PutItem',
       'dynamodb:DeleteItem',
       'dynamodb:ConditionCheckItem',
@@ -612,6 +613,9 @@ test('Phase 5A2 changes only approved properties of Phase 5A1 resources', () => 
         Ref: 'ReservationQueue43323CC1',
       };
     } else if (id.startsWith('ApplicationRoleDefaultPolicy')) {
+      expected.Properties.PolicyDocument.Statement.find(
+        (s: any) => s.Resource?.['Fn::GetAtt']?.[0] === 'CatalogTableF8EA09BD',
+      ).Action.splice(2, 0, 'dynamodb:Scan');
       expected.Properties.PolicyDocument.Statement.push(
         {
           Effect: 'Allow',
