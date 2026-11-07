@@ -6,19 +6,24 @@ export async function productRequest(
   signal?: AbortSignal,
   transport: typeof fetch = fetch,
   creationKey?: string,
+  photography = false,
 ) {
-  const response = await transport('/api/admin/products' + path, {
-    method,
-    credentials: 'same-origin',
-    cache: 'no-store',
-    redirect: 'error',
-    signal: signal ?? AbortSignal.timeout(15000),
-    headers: {
-      'Content-Type': 'application/json',
-      ...(creationKey ? { 'Idempotency-Key': creationKey } : {}),
+  const response = await transport(
+    (photography ? '/api/admin/photography/products' : '/api/admin/products') +
+      path,
+    {
+      method,
+      credentials: 'same-origin',
+      cache: 'no-store',
+      redirect: 'error',
+      signal: signal ?? AbortSignal.timeout(15000),
+      headers: {
+        'Content-Type': 'application/json',
+        ...(creationKey ? { 'Idempotency-Key': creationKey } : {}),
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  });
+  );
   const data = await response.json();
   if (!response.ok)
     throw new ClientFailure(

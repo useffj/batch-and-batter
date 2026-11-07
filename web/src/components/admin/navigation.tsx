@@ -1,8 +1,11 @@
 /* eslint-disable @next/next/no-html-link-for-pages */
 export function AdminNavigation({
   current,
+  photography = false,
 }: {
+  photography?: boolean;
   current:
+    | 'photography'
     | 'overview'
     | 'products'
     | 'drops'
@@ -35,30 +38,42 @@ export function AdminNavigation({
         >
           Weekly Drops
         </a>
-        <a
-          href="/admin/orders"
-          aria-current={current === 'orders' ? 'page' : undefined}
-        >
-          Orders
-        </a>
-        <a
-          href="/admin/fulfillment"
-          aria-current={current === 'fulfillment' ? 'page' : undefined}
-        >
-          Fulfillment
-        </a>
-        <a
-          href="/admin/customers"
-          aria-current={current === 'customers' ? 'page' : undefined}
-        >
-          Customers
-        </a>
-        <a
-          href="/admin/waitlists"
-          aria-current={current === 'waitlists' ? 'page' : undefined}
-        >
-          Waitlist Management
-        </a>
+        {photography && (
+          <a
+            href="/admin/photography"
+            aria-current={current === 'photography' ? 'page' : undefined}
+          >
+            Photography (Isolated)
+          </a>
+        )}
+        {!photography && (
+          <>
+            <a
+              href="/admin/orders"
+              aria-current={current === 'orders' ? 'page' : undefined}
+            >
+              Orders
+            </a>
+            <a
+              href="/admin/fulfillment"
+              aria-current={current === 'fulfillment' ? 'page' : undefined}
+            >
+              Fulfillment
+            </a>
+            <a
+              href="/admin/customers"
+              aria-current={current === 'customers' ? 'page' : undefined}
+            >
+              Customers
+            </a>
+            <a
+              href="/admin/waitlists"
+              aria-current={current === 'waitlists' ? 'page' : undefined}
+            >
+              Waitlist Management
+            </a>
+          </>
+        )}
       </nav>
       <p className="admin-eyebrow">Coming later</p>
       <ul className="admin-future">

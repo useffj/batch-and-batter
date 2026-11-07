@@ -13,14 +13,23 @@ import {
 import { loadSessionKey, type RuntimeConfig } from './session-key';
 export { AdminFailure } from './server';
 
-export async function authorize(cookie: string, config: RuntimeConfig) {
+export async function authorize(
+  cookie: string,
+  config: RuntimeConfig,
+  photography = false,
+) {
   let key: string;
   try {
     key = await loadSessionKey(config);
   } catch {
     throw new AdminFailure('CONFIGURATION');
   }
-  return authorizeSession(cookie, { ...config, ADMIN_SESSION_KEY: key });
+  return authorizeSession(
+    cookie,
+    { ...config, ADMIN_SESSION_KEY: key },
+    fetch,
+    photography,
+  );
 }
 export async function adminRelay(
   request: Request,
@@ -56,6 +65,7 @@ export async function productRelay(
   request: Request,
   productId: string | undefined,
   config: RuntimeConfig,
+  photography = false,
 ) {
   let key: string;
   try {
@@ -69,10 +79,16 @@ export async function productRelay(
       },
     );
   }
-  return catalogRelay(request, productId, {
-    ...config,
-    ADMIN_SESSION_KEY: key,
-  });
+  return catalogRelay(
+    request,
+    productId,
+    {
+      ...config,
+      ADMIN_SESSION_KEY: key,
+    },
+    fetch,
+    photography,
+  );
 }
 
 export async function mediaRelay(

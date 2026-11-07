@@ -1,3 +1,4 @@
+import { sharedWorkspace } from '../../../lib/admin/media-config';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { authorize } from '../../../lib/admin/runtime';
@@ -14,6 +15,7 @@ export default async function Page() {
   }
   return (
     <WeeklyDrops
+      shared={sharedWorkspace(process.env)}
       expiresAt={expiresAt}
       isolated={process.env.ADMIN_CATALOG_MODE === 'isolated'}
     />

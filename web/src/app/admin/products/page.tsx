@@ -1,4 +1,7 @@
-import { isolatedMediaEnabled } from '../../../lib/admin/media-config';
+import {
+  sharedWorkspace,
+  isolatedMediaEnabled,
+} from '../../../lib/admin/media-config';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { authorize, AdminFailure } from '../../../lib/admin/runtime';
@@ -29,6 +32,7 @@ export default async function AdminPage() {
   }
   return (
     <Products
+      workspace={sharedWorkspace(process.env) ? 'shared' : 'catalog'}
       expiresAt={expiresAt}
       catalogScope={catalogScope}
       mediaEnabled={isolatedMediaEnabled(process.env)}

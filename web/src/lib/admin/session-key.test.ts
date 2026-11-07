@@ -303,7 +303,9 @@ it('all admin entry points use server-only runtime and never serialize its confi
     ).toContain('lib/admin/runtime');
   const page = readFileSync(resolve('src/app/admin/page.tsx'), 'utf8');
   expect(page).toContain('lib/admin/runtime');
-  expect(page).toContain('<Dashboard expiresAt={expiresAt} />');
+  expect(page).toMatch(
+    /<Dashboard\s+photography=\{sharedWorkspace\(process\.env\)\}\s+expiresAt=\{expiresAt\}\s*\/>/,
+  );
   expect(page).not.toMatch(/ADMIN_SESSION_KEY|\.\.\.config/);
 });
 

@@ -1,3 +1,4 @@
+import { sharedWorkspace } from '../../lib/admin/media-config';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { authorize, AdminFailure } from '../../lib/admin/runtime';
@@ -24,5 +25,10 @@ export default async function AdminPage() {
         : 'unavailable';
     redirect(`/admin/login${reason ? `?reason=${reason}` : ''}`);
   }
-  return <Dashboard expiresAt={expiresAt} />;
+  return (
+    <Dashboard
+      photography={sharedWorkspace(process.env)}
+      expiresAt={expiresAt}
+    />
+  );
 }

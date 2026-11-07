@@ -8,7 +8,13 @@ import {
 } from '../../lib/admin/client';
 import { AdminNavigation } from './navigation';
 import { DropOverview } from './overview';
-export function Dashboard({ expiresAt }: { expiresAt: number }) {
+export function Dashboard({
+  expiresAt,
+  photography = false,
+}: {
+  expiresAt: number;
+  photography?: boolean;
+}) {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null),
     [busy, setBusy] = useState(true),
     [error, setError] = useState('');
@@ -103,7 +109,7 @@ export function Dashboard({ expiresAt }: { expiresAt: number }) {
       <a className="admin-skip" href="#admin-content">
         Skip to overview
       </a>
-      <AdminNavigation current="overview" />
+      <AdminNavigation current="overview" photography={photography} />
       <main id="admin-content" className="admin-main" tabIndex={-1}>
         <header className="admin-heading">
           <div>

@@ -1,4 +1,5 @@
 import { writeFileSync } from 'node:fs';
+import shared from '../src/lib/admin/shared-profile.json' with { type: 'json' };
 import { resolve } from 'node:path';
 
 // Hosting configuration is public. Never serialize the rest of process.env.
@@ -61,7 +62,35 @@ function prepare() {
     lines.push(`NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${publishableKey}`);
   // Admin values are optional for storefront-only deployments. Validate every
   // supplied value before writing; never copy the actual session key.
-  if (process.env.ADMIN_CATALOG_MODE !== undefined) {
+  if (
+    (process.env.AWS_BRANCH === shared.AWS_BRANCH ||
+      process.env.ADMIN_ORIGIN === shared.ADMIN_ORIGIN) &&
+    !['shared', 'isolated'].includes(process.env.ADMIN_CATALOG_MODE)
+  )
+    throw new Error('Invalid nonsecret admin SSR configuration.');
+  const sharedRequested =
+    process.env.ADMIN_CATALOG_MODE === 'shared' ||
+    process.env.ADMIN_MEDIA_API_BASE_URL !== undefined ||
+    (process.env.ADMIN_ORIGIN === shared.ADMIN_ORIGIN &&
+      process.env.ADMIN_API_BASE_URL === shared.ADMIN_API_BASE_URL);
+  if (sharedRequested) {
+    if (
+      Object.entries(shared).some(
+        ([key, value]) => process.env[key] !== value,
+      ) ||
+      raw !== 'https://storefront.invalid' ||
+      pricingMode ||
+      publishableKey
+    )
+      throw new Error('Invalid nonsecret admin SSR configuration.');
+    for (const key of [
+      'AWS_BRANCH',
+      'ADMIN_CATALOG_MODE',
+      'ADMIN_MEDIA_MODE',
+      'ADMIN_MEDIA_API_BASE_URL',
+    ])
+      lines.push(key + '=' + process.env[key]);
+  } else if (process.env.ADMIN_CATALOG_MODE !== undefined) {
     if (
       process.env.ADMIN_CATALOG_MODE !== 'isolated' ||
       process.env.AWS_BRANCH !== 'admin-dev-3b23b18' ||
@@ -69,15 +98,14 @@ function prepare() {
       submissionMode !== 'locked' ||
       process.env.ADMIN_ORIGIN !==
         'https://admin-dev-3b23b18.d1aw7cfglvejmo.amplifyapp.com' ||
-      !process.env.ADMIN_API_BASE_URL ||
-      process.env.ADMIN_API_BASE_URL.includes('7otpu9y03a')
+      process.env.ADMIN_API_BASE_URL !== shared.ADMIN_MEDIA_API_BASE_URL
     )
       throw new Error(
         'Isolated catalog requires the restricted branch and locked public paths.',
       );
     lines.push('ADMIN_CATALOG_MODE=isolated');
   }
-  if (process.env.ADMIN_MEDIA_MODE !== undefined) {
+  if (!sharedRequested && process.env.ADMIN_MEDIA_MODE !== undefined) {
     if (
       process.env.ADMIN_MEDIA_MODE !== 'isolated' ||
       process.env.ADMIN_CATALOG_MODE !== 'isolated' ||

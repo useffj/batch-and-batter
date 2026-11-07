@@ -36,9 +36,11 @@ type Selection = { productId: string; price: string; quantity: string };
 export function WeeklyDrops({
   expiresAt,
   isolated = false,
+  shared = false,
 }: {
   expiresAt: number;
   isolated?: boolean;
+  shared?: boolean;
 }) {
   useEffect(() => {
     const expire = () => {
@@ -295,14 +297,16 @@ export function WeeklyDrops({
   }
   return (
     <div className="admin-shell">
-      <AdminNavigation current="drops" />
+      <AdminNavigation current="drops" photography={shared} />
       <main className="admin-main weekly-drops">
         <header className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <p className="text-sm text-stone-500">
               Batch &amp; Batter · Administration
             </p>
-            <h1 className="text-3xl font-semibold">Weekly Drops</h1>
+            <h1 className="text-3xl font-semibold">
+              {shared ? 'Weekly Drops — Shared DEV' : 'Weekly Drops'}
+            </h1>
           </div>
           <button
             disabled={busy}
@@ -345,7 +349,7 @@ export function WeeklyDrops({
             </h2>
             <p>
               {current?.drop.status ?? 'DRAFT'} ·{' '}
-              {isolated
+              {isolated || shared
                 ? 'Restricted DEV: no ordering or reservations.'
                 : 'Ordering remains available until sold out. Maximum 12 cookies by default; cart reservations remain 8 minutes.'}
             </p>
@@ -586,13 +590,13 @@ export function WeeklyDrops({
                 </button>
               )}
             </div>
-            {isolated && (
+            {(isolated || shared) && (
               <p>
                 Restricted DEV: publication, ordering and scheduling are
                 disabled.
               </p>
             )}
-            {current && !isolated && (
+            {current && !isolated && !shared && (
               <section className="space-y-3 border-t pt-4">
                 <h3>Publication and status</h3>
                 <p>

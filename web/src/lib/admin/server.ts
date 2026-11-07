@@ -14,6 +14,8 @@ import {
   type ProductFields,
 } from './products';
 import 'server-only';
+import shared from './shared-profile.json';
+import { sharedWorkspace } from './media-config';
 import {
   createCipheriv,
   createDecipheriv,
@@ -27,7 +29,9 @@ import { composition, id, record, text } from './contract';
 // key, never NEXT_PUBLIC_ or a build artifact. Rotating it invalidates all local
 // sessions. AES-GCM seals an access token (no refresh/ID token) for <=15 minutes;
 // it does not replace Gateway validation or provide immediate replay revocation.
-export interface AdminConfig {
+export interface AdminConfig extends Partial<
+  Record<keyof typeof shared | 'STOREFRONT_API_BASE_URL', string>
+> {
   ADMIN_CATALOG_MODE?: string;
   ADMIN_MEDIA_MODE?: string;
   NODE_ENV?: string;
@@ -76,6 +80,21 @@ const name = (c: AdminConfig, challenge = false) =>
   `${c.NODE_ENV === 'production' ? '__Host-' : ''}bb-admin${challenge ? '-challenge' : ''}`;
 function settings(c: AdminConfig) {
   try {
+    if (
+      c.ADMIN_ORIGIN === shared.ADMIN_ORIGIN &&
+      !sharedWorkspace(c) &&
+      (c.ADMIN_CATALOG_MODE !== 'isolated' ||
+        c.ADMIN_API_BASE_URL !== shared.ADMIN_MEDIA_API_BASE_URL)
+    )
+      throw new AdminFailure('CONFIGURATION');
+    if (
+      (c.ADMIN_CATALOG_MODE === 'shared' ||
+        c.ADMIN_MEDIA_API_BASE_URL !== undefined ||
+        (c.ADMIN_ORIGIN === shared.ADMIN_ORIGIN &&
+          c.ADMIN_API_BASE_URL === shared.ADMIN_API_BASE_URL)) &&
+      !sharedWorkspace(c)
+    )
+      throw new AdminFailure('CONFIGURATION');
     const origin = new URL(c.ADMIN_ORIGIN ?? ''),
       api = new URL(c.ADMIN_API_BASE_URL ?? '');
     for (const u of [origin, api]) {
@@ -230,14 +249,20 @@ async function api(
   token: string,
   c: AdminConfig,
   fetcher: typeof fetch,
+  photography = false,
 ) {
-  const response = await fetcher(settings(c).api + path, {
-    method: 'GET',
-    cache: 'no-store',
-    redirect: 'error',
-    signal: AbortSignal.timeout(8000),
-    headers: { Accept: 'application/json', Authorization: `Bearer ${token}` },
-  });
+  const response = await fetcher(
+    (photography && sharedWorkspace(c)
+      ? shared.ADMIN_MEDIA_API_BASE_URL
+      : settings(c).api) + path,
+    {
+      method: 'GET',
+      cache: 'no-store',
+      redirect: 'error',
+      signal: AbortSignal.timeout(8000),
+      headers: { Accept: 'application/json', Authorization: `Bearer ${token}` },
+    },
+  );
   if (response.status === 401) throw new AdminFailure('EXPIRED', 401);
   if (response.status === 403) throw new AdminFailure('FORBIDDEN', 403);
   if (response.status === 409 && path === '/admin/storefront/assignment') {
@@ -248,8 +273,13 @@ async function api(
   if (!response.ok) throw new AdminFailure('UNAVAILABLE', 502);
   return json(response);
 }
-async function identity(token: string, c: AdminConfig, fetcher: typeof fetch) {
-  const body = await api('/admin/me', token, c, fetcher);
+async function identity(
+  token: string,
+  c: AdminConfig,
+  fetcher: typeof fetch,
+  photography = false,
+) {
+  const body = await api('/admin/me', token, c, fetcher, photography);
   if (
     body.authenticated !== true ||
     !text(body.subject, 256) ||
@@ -264,13 +294,14 @@ export async function authorize(
   cookie: string,
   c: AdminConfig,
   fetcher: typeof fetch = fetch,
+  photography = false,
 ): Promise<Session> {
   settings(c);
   const value = read(cookie, c),
     token = text(value.token, 3600);
   if (!/^[\w-]+\.[\w-]+\.[\w-]+$/.test(token))
     throw new AdminFailure('UNAUTHENTICATED', 401);
-  const catalogScope = await identity(token, c, fetcher);
+  const catalogScope = await identity(token, c, fetcher, photography);
   return { token, expiresAt: value.expiresAt as number, catalogScope };
 }
 async function cognito(
@@ -565,10 +596,18 @@ export async function catalogRelay(
   productId: string | undefined,
   c: AdminConfig,
   fetcher: typeof fetch = fetch,
+  photography = false,
 ): Promise<NextResponse> {
   try {
     const config = settings(c);
     const method = request.method;
+    if (photography && !sharedWorkspace(c))
+      throw new AdminFailure('REQUEST', 404);
+    if (
+      sharedWorkspace(c) &&
+      (method !== 'GET' || new URL(request.url).searchParams.has('creationKey'))
+    )
+      throw new AdminFailure('REQUEST', 405);
     if (!(productId ? ['GET', 'PUT'] : ['GET', 'POST']).includes(method))
       throw new AdminFailure('REQUEST', 405);
     if (
@@ -582,6 +621,7 @@ export async function catalogRelay(
       request.headers.get('cookie') ?? '',
       c,
       fetcher,
+      photography,
     );
     let path = '/admin/products';
     if (productId !== undefined) path += '/' + id(productId);
@@ -641,20 +681,23 @@ export async function catalogRelay(
         );
       }
     }
-    const response = await fetcher(config.api + path, {
-      method,
-      cache: 'no-store',
-      redirect: 'error',
-      signal: AbortSignal.timeout(8000),
-      headers: {
-        Accept: 'application/json',
-        Authorization: `Bearer ${session.token}`,
-        ...(fields ? { 'Content-Type': 'application/json' } : {}),
-        ...(revision ? { 'If-Match': revision } : {}),
-        ...(method === 'POST' ? { 'Idempotency-Key': requestKey! } : {}),
+    const response = await fetcher(
+      (photography ? shared.ADMIN_MEDIA_API_BASE_URL : config.api) + path,
+      {
+        method,
+        cache: 'no-store',
+        redirect: 'error',
+        signal: AbortSignal.timeout(8000),
+        headers: {
+          Accept: 'application/json',
+          Authorization: `Bearer ${session.token}`,
+          ...(fields ? { 'Content-Type': 'application/json' } : {}),
+          ...(revision ? { 'If-Match': revision } : {}),
+          ...(method === 'POST' ? { 'Idempotency-Key': requestKey! } : {}),
+        },
+        ...(fields ? { body: JSON.stringify(fields) } : {}),
       },
-      ...(fields ? { body: JSON.stringify(fields) } : {}),
-    });
+    );
     if (response.status === 401) throw new AdminFailure('EXPIRED', 401);
     if (response.status === 403) throw new AdminFailure('FORBIDDEN', 403);
     if ([400, 404, 409, 413, 503].includes(response.status)) {
@@ -745,6 +788,32 @@ export async function catalogRelay(
 }
 
 // JSON-only media relay. Never forwards processor claims or arbitrary destinations.
+async function mediaDestination(
+  c: AdminConfig,
+  productId: string,
+  token: string,
+  fetcher: typeof fetch,
+) {
+  if (!sharedWorkspace(c)) return settings(c).api;
+  // Check ownership in the isolated Catalog before even constructing a media request.
+  const base = shared.ADMIN_MEDIA_API_BASE_URL;
+  const owner = await fetcher(base + '/admin/products/' + id(productId), {
+    headers: { Accept: 'application/json', Authorization: 'Bearer ' + token },
+    cache: 'no-store',
+    redirect: 'error',
+    signal: AbortSignal.timeout(8000),
+  });
+  if (owner.status === 401) throw new AdminFailure('EXPIRED', 401);
+  if (owner.status === 403) throw new AdminFailure('FORBIDDEN', 403);
+  if (owner.status === 404) throw new AdminFailure('REQUEST', 404);
+  if (
+    !owner.ok ||
+    catalogProduct((await json(owner, PRODUCT_JSON_LIMIT)).product)
+      .productId !== productId
+  )
+    throw new AdminFailure('INVALID', 502);
+  return base;
+}
 export async function mediaRelay(
   request: Request,
   target: MediaTarget,
@@ -782,6 +851,7 @@ export async function mediaRelay(
       request.headers.get('cookie') ?? '',
       c,
       fetcher,
+      sharedWorkspace(c),
     );
     let input: unknown;
     if (method !== 'GET') {
@@ -798,19 +868,23 @@ export async function mediaRelay(
     const key = request.headers.get('idempotency-key');
     if (target.kind === 'uploads' && (!key || !UUID.test(key)))
       throw new AdminFailure('REQUEST', 400);
-    const response = await fetcher(config.api + path, {
-      method,
-      cache: 'no-store',
-      redirect: 'error',
-      signal: AbortSignal.timeout(8000),
-      headers: {
-        Accept: 'application/json',
-        Authorization: `Bearer ${session.token}`,
-        ...(method !== 'GET' ? { 'Content-Type': 'application/json' } : {}),
-        ...(target.kind === 'uploads' ? { 'Idempotency-Key': key! } : {}),
+    const response = await fetcher(
+      (await mediaDestination(c, target.productId, session.token, fetcher)) +
+        path,
+      {
+        method,
+        cache: 'no-store',
+        redirect: 'error',
+        signal: AbortSignal.timeout(8000),
+        headers: {
+          Accept: 'application/json',
+          Authorization: `Bearer ${session.token}`,
+          ...(method !== 'GET' ? { 'Content-Type': 'application/json' } : {}),
+          ...(target.kind === 'uploads' ? { 'Idempotency-Key': key! } : {}),
+        },
+        ...(input !== undefined ? { body: JSON.stringify(input) } : {}),
       },
-      ...(input !== undefined ? { body: JSON.stringify(input) } : {}),
-    });
+    );
     if (response.status === 401) throw new AdminFailure('EXPIRED', 401);
     if (response.status === 403) throw new AdminFailure('FORBIDDEN', 403);
     if (!response.ok) {
@@ -833,7 +907,7 @@ export async function mediaRelay(
     const result = mediaResponse(
       await json(response, 32768),
       target,
-      c.ADMIN_CATALOG_MODE === 'isolated',
+      c.ADMIN_MEDIA_MODE === 'isolated' || c.ADMIN_CATALOG_MODE === 'isolated',
     );
     if (session.expiresAt <= Date.now()) throw new AdminFailure('EXPIRED', 401);
     return output(result, response.status);
@@ -857,7 +931,7 @@ export async function dropRelay(
       method = request.method;
     const [dropId, action] = segments;
     if (
-      c.ADMIN_CATALOG_MODE === 'isolated' &&
+      (c.ADMIN_CATALOG_MODE === 'isolated' || sharedWorkspace(c)) &&
       action &&
       !['composition', 'draft', 'preview'].includes(action)
     )
@@ -946,6 +1020,7 @@ export async function ordersRelay(
   fetcher: typeof fetch = fetch,
 ) {
   try {
+    if (sharedWorkspace(c)) throw new AdminFailure('REQUEST', 405);
     const config = settings(c);
     if (request.method !== 'GET' || (orderId && id(orderId) !== orderId))
       throw new AdminFailure('REQUEST', 405);
@@ -1011,6 +1086,7 @@ export async function relayFulfillment(
   fetcher: typeof fetch = fetch,
 ) {
   try {
+    if (sharedWorkspace(c)) throw new AdminFailure('REQUEST', 405);
     const config = settings(c),
       method = request.method,
       params = new URL(request.url).searchParams;
@@ -1087,6 +1163,7 @@ export async function customersRelay(
   fetcher: typeof fetch = fetch,
 ) {
   try {
+    if (sharedWorkspace(c)) throw new AdminFailure('REQUEST', 405);
     const config = settings(c);
     if (request.method !== 'POST') throw new AdminFailure('REQUEST', 405);
     if (new URL(request.url).search) throw new AdminFailure('REQUEST', 400);
@@ -1142,6 +1219,7 @@ export async function notificationsRelay(
   fetcher: typeof fetch = fetch,
 ) {
   try {
+    if (sharedWorkspace(c)) throw new AdminFailure('REQUEST', 405);
     const config = settings(c);
     if (request.method !== 'GET' || id(orderId) !== orderId)
       throw new AdminFailure('REQUEST', 405);
@@ -1216,6 +1294,7 @@ export async function guestAccessRelay(
   fetcher: typeof fetch = fetch,
 ) {
   try {
+    if (sharedWorkspace(c)) throw new AdminFailure('REQUEST', 405);
     const config = settings(c);
     if (
       id(orderId) !== orderId ||
@@ -1330,6 +1409,7 @@ export async function refundWorklistRelay(
   fetcher: typeof fetch = fetch,
 ) {
   try {
+    if (sharedWorkspace(c)) throw new AdminFailure('REQUEST', 405);
     const config = settings(c);
     if (request.method !== 'GET') throw new AdminFailure('REQUEST', 405);
     if (
@@ -1399,6 +1479,7 @@ export async function waitlistAdminRelay(
   fetcher: typeof fetch = fetch,
 ) {
   try {
+    if (sharedWorkspace(c)) throw new AdminFailure('REQUEST', 405);
     const config = settings(c),
       list = action === 'list';
     if (
@@ -1508,16 +1589,22 @@ export async function mediaImageRelay(
       request.headers.get('cookie') ?? '',
       c,
       fetcher,
+      sharedWorkspace(c),
     );
-    const r = await fetcher(settings(c).api + path + '?view=image', {
-      headers: {
-        Authorization: `Bearer ${session.token}`,
-        Accept: 'image/webp',
+    const r = await fetcher(
+      (await mediaDestination(c, productId, session.token, fetcher)) +
+        path +
+        '?view=image',
+      {
+        headers: {
+          Authorization: `Bearer ${session.token}`,
+          Accept: 'image/webp',
+        },
+        cache: 'no-store',
+        redirect: 'error',
+        signal: AbortSignal.timeout(8000),
       },
-      cache: 'no-store',
-      redirect: 'error',
-      signal: AbortSignal.timeout(8000),
-    });
+    );
     if (!r.ok)
       throw new AdminFailure(
         'UNAVAILABLE',

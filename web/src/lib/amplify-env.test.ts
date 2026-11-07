@@ -1,3 +1,5 @@
+import sharedProfile from './admin/shared-profile.json';
+
 import { spawnSync } from 'node:child_process';
 import {
   mkdtempSync,
@@ -234,7 +236,7 @@ it('restricts isolated catalog configuration to the locked Admin DEV branch', ()
     ADMIN_CATALOG_MODE: 'isolated',
     AWS_BRANCH: 'admin-dev-3b23b18',
     ADMIN_ORIGIN: 'https://admin-dev-3b23b18.d1aw7cfglvejmo.amplifyapp.com',
-    ADMIN_API_BASE_URL: 'https://isolated.example.invalid',
+    ADMIN_API_BASE_URL: sharedProfile.ADMIN_MEDIA_API_BASE_URL,
   };
   const good = run(isolated);
   expect(good.status).toBe(0);
@@ -252,4 +254,40 @@ it('restricts isolated catalog configuration to the locked Admin DEV branch', ()
     { ADMIN_CATALOG_MODE: 'other' },
   ])
     expect(run({ ...isolated, ...patch }).status).toBe(1);
+});
+
+describe('restricted shared management with isolated photography', () => {
+  const approved = {
+    ...sharedProfile,
+    STOREFRONT_API_BASE_URL: 'https://storefront.invalid',
+    STOREFRONT_CURRENCY: 'USD',
+  };
+  it('packages the two exact SSR destinations and excludes session material', () => {
+    const r = run({
+      ...approved,
+      ADMIN_SESSION_KEY: 'synthetic-private-sentinel',
+    });
+    expect(r.status).toBe(0);
+    const env = readFileSync(r.path, 'utf8');
+    for (const [k, v] of Object.entries(sharedProfile))
+      expect(env.split('\n')).toContain(k + '=' + v);
+    expect(env).not.toContain('synthetic-private-sentinel');
+  });
+  it.each([
+    ['AWS_BRANCH', 'main'],
+    ['ADMIN_ORIGIN', 'https://example.org'],
+    ['ADMIN_ORIGIN', ''],
+    ['ADMIN_API_BASE_URL', sharedProfile.ADMIN_MEDIA_API_BASE_URL],
+    ['ADMIN_MEDIA_API_BASE_URL', sharedProfile.ADMIN_API_BASE_URL],
+    ['ADMIN_API_BASE_URL', 'https://example.org'],
+    ['ADMIN_MEDIA_MODE', 'disabled'],
+    ['ADMIN_CATALOG_MODE', 'isolated'],
+    ['ADMIN_MEDIA_API_BASE_URL', ''],
+    ['ADMIN_COGNITO_REGION', 'us-east-1'],
+    ['ADMIN_COGNITO_CLIENT_ID', 'different'],
+    ['CHECKOUT_SUBMISSION_MODE', 'enabled'],
+    ['STOREFRONT_API_BASE_URL', sharedProfile.ADMIN_API_BASE_URL],
+  ])('rejects %s=%s', (key, value) =>
+    expect(run({ ...approved, [key]: value }).status).not.toBe(0),
+  );
 });

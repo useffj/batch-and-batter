@@ -1,0 +1,12 @@
+{
+  "AWS_BRANCH": "admin-dev-3b23b18",
+  "ADMIN_ORIGIN": "https://admin-dev-3b23b18.d1aw7cfglvejmo.amplifyapp.com",
+  "ADMIN_CATALOG_MODE": "shared",
+  "ADMIN_API_BASE_URL": "https://7otpu9y03a.execute-api.us-east-2.amazonaws.com",
+  "ADMIN_MEDIA_MODE": "isolated",
+  "ADMIN_MEDIA_API_BASE_URL": "https://ui8k11k343.execute-api.us-east-2.amazonaws.com",
+  "ADMIN_COGNITO_REGION": "us-east-2",
+  "ADMIN_COGNITO_CLIENT_ID": "mnvhvb6s87q5hsscdmjj59pv",
+  "ADMIN_SESSION_KEY_PARAMETER": "/batch-and-batter/dev/admin/session-key",
+  "CHECKOUT_SUBMISSION_MODE": "locked"
+}

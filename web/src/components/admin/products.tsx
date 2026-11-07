@@ -36,18 +36,21 @@ export function Products({
   catalogScope,
   renderMedia,
   mediaEnabled = false,
+  workspace = 'catalog',
 }: {
   expiresAt: number;
   mediaEnabled?: boolean;
+  workspace?: 'catalog' | 'shared' | 'photography';
   catalogScope?: string;
   renderMedia?: (
     product: CatalogProduct,
     onDirty: (dirty: boolean) => void,
   ) => ReactNode;
 }) {
-  const storageKey = catalogScope
-    ? 'bb-product-create:' + catalogScope
-    : undefined;
+  const photography = workspace === 'photography';
+  const readOnly = workspace !== 'catalog';
+  const storageKey =
+    !readOnly && catalogScope ? 'bb-product-create:' + catalogScope : undefined;
   const [creationVisit, setCreationVisit] = useState(0);
   const [pending, setPending] = useState<string | null>(null);
   const [recovery, setRecovery] = useState('');
@@ -121,32 +124,38 @@ export function Products({
         : 'Unable to reach product services. Try refreshing.',
     );
   }
-  const load = useCallback(async (next?: string) => {
-    controller.current?.abort();
-    const c = new AbortController();
-    controller.current = c;
-    setBusy(true);
-    setError('');
-    try {
-      const response = await productRequest(
-        next ? '?cursor=' + encodeURIComponent(next) : '',
-        'GET',
-        undefined,
-        c.signal,
-      );
-      const page = catalogPage(response);
-      if (c.signal.aborted || locked.current) return;
-      setProducts((old) =>
-        next ? mergeCatalog(old, page.products) : page.products,
-      );
-      setCursor(page.nextCursor);
-      setLoaded(response.loadedAt);
-    } catch (e) {
-      if (!c.signal.aborted) failure(e);
-    } finally {
-      if (!c.signal.aborted) setBusy(false);
-    }
-  }, []);
+  const load = useCallback(
+    async (next?: string) => {
+      controller.current?.abort();
+      const c = new AbortController();
+      controller.current = c;
+      setBusy(true);
+      setError('');
+      try {
+        const response = await productRequest(
+          next ? '?cursor=' + encodeURIComponent(next) : '',
+          'GET',
+          undefined,
+          c.signal,
+          fetch,
+          undefined,
+          photography,
+        );
+        const page = catalogPage(response);
+        if (c.signal.aborted || locked.current) return;
+        setProducts((old) =>
+          next ? mergeCatalog(old, page.products) : page.products,
+        );
+        setCursor(page.nextCursor);
+        setLoaded(response.loadedAt);
+      } catch (e) {
+        if (!c.signal.aborted) failure(e);
+      } finally {
+        if (!c.signal.aborted) setBusy(false);
+      }
+    },
+    [photography],
+  );
   useEffect(() => {
     void load();
     const expire = () => {
@@ -209,8 +218,19 @@ export function Products({
     setBusy(true);
     try {
       const p = catalogProduct(
-        (await productRequest('/' + id, 'GET', undefined, c.signal)).product,
+        (
+          await productRequest(
+            '/' + id,
+            'GET',
+            undefined,
+            c.signal,
+            fetch,
+            undefined,
+            photography,
+          )
+        ).product,
       );
+      if (p.productId !== id) throw new Error('Product identity mismatch');
       if (!c.signal.aborted && !locked.current) setEditing(p);
     } catch (e) {
       if (!c.signal.aborted) failure(e);
@@ -247,14 +267,27 @@ export function Products({
       <a className="admin-skip" href="#admin-content">
         Skip to products
       </a>
-      <AdminNavigation current="products" />
+      <AdminNavigation
+        current={photography ? 'photography' : 'products'}
+        photography={readOnly}
+      />
       <main id="admin-content" className="admin-main" tabIndex={-1}>
         <header className="admin-heading">
           <div>
             <p className="admin-eyebrow">Your cookie collection</p>
-            <h1>Products</h1>
+            <h1>
+              {photography
+                ? 'Photography (Isolated)'
+                : readOnly
+                  ? 'Products — Shared DEV'
+                  : 'Products'}
+            </h1>
             <p className="admin-muted">
-              Reusable cookie details. Price set per Drop.
+              {photography
+                ? 'Choose an isolated Product to manage its gallery. These images are not attached to shared DEV Products.'
+                : readOnly
+                  ? 'Shared DEV Product details are read-only while Product writes are protected. Price set per Drop.'
+                  : 'Reusable cookie details. Price set per Drop.'}
             </p>
           </div>
           <div className="admin-actions">
@@ -271,19 +304,21 @@ export function Products({
             >
               Refresh
             </button>
-            <button
-              disabled={
-                busy ||
-                saving ||
-                locked.current ||
-                !!pending ||
-                !!recovery ||
-                !storageKey
-              }
-              onClick={() => void select()}
-            >
-              Add Cookie
-            </button>
+            {!readOnly && (
+              <button
+                disabled={
+                  busy ||
+                  saving ||
+                  locked.current ||
+                  !!pending ||
+                  !!recovery ||
+                  !storageKey
+                }
+                onClick={() => void select()}
+              >
+                Add Cookie
+              </button>
+            )}
             <button disabled={saving} onClick={() => void logout()}>
               Sign out
             </button>
@@ -291,7 +326,13 @@ export function Products({
         </header>
         <div role="status" aria-live="polite">
           {busy ? (
-            'Loading products…'
+            photography ? (
+              'Loading isolated photography Products…'
+            ) : readOnly ? (
+              'Loading shared DEV Products…'
+            ) : (
+              'Loading products…'
+            )
           ) : loaded ? (
             <>
               Last loaded:{' '}
@@ -309,6 +350,10 @@ export function Products({
         </div>
         {error && (
           <p className="admin-card admin-error" role="alert">
+            {readOnly &&
+              (photography
+                ? 'Isolated photography: '
+                : 'Shared DEV Products: ')}
             {error}
           </p>
         )}
@@ -333,7 +378,23 @@ export function Products({
           </section>
         )}
         {recovery && !pending && <p role="alert">{recovery}</p>}
-        {editing && (
+        {workspace === 'shared' && editing && editing !== 'new' && (
+          <section className="admin-card" aria-label="Shared Product details">
+            <h2>{editing.name}</h2>
+            <p>{editing.description}</p>
+            <dl>
+              <dt>Status</dt>
+              <dd>{editing.active ? 'Active' : 'Inactive'}</dd>
+              <dt>Slug</dt>
+              <dd>{editing.slug}</dd>
+              <dt>Ingredients</dt>
+              <dd>{editing.ingredients.join(', ') || 'None listed'}</dd>
+              <dt>Allergens</dt>
+              <dd>{editing.allergens.join(', ') || 'None listed'}</dd>
+            </dl>
+          </section>
+        )}
+        {!readOnly && editing && (
           <ProductEditor
             pendingIdentity={pending}
             storageKey={storageKey}
@@ -367,7 +428,8 @@ export function Products({
             }}
           />
         )}
-        {editing &&
+        {workspace !== 'shared' &&
+          editing &&
           editing !== 'new' &&
           (renderMedia ? (
             renderMedia(editing, onGalleryDirty)
@@ -376,7 +438,12 @@ export function Products({
               mediaEnabled={mediaEnabled}
               key={editing.productId + ':' + expiresAt}
               recoveryScope={
-                catalogScope ? catalogScope + ':' + expiresAt : undefined
+                catalogScope
+                  ? (photography ? 'isolated-photography:' : '') +
+                    catalogScope +
+                    ':' +
+                    expiresAt
+                  : undefined
               }
               productId={editing.productId}
               name={editing.name}
@@ -389,7 +456,11 @@ export function Products({
             <p>
               {cursor
                 ? 'Other catalog records were scanned. Continue to look for products.'
-                : 'Add your first cookie to start the reusable catalog. New cookies are not assigned to a Drop automatically.'}
+                : readOnly
+                  ? photography
+                    ? 'No isolated Products are available for photography.'
+                    : 'No shared Products are available.'
+                  : 'Add your first cookie to start the reusable catalog. New cookies are not assigned to a Drop automatically.'}
             </p>
           </section>
         )}
@@ -411,9 +482,19 @@ export function Products({
               <button
                 disabled={busy || saving || locked.current}
                 onClick={() => void select(p.productId)}
-                aria-label={'Edit ' + p.name}
+                aria-label={
+                  (photography
+                    ? 'Select isolated Product '
+                    : readOnly
+                      ? 'View '
+                      : 'Edit ') + p.name
+                }
               >
-                View / Edit
+                {photography
+                  ? 'Select for photography'
+                  : readOnly
+                    ? 'View details'
+                    : 'View / Edit'}
               </button>
             </article>
           ))}
