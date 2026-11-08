@@ -322,21 +322,8 @@ async function cognito(
     body: JSON.stringify(body),
   });
   if (action === 'GlobalSignOut') {
-    // Cognito documents HTTP 200 with an empty body. Do not interpret other
-    // statuses or unexpected payloads as confirmed revocation.
+    // Cognito confirms this operation with HTTP 200; there is no result to read.
     if (response.status !== 200) throw new AdminFailure('UNAVAILABLE', 502);
-    if (response.body) {
-      const reader = response.body.getReader();
-      try {
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          if (value.byteLength) throw new AdminFailure('INVALID', 502);
-        }
-      } finally {
-        await reader.cancel().catch(() => undefined);
-      }
-    }
     return {};
   }
   const result = await json(response, 16384);

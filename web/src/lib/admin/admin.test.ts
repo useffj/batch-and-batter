@@ -384,11 +384,8 @@ describe('authentication security corrections', () => {
       expect(source).toContain('event.preventDefault()');
     },
   );
-  it('accepts an empty streamed HTTP 200 GlobalSignOut response', async () => {
+  async function expectLogout(fetcher: typeof fetch, confirmed: boolean) {
     const valid = cookie(await login());
-    const fetcher = vi.fn<typeof fetch>(
-      async () => new Response('', { status: 200 }),
-    );
     const response = await adminRelay(
       request('logout', {}, valid),
       'logout',
@@ -397,47 +394,44 @@ describe('authentication security corrections', () => {
     );
     expect(await response.json()).toEqual({
       signedOut: true,
-      revocationConfirmed: true,
+      revocationConfirmed: confirmed,
     });
-    expect(
-      response.headers
-        .getSetCookie()
-        .every((value) => value.includes('Max-Age=0')),
-    ).toBe(true);
-  });
-  it.each([
-    [400, null],
-    [500, null],
-    [202, null],
-    [204, null],
-    [200, '{'],
-    [200, '{}'],
-    [200, 'unexpected-provider-detail'],
-  ] as const)(
-    'does not confirm GlobalSignOut status %s body %s',
-    async (status, body) => {
-      const valid = cookie(await login());
-      const fetcher = vi.fn<typeof fetch>(
-        async () => new Response(body, { status }),
-      );
-      const response = await adminRelay(
-        request('logout', {}, valid),
-        'logout',
-        config,
-        fetcher,
-      );
-      expect(await response.json()).toEqual({
-        signedOut: true,
-        revocationConfirmed: false,
-      });
-      expect(response.headers.getSetCookie()).toHaveLength(2);
-      expect(
-        response.headers
-          .getSetCookie()
-          .every((value) => value.includes('Max-Age=0')),
-      ).toBe(true);
+    const cleared = response.headers.getSetCookie();
+    expect(cleared.map((value) => value.split('=')[0]).sort()).toEqual([
+      '__Host-bb-admin',
+      '__Host-bb-admin-challenge',
+    ]);
+    for (const value of cleared) expect(value).toMatch(/^[^=]+=;.*Max-Age=0/i);
+  }
+  it.each([null, '', '{}', 'unexpected-provider-detail'])(
+    'confirms HTTP 200 with body %j',
+    async (body) => {
+      await expectLogout(async () => new Response(body, { status: 200 }), true);
     },
   );
+  it('confirms HTTP 200 without accessing a failing response stream', async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.error(new Error('private stream failure'));
+      },
+    });
+    const result = new Response(stream, { status: 200 });
+    const access = vi.spyOn(result, 'body', 'get');
+    await expectLogout(async () => result, true);
+    expect(access).not.toHaveBeenCalled();
+    expect(result.bodyUsed).toBe(false);
+  });
+  it.each([400, 500, 202, 204])('does not confirm HTTP %i', async (status) => {
+    await expectLogout(async () => new Response(null, { status }), false);
+  });
+  it.each([
+    new TypeError('private network failure'),
+    new DOMException('private timeout', 'TimeoutError'),
+  ])('does not confirm a rejected fetch (%s)', async (error) => {
+    await expectLogout(async () => {
+      throw error;
+    }, false);
+  });
   it('empty success is still invalid for InitiateAuth', async () => {
     const fetcher = vi.fn<typeof fetch>(
       async () => new Response(null, { status: 200 }),
