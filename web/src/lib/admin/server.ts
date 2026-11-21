@@ -15,7 +15,7 @@ import {
 } from './products';
 import 'server-only';
 import shared from './shared-profile.json';
-import { sharedWorkspace } from './media-config';
+import { sharedWorkspace, sharedProductWritesEnabled } from './media-config';
 import {
   createCipheriv,
   createDecipheriv,
@@ -33,6 +33,7 @@ export interface AdminConfig extends Partial<
   Record<keyof typeof shared | 'STOREFRONT_API_BASE_URL', string>
 > {
   ADMIN_CATALOG_MODE?: string;
+  ADMIN_SHARED_PRODUCT_WRITES_ENABLED?: string;
   ADMIN_MEDIA_MODE?: string;
   NODE_ENV?: string;
   ADMIN_ORIGIN?: string;
@@ -592,7 +593,8 @@ export async function catalogRelay(
       throw new AdminFailure('REQUEST', 404);
     if (
       sharedWorkspace(c) &&
-      (method !== 'GET' || new URL(request.url).searchParams.has('creationKey'))
+      ((method !== 'GET' && (photography || !sharedProductWritesEnabled(c))) ||
+        new URL(request.url).searchParams.has('creationKey'))
     )
       throw new AdminFailure('REQUEST', 405);
     if (!(productId ? ['GET', 'PUT'] : ['GET', 'POST']).includes(method))
@@ -687,8 +689,13 @@ export async function catalogRelay(
     );
     if (response.status === 401) throw new AdminFailure('EXPIRED', 401);
     if (response.status === 403) throw new AdminFailure('FORBIDDEN', 403);
-    if ([400, 404, 409, 413, 503].includes(response.status)) {
+    if ([400, 404, 409, 413, 428, 503].includes(response.status)) {
       const safeMessages: Record<string, string> = {
+        STATUS_CHANGE_UNAVAILABLE:
+          'Existing cookie status is fixed. Reload to edit its other details.',
+        REVISION_REQUIRED: 'Reload this cookie before saving its details.',
+        UNAVAILABLE:
+          'The save could not be confirmed. Retry the same creation or reload an edited cookie.',
         SLUG_CONFLICT:
           'This slug is already used by another cookie, including inactive cookies. Choose another in Advanced Details.',
         IDEMPOTENCY_CONFLICT:

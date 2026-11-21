@@ -10,7 +10,7 @@ import {
   mediaImageRelay,
 } from './server';
 import profile from './shared-profile.json';
-import { summaryOf } from './products';
+import { summaryOf, fieldsOf } from './products';
 vi.mock('server-only', () => ({}));
 const cfg = {
   ...profile,
@@ -197,3 +197,232 @@ it.each(['shared', 'photography'] as const)(
     expect(html).not.toContain('View / Edit');
   },
 );
+
+const writeConfig = { ...cfg, ADMIN_SHARED_PRODUCT_WRITES_ENABLED: 'true' };
+const creationKey = '11111111-1111-4111-8111-111111111111';
+async function writableSession() {
+  const transport = vi.fn<typeof fetch>(async (input, init) => {
+    const url = new URL(String(input));
+    if (url.hostname.startsWith('cognito-idp.'))
+      return json({
+        AuthenticationResult: {
+          AccessToken: 'fixture.access.token',
+          ExpiresIn: 900,
+        },
+      });
+    if (url.pathname === '/admin/me')
+      return json({
+        authenticated: true,
+        subject: 'shared-admin',
+        username: 'fixture',
+      });
+    const fields = init?.body ? JSON.parse(String(init.body)) : {};
+    return json(
+      { product: { ...product(sharedId), ...fields } },
+      init?.method === 'POST' ? 201 : 200,
+    );
+  });
+  const login = await adminRelay(
+    new Request(cfg.ADMIN_ORIGIN + '/api/admin/login', {
+      method: 'POST',
+      headers: { origin: cfg.ADMIN_ORIGIN, 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'fixture', password: 'synthetic' }),
+    }),
+    'login',
+    writeConfig,
+    transport,
+  );
+  const cookie = login.headers
+    .getSetCookie()
+    .find((x) => x.startsWith('__Host-bb-admin='))!
+    .split(';')[0];
+  transport.mockClear();
+  const request = (
+    method: string,
+    body: unknown,
+    headers: Record<string, string> = {},
+  ) =>
+    new Request(cfg.ADMIN_ORIGIN + '/api/admin/products', {
+      method,
+      headers: {
+        cookie,
+        origin: cfg.ADMIN_ORIGIN,
+        'content-type': 'application/json',
+        'Idempotency-Key': creationKey,
+        ...headers,
+      },
+      body: JSON.stringify(body),
+    });
+  const fields = fieldsOf(product(sharedId));
+  return { transport, request, fields, cookie };
+}
+it('relays enabled shared creates and edits to the shared API with the original key and revision', async () => {
+  const { transport, request, fields } = await writableSession();
+  const create = await catalogRelay(
+    request('POST', fields),
+    undefined,
+    writeConfig,
+    transport,
+  );
+  expect(create.status).toBe(201);
+  expect((await create.json()).product.productId).toBe(sharedId);
+  const edit = await catalogRelay(
+    request('PUT', { ...fields, description: 'Changed', revision: stamp }),
+    sharedId,
+    writeConfig,
+    transport,
+  );
+  expect(edit.status).toBe(200);
+  const writes = transport.mock.calls.filter(
+    ([, init]) => init?.method !== 'GET',
+  );
+  expect(writes).toHaveLength(2);
+  expect(String(writes[0][0])).toBe(
+    profile.ADMIN_API_BASE_URL + '/admin/products',
+  );
+  expect(String(writes[1][0])).toBe(
+    profile.ADMIN_API_BASE_URL + '/admin/products/' + sharedId,
+  );
+  expect(new Headers(writes[0][1]?.headers).get('idempotency-key')).toBe(
+    creationKey,
+  );
+  expect(new Headers(writes[1][1]?.headers).get('if-match')).toBe(stamp);
+  expect(JSON.parse(String(writes[1][1]?.body))).toEqual({
+    ...fields,
+    description: 'Changed',
+  });
+  for (const [, init] of writes) {
+    expect(new Headers(init?.headers).get('authorization')).toBe(
+      'Bearer fixture.access.token',
+    );
+    expect(new Headers(init?.headers).has('cookie')).toBe(false);
+    expect(init).toMatchObject({ cache: 'no-store', redirect: 'error' });
+  }
+});
+it('requires the capability, same origin, an idempotency key and an explicit edit revision', async () => {
+  const { transport, request, fields } = await writableSession();
+  expect(
+    (await catalogRelay(request('POST', fields), undefined, cfg, transport))
+      .status,
+  ).toBe(405);
+  expect(
+    (
+      await catalogRelay(
+        request('POST', fields),
+        undefined,
+        writeConfig,
+        transport,
+        true,
+      )
+    ).status,
+  ).toBe(405);
+  expect(
+    (
+      await catalogRelay(
+        request('POST', fields, { origin: 'https://elsewhere.invalid' }),
+        undefined,
+        writeConfig,
+        transport,
+      )
+    ).status,
+  ).toBe(403);
+  expect(
+    (
+      await catalogRelay(
+        request('POST', fields, { 'sec-fetch-site': 'cross-site' }),
+        undefined,
+        writeConfig,
+        transport,
+      )
+    ).status,
+  ).toBe(403);
+  expect(
+    (
+      await catalogRelay(
+        request('POST', fields, { 'Idempotency-Key': '' }),
+        undefined,
+        writeConfig,
+        transport,
+      )
+    ).status,
+  ).toBe(400);
+  expect(
+    (
+      await catalogRelay(
+        request('PUT', fields),
+        sharedId,
+        writeConfig,
+        transport,
+      )
+    ).status,
+  ).toBe(400);
+  expect(transport.mock.calls.every(([, init]) => init?.method === 'GET')).toBe(
+    true,
+  );
+});
+it('keeps shared receipt lookup blocked and exposes actionable writer errors', async () => {
+  const { transport, request, fields, cookie } = await writableSession();
+  const receipt = new Request(
+    cfg.ADMIN_ORIGIN + '/api/admin/products?creationKey=' + creationKey,
+    { headers: { cookie } },
+  );
+  expect(
+    (await catalogRelay(receipt, undefined, writeConfig, transport)).status,
+  ).toBe(405);
+  expect(transport).not.toHaveBeenCalled();
+  const normal = transport.getMockImplementation()!;
+  for (const [status, code] of [
+    [409, 'STATUS_CHANGE_UNAVAILABLE'],
+    [428, 'REVISION_REQUIRED'],
+    [503, 'UNAVAILABLE'],
+  ] as const) {
+    transport.mockImplementation((url, init) =>
+      init?.method === 'PUT'
+        ? Promise.resolve(json({ code }, status))
+        : normal(url, init),
+    );
+    const result = await catalogRelay(
+      request('PUT', { ...fields, revision: stamp }),
+      sharedId,
+      writeConfig,
+      transport,
+    );
+    expect(result.status).toBe(status);
+    expect((await result.json()).code).toBe(code);
+  }
+});
+it('shows enabled shared editing while photography stays read-only', async () => {
+  const { ProductEditor } = await import('../../components/admin/products');
+  const sharedHtml = renderToStaticMarkup(
+    createElement(Products, {
+      workspace: 'shared',
+      sharedWritesEnabled: true,
+      expiresAt: Date.now() + 600000,
+    }),
+  );
+  expect(sharedHtml).toContain('Add Cookie');
+  expect(sharedHtml).toContain('Products — Shared DEV');
+  expect(sharedHtml).toContain('Photography');
+  const photoHtml = renderToStaticMarkup(
+    createElement(Products, {
+      workspace: 'photography',
+      sharedWritesEnabled: true,
+      expiresAt: Date.now() + 600000,
+    }),
+  );
+  expect(photoHtml).not.toContain('Add Cookie');
+  const props = {
+    shared: true,
+    onSaved: () => {},
+    onDirty: () => {},
+    onClose: () => {},
+  };
+  const edit = renderToStaticMarkup(
+    createElement(ProductEditor, { ...props, product: product(sharedId) }),
+  );
+  expect(edit).toMatch(/<select[^>]*id="product-active"[^>]*disabled/);
+  expect(edit).not.toContain('Gallery changes');
+  const create = renderToStaticMarkup(createElement(ProductEditor, props));
+  expect(create).toContain('<option value="active" selected="">');
+  expect(create).not.toMatch(/<select[^>]*id="product-active"[^>]*disabled/);
+});

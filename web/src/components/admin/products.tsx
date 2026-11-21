@@ -37,10 +37,12 @@ export function Products({
   renderMedia,
   mediaEnabled = false,
   workspace = 'catalog',
+  sharedWritesEnabled = false,
 }: {
   expiresAt: number;
   mediaEnabled?: boolean;
   workspace?: 'catalog' | 'shared' | 'photography';
+  sharedWritesEnabled?: boolean;
   catalogScope?: string;
   renderMedia?: (
     product: CatalogProduct,
@@ -48,7 +50,8 @@ export function Products({
   ) => ReactNode;
 }) {
   const photography = workspace === 'photography';
-  const readOnly = workspace !== 'catalog';
+  const shared = workspace === 'shared';
+  const readOnly = photography || (shared && !sharedWritesEnabled);
   const storageKey =
     !readOnly && catalogScope ? 'bb-product-create:' + catalogScope : undefined;
   const [creationVisit, setCreationVisit] = useState(0);
@@ -269,7 +272,7 @@ export function Products({
       </a>
       <AdminNavigation
         current={photography ? 'photography' : 'products'}
-        photography={readOnly}
+        photography={workspace !== 'catalog'}
       />
       <main id="admin-content" className="admin-main" tabIndex={-1}>
         <header className="admin-heading">
@@ -278,7 +281,7 @@ export function Products({
             <h1>
               {photography
                 ? 'Photography (Isolated)'
-                : readOnly
+                : shared
                   ? 'Products — Shared DEV'
                   : 'Products'}
             </h1>
@@ -363,9 +366,17 @@ export function Products({
               A previous cookie creation needs confirmation before another can
               begin. {recovery}
             </p>
-            <button onClick={() => void reconcile()} disabled={busy}>
-              Check creation result
-            </button>
+            {!shared && (
+              <button onClick={() => void reconcile()} disabled={busy}>
+                Check creation result
+              </button>
+            )}
+            {shared && (
+              <p>
+                Resume with the original cookie details. The saved request key
+                prevents duplicate creation.
+              </p>
+            )}
             <button
               disabled={busy}
               onClick={() => {
@@ -378,7 +389,7 @@ export function Products({
           </section>
         )}
         {recovery && !pending && <p role="alert">{recovery}</p>}
-        {workspace === 'shared' && editing && editing !== 'new' && (
+        {shared && readOnly && editing && editing !== 'new' && (
           <section className="admin-card" aria-label="Shared Product details">
             <h2>{editing.name}</h2>
             <p>{editing.description}</p>
@@ -396,6 +407,7 @@ export function Products({
         )}
         {!readOnly && editing && (
           <ProductEditor
+            shared={shared}
             pendingIdentity={pending}
             storageKey={storageKey}
             onPending={setPending}
@@ -522,7 +534,9 @@ export function ProductEditor({
   storageKey,
   pendingIdentity,
   onPending,
+  shared = false,
 }: {
+  shared?: boolean;
   storageKey?: string;
   pendingIdentity?: string | null;
   onPending?: (key: string | null) => void;
@@ -533,7 +547,9 @@ export function ProductEditor({
   onBusy?: (v: boolean) => void;
   onUnauthorized?: (e: ClientFailure) => void;
 }) {
-  const initial = product ? fieldsOf(product) : { ...newProduct };
+  const initial = product
+    ? fieldsOf(product)
+    : { ...newProduct, ...(shared ? { active: true } : {}) };
   const [fields, setFields] = useState<ProductFields>(initial),
     [ingredients, setIngredients] = useState(initial.ingredients.join('\n')),
     [allergens, setAllergens] = useState(initial.allergens.join('\n')),
@@ -603,6 +619,7 @@ export function ProductEditor({
         return;
       }
       if (
+        !shared &&
         needsDeactivationConfirmation(product, data) &&
         !window.confirm(
           'Deactivate this cookie? It may immediately disappear from assigned live Drops and become unavailable for cart updates. Inventory and historical orders are not deleted. Reactivating can restore visibility where its Drop association remains active.',
@@ -669,7 +686,9 @@ export function ProductEditor({
           ambiguous
             ? product
               ? 'Save outcome is unknown. Close this form and refresh the catalog before attempting another save.'
-              : 'Creation is not confirmed. Retry uses the same request and details. If you leave this page, check the creation result before starting another cookie.'
+              : shared
+                ? 'Creation is not confirmed. Retry uses the same request and details. After a reload, resume this creation with the original details.'
+                : 'Creation is not confirmed. Retry uses the same request and details. If you leave this page, check the creation result before starting another cookie.'
             : e instanceof ClientFailure
               ? e.message
               : 'Save failed.',
@@ -689,7 +708,7 @@ export function ProductEditor({
       </h2>
       <p className="admin-muted">
         {changed ? 'Unsaved changes' : 'No unsaved changes'} · Price set per
-        Drop. Gallery changes are saved separately below.
+        Drop.{!shared && ' Gallery changes are saved separately below.'}
       </p>
       {product && (
         <details>
@@ -784,6 +803,7 @@ export function ProductEditor({
             Catalog status
             <select
               id="product-active"
+              disabled={shared && !!product}
               value={fields.active ? 'active' : 'inactive'}
               onChange={(e) => update('active', e.target.value === 'active')}
             >
@@ -792,11 +812,11 @@ export function ProductEditor({
             </select>
           </label>
           <p className="admin-muted">
-            Deactivating a cookie may immediately hide it from assigned live
-            Drops and prevent cart updates containing it. Reactivating can
-            restore visibility where its Drop association remains active.
-            Inventory and historical orders are not deleted. Saving does not
-            assign it to a Drop or change inventory.
+            {shared
+              ? product
+                ? 'This cookie keeps its current catalog status. Edit its reusable details here.'
+                : 'Choose the initial status before saving. Active cookies can be added to a weekly Drop. Existing cookie status is fixed.'
+              : 'Deactivating a cookie may immediately hide it from assigned live Drops and prevent cart updates containing it. Reactivating can restore visibility where its Drop association remains active. Inventory and historical orders are not deleted. Saving does not assign it to a Drop or change inventory.'}
           </p>
         </fieldset>
         {message && <p role="alert">{message}</p>}

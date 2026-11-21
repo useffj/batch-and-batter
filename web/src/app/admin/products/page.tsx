@@ -1,5 +1,6 @@
 import {
   sharedWorkspace,
+  sharedProductWritesEnabled,
   isolatedMediaEnabled,
 } from '../../../lib/admin/media-config';
 import { cookies } from 'next/headers';
@@ -33,6 +34,7 @@ export default async function AdminPage() {
   return (
     <Products
       workspace={sharedWorkspace(process.env) ? 'shared' : 'catalog'}
+      sharedWritesEnabled={sharedProductWritesEnabled(process.env)}
       expiresAt={expiresAt}
       catalogScope={catalogScope}
       mediaEnabled={isolatedMediaEnabled(process.env)}

@@ -73,6 +73,15 @@ function prepare() {
     process.env.ADMIN_MEDIA_API_BASE_URL !== undefined ||
     (process.env.ADMIN_ORIGIN === shared.ADMIN_ORIGIN &&
       process.env.ADMIN_API_BASE_URL === shared.ADMIN_API_BASE_URL);
+  const sharedWrites = process.env.ADMIN_SHARED_PRODUCT_WRITES_ENABLED;
+  if (sharedWrites !== undefined) {
+    if (
+      !['true', 'false'].includes(sharedWrites) ||
+      (sharedWrites === 'true' && !sharedRequested)
+    )
+      throw new Error('Invalid nonsecret admin SSR configuration.');
+    lines.push('ADMIN_SHARED_PRODUCT_WRITES_ENABLED=' + sharedWrites);
+  }
   if (sharedRequested) {
     if (
       Object.entries(shared).some(

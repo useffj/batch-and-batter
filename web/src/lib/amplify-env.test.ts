@@ -291,3 +291,24 @@ describe('restricted shared management with isolated photography', () => {
     expect(run({ ...approved, [key]: value }).status).not.toBe(0),
   );
 });
+
+it('packages the Product write capability only for the approved shared profile', () => {
+  const enabled = {
+    ...sharedProfile,
+    STOREFRONT_API_BASE_URL: 'https://storefront.invalid',
+    STOREFRONT_CURRENCY: 'USD',
+    ADMIN_SHARED_PRODUCT_WRITES_ENABLED: 'true',
+  };
+  const r = run(enabled);
+  expect(r.status).toBe(0);
+  expect(readFileSync(r.path, 'utf8')).toContain(
+    'ADMIN_SHARED_PRODUCT_WRITES_ENABLED=true\n',
+  );
+  expect(
+    run({ ...storefront, ADMIN_SHARED_PRODUCT_WRITES_ENABLED: 'true' }).status,
+  ).toBe(1);
+  expect(
+    run({ ...enabled, ADMIN_SHARED_PRODUCT_WRITES_ENABLED: 'yes' }).status,
+  ).toBe(1);
+  expect(run({ ...enabled, AWS_BRANCH: 'main' }).status).toBe(1);
+});
